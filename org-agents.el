@@ -1422,15 +1422,53 @@ every agent would match nothing.  BASE's own spellings are what is
 returned, because those are the names the user reads and the links that
 will be followed.
 
-Letting BASE have the last word also means that any disagreement between
-ripgrep's `--iglob' and `directory-files-recursively''s regexp over an
-odd file name can only drop a file ripgrep added, never add one BASE
-refused."
-  (let ((wanted (make-hash-table :test #'equal)))
-    (dolist (candidate candidates)
-      (puthash (file-truename candidate) t wanted))
-    (cl-remove-if-not (lambda (file) (gethash (file-truename file) wanted))
-                      base)))
+Letting BASE have the last word cuts BOTH ways, and only one of them is
+harmless.  A file ripgrep reported that BASE does not hold is dropped,
+which is the safe direction and is how an `active' scope loses the
+`archive' files its root includes.  A file BASE holds that ripgrep did
+NOT report is dropped too -- and that is the under-match direction, a
+match lost with no error.  Nothing in this function prevents it: what
+prevents it is the argument vector, whose `--hidden', `--no-ignore',
+`--follow' and inclusive `--iglob' exist so that ripgrep's traversal
+cannot be narrower than `directory-files-recursively''s.  Read the flag
+rationales in `org-agents--rg-args' as the guarantee this intersection
+depends on, not as something this intersection makes safe.
+
+Truenames are the authority, and they are needed: `directory-files-recursively'
+does not expand `~', so with Emacs's default `org-directory' of \"~/org\"
+BASE is spelled \"~/org/...\" while ripgrep prints \"/Users/you/org/...\",
+and under `equal' the two sides would have nothing in common and every
+agent would match nothing.
+
+But `file-truename' is a chain of readlink calls per file, and where the
+two sides agree letter for letter -- which is the usual case, since
+ripgrep is handed an already-expanded root -- nearly all of them are
+wasted.  So a base file whose own spelling is already a candidate
+spelling is admitted without one: if FILE is literally among CANDIDATES
+then its truename is trivially among their truenames, so the answer is
+unchanged by construction.  The truename table is built lazily, only if
+some base file is left over, which is where the \"~/org\" case still
+gets its correct answer.
+
+Measured over the author's corpus, 3,669 base files against 3,644
+candidates, alternating the two implementations over three rounds: 0.57
+seconds before, 0.30 after, the same 3,644 files each time.  Where every
+base file is reported the table is never built at all: 0.58 seconds
+before, 0.001 after.  For scale, the ripgrep run this pass exists to
+protect costs about 0.1 to 0.5 seconds."
+  (let ((literal (make-hash-table :test #'equal))
+        (wanted nil))
+    (dolist (candidate candidates) (puthash candidate t literal))
+    (cl-remove-if-not
+     (lambda (file)
+       (or (gethash file literal)
+           (progn
+             (unless wanted
+               (setq wanted (make-hash-table :test #'equal))
+               (dolist (candidate candidates)
+                 (puthash (file-truename candidate) t wanted)))
+             (gethash (file-truename file) wanted))))
+     base)))
 
 (defun org-agents--scope-files (agent)
   "Resolve AGENT's scope to files, narrowing an unbounded scope with ripgrep.

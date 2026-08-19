@@ -4017,6 +4017,50 @@ empty."
                    (org-agents--prefilter-conjuncts '(property "FILEPROP"))
                    dir)))))
 
+(ert-deftest org-agents-test-same-files-compares-by-truename ()
+  "The intersection is by TRUENAME, and the fast path may not change that.
+`org-agents--same-files' admits a base file whose own spelling is
+already a candidate spelling without calling `file-truename' on it,
+because 0.525 s of readlink over 3,669 files is more than twice the cost
+of the ripgrep runs the pass protects.  The saving is only sound while
+the truename comparison remains the authority for everything else, so
+both halves are pinned here.
+
+The `~'-spelled case is the one that matters:
+`directory-files-recursively' does not expand `~', so BASE can be
+spelled `~/dir/a.org' where ripgrep prints the absolute path -- under
+`equal' the two sides would have nothing in common and every agent would
+match nothing."
+  (let* ((dir (make-temp-file "org-agents-same" t))
+         (a (expand-file-name "a.org" dir))
+         (b (expand-file-name "b.org" dir))
+         (link (expand-file-name "link" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file a (insert "* A\n"))
+          (with-temp-file b (insert "* B\n"))
+          ;; Identical spellings: the fast path, and the answer is BASE's
+          ;; own spellings in BASE's own order.
+          (should (equal (org-agents--same-files (list a b) (list b a))
+                         (list a b)))
+          (should (equal (org-agents--same-files (list a b) (list a))
+                         (list a)))
+          (should (null (org-agents--same-files (list a b) nil)))
+          ;; Different spellings of the same file: only the truename
+          ;; comparison relates them, and it must still happen.
+          (make-symbolic-link dir link)
+          (let ((via-link (expand-file-name "a.org" link)))
+            (should-not (equal via-link a))
+            (should (equal (org-agents--same-files (list a) (list via-link))
+                           (list a)))
+            (should (equal (org-agents--same-files (list via-link) (list a))
+                           (list via-link))))
+          ;; A file the candidates do not name at all is dropped however
+          ;; it is spelled, so the fast path cannot admit anything extra.
+          (should (null (org-agents--same-files
+                         (list b) (list (expand-file-name "c.org" dir))))))
+      (delete-directory dir t))))
+
 (ert-deftest org-agents-test-rg-intersects-two-conjuncts ()
   "The candidate set is the INTERSECTION, not the union and not one pattern.
 Concatenating the conjuncts into one pattern is what an implementer
