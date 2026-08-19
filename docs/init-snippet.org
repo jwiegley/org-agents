@@ -60,7 +60,9 @@ to the position it appears in.
   :commands (org-agents-update
              org-agents-update-buffer
              org-agents-update-all
-             org-agents-preview)
+             org-agents-preview
+             org-agents-mode
+             global-org-agents-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
   ;; `org-update-all-dblocks', so it has to be autoloaded as well.
   :autoload (org-dblock-write:org-agents)
@@ -87,6 +89,40 @@ to the position it appears in.
   ;; `:AGENT_QUERY:') or directories, or the symbol `agenda'.
   (org-agents-files (list (org-file "agents.org")
                           org-constants-todo-path)))
+#+end_src
+
+* Updating on save
+
+=org-agents-mode= updates a buffer's agents in =before-save-hook=, so an agent
+is refreshed by the act of saving the file it lives in. A save whose render
+changes nothing writes no bytes — old =AGENT_MATCHED= stamps and all — and a
+save never contacts the database whatever =org-db-cli-*= says, so it cannot
+block on =postgres.vulcan.lan= being unreachable. Agents whose scope is
+=active=, =all= or a directory are named once and skipped, since those are the
+scopes that do need the database; =C-c n u= still refreshes them on demand.
+
+*The lazy way, and the one to prefer here.* Arm just the files that hold
+agents, with a file-local minor mode on the first line. Emacs appends the
+=-mode= suffix itself, so the value is =org-agents= and not =org-agents-mode=;
+being a =mode:= entry rather than an =eval:= one, it raises no risky-local
+prompt, and visiting the file is what autoloads the package:
+
+#+begin_example
+# -*- mode: org; mode: org-agents; -*-
+#+title: Agents
+#+end_example
+
+That suits the two files =org-agents-files= already names, and costs nothing
+in any other Org buffer.
+
+*The blanket way.* =global-org-agents-mode= arms every Org buffer whose text
+mentions =:AGENT_QUERY:=, deciding that with a plain regexp so the check is
+cheap enough to run on every Org buffer you visit. It has to be called to take
+effect, which loads =org-agents= at startup rather than on first use — the
+price of not having to mark each file:
+
+#+begin_src emacs-lisp
+(global-org-agents-mode 1)
 #+end_src
 
 * Key bindings, and what each was checked against
