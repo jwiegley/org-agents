@@ -2041,6 +2041,70 @@ covers the realistic failure.
 - No org-agents code path can block Emacs indefinitely on an unreachable
   database host; a test covers the timeout with a deliberately hanging stub.
 
+* TODO [#D] Report a missing scope file legibly, not as a bufferp type error
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-legible-missing-scope-file-5te
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 12:57]
+:MODIFIED: [2026-08-19 Wed 12:57]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Report a missing scope file legibly instead of "Wrong type argument: bufferp".
+
+## Steps to Reproduce
+
+1. Leave `org-agenda-skip-unavailable-files` at its default `nil`.
+2. Have one entry of `org-agenda-files` name a file that does not exist
+   (`~/org/git-ai/git-ai.org` is such an entry in this user's
+   `org-constants-agenda-base-files` today; the directory exists, the file does
+   not).
+3. Update any `agenda`-scope agent.
+
+Observed, for every agent in the buffer:
+
+```
+org-agents: updated 0 agents, 3 failed:
+org-agents: Reviews that have come due (…:13): Wrong type argument: bufferp,
+  "Error (org-ql-select): Can't open file: /Users/johnw/org/git-ai/git-ai.org"
+```
+
+Expected: one message naming the unreadable file as the problem. Nothing in the
+message says the agents are fine and the *scope* is not, and `bufferp` sends a
+reader looking for a bug in this package.
+
+## Problem
+
+`org-ql-select` renders its own failure into a string and something downstream
+takes that string for a buffer, so what surfaces is a type error wrapping a
+diagnostic rather than the diagnostic. Every agent in the file fails
+identically, which makes it look like the package is broken rather than one
+path in `org-agenda-files`.
+
+This user is insulated by `org-agenda-skip-unavailable-files` t
+(`~/org/init.org:11336`), which is why it has not been seen in practice — it was
+found in a harness that did not load their init. Anyone at the Emacs default
+would hit it, and `org-agents--scope-base-files` passes `(org-agenda-files)`
+through without checking readability.
+
+Low priority precisely because the live configuration avoids it; worth fixing
+because the failure is maximally confusing for a trivial cause.
+
+## Acceptance Criteria
+
+- An `agenda` scope naming an unreadable file reports that file by name, once,
+  and says the scope is at fault.
+- The behaviour with `org-agenda-skip-unavailable-files` t is unchanged.
+- A test covers a scope naming one missing file and asserts on the message.
+- Decide and document whether a missing file is a hard error or a skip; do not
+  silently drop one from a scope the user named explicitly (an explicit file
+  list is a different case from an agenda that filters itself).
+
 * TODO [#B] org-jw changes the prefilter depends on    :upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
