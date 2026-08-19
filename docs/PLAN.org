@@ -1,0 +1,3176 @@
+#+TITLE: Obr Issues
+#+SEQ_TODO: TODO DOING DRAFT WAIT DEFER NOTE | DONE CANCELED
+#+ISSUE_PREFIX: orga-code-hygiene
+
+* TODO [#D] Code hygiene in org-agents v1    :hygiene:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq
+:LABELS:   ["hygiene"]
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Cleanups inside org-agents itself: duplicated idioms, one dead option, one
+quadratic loop, one eager require, one test docstring that claims more than its
+assertion checks.
+
+None of these is a defect a user can hit.  They are the things a reviewer would
+name in a second pass, and they are worth doing while the code is fresh — three
+spellings of one predicate is how the fourth one drifts.
+
+## Scope
+
+Everything in this epic is confined to `org-agents.el`, `org-db-cli.el` and
+`org-agents-test.el`.  Each child is a single, local change with a test or a
+mutation that shows it landed.
+
+## Success Criteria
+
+- [ ] each duplicated idiom has exactly one spelling
+- [ ] no option is documented that has no effect
+- [ ] no test docstring claims a property its assertions do not establish
+- [ ] the byte-compile gate still passes at zero warnings, and the suite is still
+      green, after every change
+
+* TODO [#D] One spelling for deciding whether a heading is an agent    :hygiene:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq.1
+:LABELS:   ["hygiene"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+"Is this heading an agent?" is spelled three different ways in `org-agents.el`,
+each reading `AGENT_QUERY` from the entry at point:
+
+- `org-agents--dblock-agent` — `(save-excursion (and (not
+  (org-before-first-heading-p)) (progn (org-back-to-heading t)
+  (org-agents--entry-get "AGENT_QUERY")) (org-agents--read-agent)))`;
+- `org-agents--agent-marker` — the same shape, answering with a marker;
+- `org-agents--buffer-agents` — `(when (org-agents--entry-get "AGENT_QUERY") …)`
+  at each heading of a scan.
+
+They agree today.  The reason to unify them is that they are the definition of
+what this package acts on, and the definition is subtle: the drawer must be the
+entry's **own** (no inheritance), and the property name appearing in body text
+must not count — a rule the buffer scan's own docstring explains at length.  A
+fourth caller written from the nearest example is how that rule gets lost.
+
+## Evidence
+
+- `org-agents.el`: `org-agents--dblock-agent`, `org-agents--agent-marker`,
+  `org-agents--buffer-agents`, and `org-agents--read-agent`'s own
+  `(unless q (user-error "No :AGENT_QUERY: at point"))`.
+- `org-agents--entry-get` is already the single reader that pins the
+  no-inheritance rule; the missing piece is a single *predicate* above it.
+
+## What to do
+
+- One helper — `org-agents--agent-at-point-p`, or let `org-agents--agent-marker`
+  be it — carrying the rule and its docstring.
+- The three call sites use it.  `--buffer-agents` keeps its own match-data
+  ordering comment: reading the heading position **before** the property lookup is
+  load-bearing (`org-entry-get` clobbers the match data), and that has already
+  been a bug once.
+
+## Acceptance Criteria
+
+- [ ] exactly one place in the file decides whether an entry is an agent
+- [ ] the existing tests pass unchanged, including the buffer-scan tests that
+      pin marker positions
+- [ ] the match-data ordering comment survives the refactor
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-code-hygiene-tcq.1",
+    "depends_on_id": "orga-code-hygiene-tcq",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.037823Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] One idiom for reading at a match's marker    :hygiene:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq.2
+:LABELS:   ["hygiene"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Reading at a match's marker is spelled two ways in `org-agents.el`:
+
+- `org-agents--link-to` and `org-agents--format-suffix` hand-roll it:
+  `(with-current-buffer (marker-buffer m) (org-with-wide-buffer (goto-char m) …))`;
+- `org-agents--table-row` uses `(org-with-point-at marker …)`.
+
+`org-with-point-at` expands to the same thing — set the marker's buffer, widen,
+go to the marker — with `save-excursion` around it, which the hand-rolled form
+does not have.  Two idioms for one operation, in one file, on the same kind of
+value.
+
+`--table-row`'s docstring already explains *why* the marker must be checked for a
+buffer first ("`org-with-point-at` leaves point where it stands for a marker
+naming no buffer, and would answer with the properties of whatever entry the
+block itself sits in"), so the reasoning is written down; only the spelling is
+inconsistent.
+
+## Evidence
+
+- `org-agents.el`: `org-agents--link-to`, `org-agents--format-suffix`,
+  `org-agents--table-row`, and `org-agents--live-marker`, which is the guard all
+  three depend on.
+
+## What to do
+
+- Use `org-with-point-at` in all three, guarded by `org-agents--live-marker` as
+  they already are.
+- Check the one behavioural difference before switching: the hand-rolled form
+  does not restore point in the match's buffer.  Nothing should depend on that,
+  but the children-view tests are the ones that would notice, so run them.
+
+## Acceptance Criteria
+
+- [ ] one idiom for reading at a match's marker in the whole file
+- [ ] the detached-marker behaviour is unchanged: a marker with no buffer still
+      yields the recorded heading text with the unresolved suffix, and an empty
+      table cell
+- [ ] the full suite is green and the gate still reports zero warnings
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-code-hygiene-tcq.2",
+    "depends_on_id": "orga-code-hygiene-tcq",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.155238Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Diagnose a malformed scope before spending a CLI round trip    :bridge:hygiene:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq.3
+:LABELS:   ["bridge","hygiene"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-agents--scope-files` builds the skeleton and spawns the CLI *before*
+anything looks at whether the scope is usable.  A malformed scope — a number, a
+list holding a non-string — is diagnosed only later, by
+`org-agents--scope-base-files`, which is reached after the round trip.
+
+So a mistyped `:AGENT_SCOPE:` costs a subprocess and a database query before it
+produces the message that was always going to be the answer.  Correctness is
+unaffected; it is the diagnostics-first principle the rest of the package follows
+("a value that cannot be used is diagnosed here rather than left to fail") not
+being followed here.
+
+Note the deliberate ordering that must survive any fix: the scope's **base files**
+are gathered only where they will be used, because for an unbounded scope
+gathering them is the very recursive walk the prefilter exists to avoid.  Checking
+the scope's *shape* is not the same as gathering its files, so both properties can
+hold at once.
+
+## Evidence
+
+- `org-agents.el` — `org-agents--scope-files`: the `skeleton`/`candidates`
+  `let*` runs first, with its comment about deferring the base-file walk; the
+  `(_ (user-error "org-agents: bad scope %S" scope))` arm lives in
+  `org-agents--scope-base-files`.
+- `org-agents--read-scope` reads the property, but a scope can also arrive as an
+  inline dblock `:scope` parameter, which is where a bad shape survives longest.
+
+## What to do
+
+- Give the scope shape one validator, called before the skeleton is built:
+  a member of `org-agents--scope-names`' symbols, a string, or a list of strings.
+- Do not gather any files in it.
+
+## Acceptance Criteria
+
+- [ ] a malformed scope raises its `user-error` with no CLI invocation, proven by
+      a test that stubs `call-process` to fail if called
+- [ ] the base-file walk is still deferred for unbounded scopes (the existing test
+      pinning that stays green)
+- [ ] the message still names the bad scope
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-code-hygiene-tcq.3",
+    "depends_on_id": "orga-code-hygiene-tcq",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.277414Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] org-db-cli-files-directory is an option that does nothing    :bridge:hygiene:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq.4
+:LABELS:   ["bridge","hygiene"]
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-db-cli-files-directory` is a user option that does nothing, and whose
+docstring describes a convention the CLI does not use.
+
+It says: "Directory against which relative `file` fields resolve.  When nil,
+`org-directory` is used."  But the CLI's `file` field is **absolute and
+canonicalized** — the store records `canonicalizePath` of each file it reads — so
+the `(expand-file-name f base)` it feeds is a no-op on every real answer.  The
+same file's own docstring for `org-db-cli-query-files`, twenty lines below, states
+the absolute-path convention correctly.
+
+So a user who sets this option gets no error, no warning, and no effect.  That is
+worse than not having it: the package's stated principle everywhere else is that a
+value that cannot be used is diagnosed rather than left to quietly do nothing.
+
+## Steps to Reproduce
+
+1. Set `org-db-cli-files-directory` to any directory other than `org-directory`.
+2. Run a query that returns files (or call `org-db-cli-query-files` with a
+   skeleton).
+3. The returned paths are unchanged: they were already absolute, so
+   `expand-file-name` ignores the base entirely.
+
+## Evidence
+
+- `org-db-cli.el` — the `org-db-cli-files-directory` defcustom and its docstring;
+  `org-db-cli-query-files`'s `(base (or org-db-cli-files-directory
+  org-directory))` and `(expand-file-name f base)`.
+- `org-db-cli-query-files`'s own docstring: "The `file` field the CLI writes is
+  already absolute and canonicalized … so what comes back names a file by its
+  truename".
+- Ledger Ruling 17 in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`,
+  which established the absolute-path fact and notes "org-db-cli already passes
+  absolute through unchanged (expand-file-name no-op)".
+
+## What to do
+
+Prefer removing it.  It was written against a plan that expected relative paths;
+the CLI does not emit them and there is no other consumer.  Keep
+`expand-file-name` as the defensive no-op it is, or drop it too — but if the
+option stays, its docstring must say it only applies to a hypothetical relative
+answer, which is not a thing the CLI produces.
+
+## Acceptance Criteria
+
+- [ ] `org-db-cli-files-directory` is gone, or its docstring is true
+- [ ] `org-db-cli-test.el` covers whatever the decision is (a relative-path row is
+      the case worth pinning if the option survives)
+- [ ] no other file references it (nothing does today)
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-code-hygiene-tcq.4",
+    "depends_on_id": "orga-code-hygiene-tcq",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.393170Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] De-duplicate the bridge's file list with a hash table    :bridge:hygiene:perf:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq.5
+:LABELS:   ["bridge","hygiene","perf"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-db-cli-query-files` de-duplicates its file names with
+`(cl-pushnew (expand-file-name f base) files :test #'equal)` against a growing
+list — a scan of everything accumulated so far, per row.  At ~50k rows over ~1k
+distinct files that is on the order of tens of millions of string comparisons for
+an answer of a thousand paths.
+
+The right idiom is already used in this project, one call away:
+`org-agents--same-files` builds a hash table for exactly this reason.  This is the
+third of the three quadratic dedup passes the final review counted; the other two
+are in the Haskell producer and are tracked as an org-jw issue.
+
+Correctness is unaffected.  This is worth doing because it is small and because
+the fast idiom is already the house style.
+
+## Evidence
+
+- `org-db-cli.el` — `org-db-cli-query-files`'s `dolist` over rows with
+  `cl-pushnew … :test #'equal`, then `(sort files #'string<)`.
+- `org-agents.el` — `org-agents--same-files` builds `(make-hash-table :test
+  #'equal)` for the same job.
+- Ledger, final whole-branch review item **I2**: "quadratic dedup at THREE points
+  (Haskell nub, Haskell lookup per row, and org-db-cli's `cl-pushnew :test
+  #'equal` against a growing list) … The right idiom (hash table) is already used
+  two calls later in `--same-files`."
+
+## Acceptance Criteria
+
+- [ ] the bridge de-duplicates with a hash table
+- [ ] the returned list is still sorted and still unique (the existing
+      `org-db-cli-test.el` sort/dedup test stays green)
+- [ ] behaviour on the malformed-row and NUL-in-path cases is unchanged
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-code-hygiene-tcq.5",
+    "depends_on_id": "orga-code-hygiene-tcq",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.515125Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-code-hygiene-tcq.5",
+    "depends_on_id": "orga-org-jw-followups-a35.2",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:25.515125Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Stop requiring org-ql-search at load time    :hygiene:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq.6
+:LABELS:   ["hygiene"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-agents.el` requires `org-ql-search` at load time for the sake of one command:
+`org-agents-preview` delegates to `org-ql-search`.  Everything else in the package
+uses `org-ql` proper.
+
+Loading a search UI to render a table is more than the file needs, and this was
+deliberately left alone during development — twice — because the requires block
+was being touched for the byte-compile gate at the time and destabilising it was
+not worth the risk.  The gate is now committed and stable, so the change is cheap
+to make and to verify.
+
+## Evidence
+
+- `org-agents.el`'s requires block: `(require 'org-ql-search)` with the comment
+  "`org-agents-preview' delegates to it".
+- Ledger Ruling 38 in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`:
+  "DEFERRED: Minor 5 eager (require 'org-ql-search) — do not destabilize the
+  requires block while T10 adds the declare-function."
+- Task 10 report, Task 9 fix-round addendum: "Minor 5 (eager `org-ql-search`
+  require) left alone as instructed."
+
+## What to do
+
+- Require it inside `org-agents-preview`, or autoload the single function used,
+  with a `declare-function` so the compiler stays quiet.
+- Re-run `tools/org-agents-byte-compile-gate.sh` afterwards: the gate is the check
+  this change could plausibly break, and it must still report zero warnings.
+
+## Acceptance Criteria
+
+- [ ] loading `org-agents` does not load `org-ql-search`
+- [ ] `org-agents-preview` still works from a cold Emacs (a test, or a documented
+      manual check — the existing preview tests stub `org-ql-search`, so they
+      would not catch a missing require)
+- [ ] the byte-compile gate still exits 0 with zero warnings
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-code-hygiene-tcq.6",
+    "depends_on_id": "orga-code-hygiene-tcq",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.634699Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] The gate's headline test does not check what its docstring claims    :hygiene:test:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-code-hygiene-tcq.7
+:LABELS:   ["hygiene","test"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-agents-test-gate-refuses-bare-call`'s docstring says "An unapproved arbitrary
+call is never evaluated, even inside (and ...)" — but its only assertion is
+`(should-not (org-agents--gate '(and (todo) (shell-command "touch /tmp/pwned"))))`.
+That establishes the gate answered nil.  It does not establish that nothing was
+evaluated.
+
+The distinction matters here more than anywhere else in the suite: this is the
+package's security boundary, and the spec's Verification section cites this test
+by name for exactly the claim the assertions do not make.  A future refactor that
+evaluated a form on the way to refusing it would leave this test green.
+
+The precedent for fixing it is in the same project: the honesty audit found the
+DST test asserting its expectation with the same function it was testing, and the
+fix was to assert a literal instead.  A test whose docstring promises more than it
+checks is the same failure in a different dress.
+
+## Evidence
+
+- `org-agents-test.el` — `org-agents-test-gate-refuses-bare-call`, docstring and
+  its single `should-not`.
+- Spec `docs/superpowers/specs/2026-08-18-org-agents-design.md`, Verification:
+  "gate: `org-agents-test-gate-refuses-bare-call` — an unapproved `(and (todo)
+  (shell-command "x"))` is never evaluated".
+- The final review's own probing did establish the boundary empirically under
+  fourteen attempts — so the property is true; it is this test that does not check
+  it.
+
+## What to do
+
+- Assert the effect did not happen: bind `shell-command` (via `cl-letf`) to signal
+  if called, and keep the `should-not`.  Then the test fails both if the gate
+  approves and if anything evaluates the form.
+- Do not use a real `/tmp` side effect; the suite writes nothing outside its own
+  temporary directories.
+- While there, check the neighbouring gate tests for the same gap.
+
+## Acceptance Criteria
+
+- [ ] the test fails if the refused form is evaluated, proven by mutation (make
+      the gate evaluate the form and watch this test go red)
+- [ ] the docstring matches what the assertions establish
+- [ ] no other test in the file promises "is never evaluated" without asserting it
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-code-hygiene-tcq.7",
+    "depends_on_id": "orga-code-hygiene-tcq",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.757362Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Deferred features from the v1 scope decision    :feature:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk
+:LABELS:   ["feature","v1-deferred"]
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Version 1 of org-agents was scoped deliberately, and the spec records what was
+left out "in rough order of likely return".  This epic holds those items, plus
+the behaviours the ten task reviews and the final review chose to document as
+limitations rather than fix.
+
+Nothing here is a defect: v1 works and its edges are written into the package's
+own Commentary.  Each child is a decision that was made once, with its reason,
+and can now be revisited with the code in front of you.
+
+## Scope
+
+From the spec's "Scope of Version 1" deferred list: `AGENT_ACTION`,
+`AGENT_COPY`, Elisp formats and computed columns and sort expressions,
+`AGENT_ADD_IDS`, database-backed registry discovery, growing the push-down
+table, the nested-query weakest-member rule, a live-directory file ceiling, a
+transclusion view, aggregates, save-triggered scheduling, the `org-ql-semantic`
+migration onto the shared bridge, and an `(org-db …)` org-ql predicate.
+
+Plus three documented behaviours: only an agent's first block is refreshed by a
+buffer-wide update, an update asked for from inside a generated alias is
+refused, and `org-agents-update-all` visits every named file and leaves them
+modified.
+
+## Success Criteria
+
+- [ ] every child is implemented, or closed with the reason it is not wanted
+- [ ] the spec's deferred list and the Commentary's "Known limitations" section
+      are updated as children land, so the documentation never claims a
+      limitation that no longer exists
+- [ ] no child grows a second safety mechanism: anything that evaluates user
+      text goes through `org-agents--gate`
+
+* TODO [#D] AGENT_ACTION: let an agent act on what it matches    :feature:tinderbox:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.1
+:LABELS:   ["feature","tinderbox","v1-deferred"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Tinderbox agents can *act* on what they match (`$AgentAction`), not merely list
+it.  That is the single largest piece of Tinderbox parity org-agents does not
+have: today an agent renders links and nothing else.
+
+The design review cut `AGENT_ACTION` together with the "bespoke safety
+machinery" that had been proposed alongside it.  The important part of that
+ruling is the second half: the package already has a sound trust boundary in
+`org-agents--gate`, and an action must go through it rather than growing a second
+one.  The gate was attacked fourteen ways by the final review (quoted call
+forms, dotted lists, lambda-headed cons cells, vectors, records, byte-code
+objects in function position) and held, so there is a boundary to reuse.
+
+## Evidence
+
+- Spec `docs/superpowers/specs/2026-08-18-org-agents-design.md`, "Scope of
+  Version 1": "Deferred … `AGENT_ACTION` (Tinderbox `$AgentAction`) behind the
+  same gate".
+- Design review `docs/superpowers/specs/2026-08-18-org-agents-design-review.md`,
+  feature cuts item 10.
+- `org-agents.el`, `org-agents--gate` — the existing choke point, and
+  `org-agents--structurally-safe-p` beside it.
+
+## What to do
+
+- Read `:AGENT_ACTION:` with the same `org-agents--read-sexp` treatment every
+  other agent property gets, expand it through the `$PROP` layer, and pass it
+  through `org-agents--gate` before anything is evaluated.
+- Run it at each match, at the match's marker.
+- Decide and document idempotence: a Tinderbox action runs on every update, so
+  the natural contract is "an action must be safe to run again".
+
+## Acceptance Criteria
+
+- [ ] `:AGENT_ACTION:` runs at each match, and only after the gate approved it
+- [ ] no second approval mechanism is introduced; the gate is the only boundary
+- [ ] a test asserts an unapproved action is not evaluated (assert the effect
+      did not happen, not merely that the gate returned nil)
+- [ ] the idempotence contract is in the Commentary
+- [ ] an action that signals names the agent and the match, and does not abort
+      the remaining matches
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.1",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.809044Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] A transclusion view    :feature:view:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.10
+:LABELS:   ["feature","view"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+A fourth view was considered and deferred: instead of writing alias headings or a
+dblock table, render each match as an `org-transclusion` block so the match's own
+text appears under the agent.
+
+It was deferred on a measured concern rather than a guess — body-keyword blocks
+fold poorly at scale, and an agent matching a hundred entries would produce a
+hundred transclusion keywords in one subtree.  `org-transclusion` 1.4.0 was the
+version checked at the time.
+
+## Evidence
+
+- Spec "Alternatives Considered": "`org-transclusion` children — deferred; body
+  keyword blocks fold poorly at scale."
+- Spec "Scope of Version 1" deferred list: "a transclusion view".
+- Design review, which records `org-transclusion` 1.4.0 among its verified
+  environment facts.
+- `org-agents--known-views` in `org-agents.el` is the closed set a fourth view
+  would join (`children list table`); `org-agents--read-view` diagnoses anything
+  else at read time.
+
+## What to do
+
+- Decide whether it is worth it at all before writing any of it: the honest test
+  is one agent with fifty matches in a real Org buffer, folded and unfolded.
+- If it goes ahead, it is a view like the others: add it to
+  `org-agents--known-views`, give it a renderer, and decide what the preservation
+  rule means for it (a transclusion block has no user text to preserve, which
+  makes it closer to the dblock views than to `children`).
+
+## Acceptance Criteria
+
+- [ ] either a `transclusion` view exists, with a test that a re-update is
+      idempotent and that no user text is lost
+- [ ] or this issue is closed with the measurement that says it is not worth
+      doing, so nobody re-derives it
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.10",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.842704Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Aggregates: a total under a table    :feature:tinderbox:view:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.11
+:LABELS:   ["feature","tinderbox","view"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Tinderbox agents can aggregate: sum a numeric attribute across matches, collect
+values conditionally.  org-agents renders one row or alias per match and no
+totals.
+
+It was deferred with transclusion, and the design review lists "deferring
+transclusion/aggregates" among the things the design got right — so this is an
+idea whose time has not come, not a gap.
+
+The natural shape is a table footer: the table view already builds rows as a list
+of escaped cells, so a sum over a numeric column is a small addition, while
+anything richer (collect-if, group-by) is a new sub-language and should be
+resisted until a real agent needs it.
+
+## Evidence
+
+- Spec "Scope of Version 1" deferred list: "aggregates".
+- Design review: "deferring transclusion/aggregates" is listed under things done
+  right and preserved deliberately.
+- `org-agents.el` — `org-agents--table-rows`, `org-agents--table-text`, and
+  `org-agents--table-columns` are where a footer row would be produced.
+
+## What to do
+
+- Start with the one case a real agent wants: a sum of one named numeric column,
+  rendered as a table footer under a horizontal rule.
+- Values come from properties, i.e. text from a file, so a cell that is not a
+  number must be diagnosed or skipped by a stated rule, not silently read as
+  zero — `org-agents--read-limit` is the precedent for refusing rather than
+  guessing.
+
+## Acceptance Criteria
+
+- [ ] whatever lands is opt-in and named in the property vocabulary table in the
+      Commentary
+- [ ] a non-numeric cell has a stated, tested behaviour
+- [ ] the aggregate survives a re-update unchanged (idempotence test), and does
+      not confuse the row sort or `:AGENT_LIMIT:`
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.11",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.952039Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Update agents on save or on a timer    :commands:feature:tinderbox:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.12
+:LABELS:   ["commands","feature","tinderbox"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Every update is explicit today: `org-agents-update`,
+`org-agents-update-buffer`, `org-agents-update-all`.  Tinderbox agents update
+themselves, and the deferred item is scheduling: refresh an agent when the corpus
+changes (on save) or on a timer.
+
+Two things make this less trivial than a hook:
+
+- an update writes to the buffer (aliases, a dblock body, and the
+  `:AGENT_MATCHED:` property), so a save-triggered update dirties the file it
+  just saved;
+- a corpus-scope agent's update costs a CLI round trip plus an org-ql pass over
+  the candidate files, which is not something to do on every save of every Org
+  file.
+
+The related staleness fact: a file that newly satisfies a pushed conjunct is
+missed until the next `org db sync`, so scheduling an update without syncing
+buys less freshness than it appears to.
+
+## Evidence
+
+- Spec "Scope of Version 1" deferred list: "save-triggered scheduling".
+- Design review, feature cuts item 10, which cut `AGENT_UPDATE`/idle mode and
+  `sync-before-update`.
+- Spec, the staleness contract: "a file that newly satisfies a pushed conjunct
+  since the last sync is missed until the next sync … the design does not wrap
+  it".
+- `org-agents-update-all`'s docstring — "The files are left modified rather than
+  saved, so an update can be read over and undone before it is kept."
+
+## What to do
+
+- Pick the smallest useful trigger: after saving the *agent's own* file, update
+  the agents in it.  That is bounded, and the user asked for it by saving.
+- An idle timer over `org-agents-files` is the second step, and needs a way to
+  not fight the user's cursor: an update moves point and mutates window state in
+  the dblock path.
+
+## Acceptance Criteria
+
+- [ ] scheduling is opt-in, off by default
+- [ ] a scheduled update never leaves point or the window configuration changed
+      from the user's perspective
+- [ ] the interaction with saving is stated: whether the triggered update saves
+      again, or leaves the buffer modified
+- [ ] the staleness limit is documented where the option is defined, so nobody
+      expects freshness the database cannot supply
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.12",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:24.069600Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Expose the prefilter to every org-ql consumer    :bridge:feature:prefilter:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.13
+:LABELS:   ["bridge","feature","prefilter"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+The candidate-file prefilter is useful to more than org-agents.  Any org-ql
+consumer searching the whole corpus pays the same cost — opening every file — and
+the same skeleton machinery could narrow it.
+
+The deferred shape is an org-ql predicate, `(org-db …)`, that resolves to the
+files the database says can match, so an ordinary `org-ql-search` benefits
+without knowing anything about org-agents.
+
+Careful: the prefilter narrows a **file set**, which is not what an org-ql
+predicate does — a predicate answers about one entry.  So this is either a new
+kind of org-ql extension (a scope transformer) or a function users call to build
+the file list they hand to `org-ql-select`.  Deciding which is most of the work.
+
+## Evidence
+
+- Spec "Scope of Version 1" deferred list: "a `(org-db …)` org-ql predicate
+  exposing the prefilter to all org-ql consumers".
+- `org-agents.el` — `org-agents--skeleton`, `org-agents--scope-files`,
+  `org-agents--same-files`: the three pieces that would have to become public and
+  agent-independent.
+- `org-db-cli.el` — already the shared bridge, designed for more than one
+  consumer.
+
+## Acceptance Criteria
+
+- [ ] whatever is exposed is documented as a *file-set narrowing*, not as an
+      entry predicate, unless it genuinely is one
+- [ ] the superset property is stated in its docstring, with the same honesty as
+      the spec's soundness table, and the differential suite covers it
+- [ ] an unavailable database degrades to the full file set, never to an error,
+      for a caller that did not ask for a prefilter
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.13",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:24.184612Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Tell an empty database answer from a failed one    :bridge:commands:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.14
+:LABELS:   ["bridge","commands"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-db-cli-query-files` returns nil for a genuine empty answer and for a failure
+alike.  org-agents therefore cannot tell "the database says no file can match"
+from "the database did not answer", and treats both as prefilter-unavailable.
+
+The user-visible consequence: a corpus-scope agent whose query matches **nothing**
+reports a missing prefilter rather than rendering zero matches.  It is never a
+wrong answer — the alternative would be opening the whole corpus — but it is a
+needless error, and it is the one case where the package's diagnostics point at
+the wrong cause.
+
+Fixing it is a bridge contract change, which is why v1 documented it instead.
+
+## Evidence
+
+- `org-db-cli.el` — the Commentary states the ambiguity outright: "callers can
+  distinguish 'no answer' from 'empty answer' only by supplying queries
+  guaranteed to match; org-agents treats nil as prefilter-unavailable."
+- `org-agents--scope-files` in `org-agents.el` — the refusal's own comment: "The
+  bridge returns nil for a failure and for a genuinely empty answer alike, so an
+  agent matching nothing at all is reported here as a missing prefilter."
+- Commentary, "an empty database answer is reported as a missing prefilter".
+- Worklist item **E4** and doc item **B4** in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/wg-defer/task10-worklist.md`.
+
+## What to do
+
+- Give the bridge a way to say which happened without breaking the "never
+  signals" contract: for instance return a symbol for failure and a (possibly
+  empty) list for an answer, or add a second function.
+- Then `org-agents--scope-files` can render zero matches for an empty answer and
+  keep the refusal for an unavailable prefilter.
+- Both existing callers must be updated together; `org-db-cli-test.el` pins the
+  current nil contract, so those tests change deliberately rather than being
+  worked around.
+
+## Acceptance Criteria
+
+- [ ] the bridge distinguishes an empty answer from a failure, and neither
+      signals
+- [ ] a corpus-scope agent whose query matches nothing renders an empty view and
+      writes `:AGENT_MATCHED: 0`, instead of erroring
+- [ ] an unconfigured or failing CLI still produces the refusal, with its message
+      unchanged
+- [ ] the Commentary paragraphs in both files are corrected when it lands
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.14",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:24.303483Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Migrate org-ql-semantic.el onto the org-db-cli bridge    :bridge:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.15
+:LABELS:   ["bridge","dot-emacs"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-ql-semantic.el` (in the user's dot-emacs lisp directory) invokes the same
+`org` CLI for its own purposes, with its own invocation code and its own password
+handling.  `org-db-cli.el` was written to be the shared invocation layer, and says
+so in its Commentary: "Consumers: org-agents.el (candidate-file prefilter);
+org-ql-semantic.el migration is a planned follow-up."
+
+Migrating it removes a duplicate spawn path and puts one "never signals"
+contract behind both.  It also concentrates the config/DSN handling in one place,
+which matters because that handling reads a keychain password.
+
+## Evidence
+
+- `org-db-cli.el:10-18` — the Commentary naming the planned follow-up and stating
+  the contract ("query functions never signal … they `message` and return nil").
+- Spec "Scope of Version 1" deferred list: "`org-ql-semantic` migration onto
+  `org-db-cli`".
+- `org-db-cli-db-url`'s docstring, which warns not to derive the URL from
+  `org-ql-semantic-db-url` "which is only assigned when that package loads" —
+  the coupling this migration would remove.
+
+## What to do
+
+- Move `org-ql-semantic.el`'s spawn path onto `org-db-cli--run`, keeping its own
+  subcommand and output parsing.
+- Check the contract fits: `org-db-cli--run` returns nil and messages on failure;
+  a semantic search that wants to distinguish "no matches" from "search failed"
+  needs the same treatment as the bridge's empty-versus-failed issue.
+- `org-ql-semantic.el` lives in the parent repository (dot-emacs/lisp), so the
+  change spans two repositories.
+
+## Acceptance Criteria
+
+- [ ] `org-ql-semantic.el` no longer spawns the CLI itself
+- [ ] its behaviour on a failed invocation is unchanged, or changed deliberately
+      and documented
+- [ ] `org-db-cli.el`'s Commentary is updated once the migration lands, so it
+      stops describing a follow-up that happened
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.15",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:24.425510Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-deferred-features-fbk.15",
+    "depends_on_id": "orga-deferred-features-fbk.14",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:24.425510Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] A buffer-wide update refreshes only an agent's first block    :commands:feature:view:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.16
+:LABELS:   ["commands","feature","view"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+One agent may carry several dynamic blocks — a list and a table of the same
+query, say.  An update that was not asked for from inside a particular block
+writes only the **first**: `org-agents--goto-block` searches the agent's own entry
+and stops at the first `org-agents` block it finds.  So
+`org-agents-update-buffer` and `org-agents-update-all` refresh one view and leave
+the others as they were, with no indication that they are stale.
+
+It is documented in the Commentary as a known limitation, with the workaround
+(put point in the block, or use `org-update-all-dblocks`).  It is still a
+surprise the second time you build two views of one agent.
+
+A related fact worth deciding at the same time: `:AGENT_MATCHED:` is one property
+on one entry, so a multi-block agent records whichever block was updated last.
+
+## Evidence
+
+- `org-agents.el` — `org-agents--goto-block`: "An agent carrying several blocks of
+  its own is answered for by the first; the others are written where the user
+  stands in them, or by `org-update-all-dblocks`."
+- `org-agents--update-block` and `org-agents--update-agent` — the `block`
+  argument is the block point sat in, and is nil for a buffer-wide update.
+- Commentary, "Known limitations", third bullet, and its test beside the other
+  update commands.
+- Ledger: "a buffer-wide update refreshes only an agent's FIRST block, so a
+  second view on the same agent goes stale (org-update-all-dblocks refreshes all
+  but writes no AGENT_MATCHED)" —
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`.
+- Task 9 report concern 5 (the one-property-per-entry consequence).
+
+## What to do
+
+- Collect every `org-agents` block in the agent's own entry and write each,
+  rather than stopping at the first.
+- Decide what `:AGENT_MATCHED:` means then: the count of the last block written
+  is the least useful choice.  Either write it once for the agent's matches, or
+  say in the property's documentation which block it describes.
+- The matches only need collecting once for all of an agent's blocks; the writer
+  currently collects per block.
+
+## Acceptance Criteria
+
+- [ ] `org-agents-update-buffer` refreshes every block of a two-block agent, and a
+      test asserts both bodies changed
+- [ ] `:AGENT_MATCHED:` has one stated meaning for a multi-block agent, tested
+- [ ] the Commentary's known-limitation bullet is removed, not left contradicting
+      the code
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.16",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:24.552597Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Update the enclosing agent from inside one of its aliases    :commands:feature:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.17
+:LABELS:   ["commands","feature"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-agents-update` needs point on the agent, in its drawer, or in its block.
+Point inside a **generated alias** finds the alias heading, which is no agent, and
+the command refuses with "no agent and no `org-agents` block at point".
+
+That is deliberate and correct as a rule — a heading that supplies no query is no
+agent, and climbing blindly would act on whatever heading happened to be above.
+But the aliases are the package's own output, sitting directly under the agent
+that wrote them, and standing in one is a natural place to want a refresh.
+
+The wrinkle recorded at the time: a nested agent makes "which agent" ambiguous,
+so climbing needs a rule, not just a loop.
+
+## Evidence
+
+- `org-agents.el` — `org-agents--agent-marker`: "A heading that supplies none is
+  no agent — an alias with a note under it is the common case — and a command
+  asked for an agent there says so rather than acting on whatever heading is
+  above."
+- Task 9 report, concern 2, in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/task-9-report.md`
+  ("if it annoys in use, climbing ancestors until an `:AGENT_QUERY:` is found
+  would be a three-line change, with the wrinkle that a nested agent makes
+  'which agent' ambiguous").
+
+## What to do
+
+- Climb ancestors until an entry carrying `:AGENT_QUERY:` is found, and stop at
+  the first — the nearest enclosing agent is the one whose subtree point is in.
+- An alias carrying `:AGENT_MATCH: t` is recognisable, so the climb can be
+  restricted to "point is in an alias of the agent above it", which avoids acting
+  from an unrelated child heading.
+- Keep the refusal for a heading that is neither.
+
+## Acceptance Criteria
+
+- [ ] with point in a generated alias, `org-agents-update` updates the enclosing
+      agent
+- [ ] with point in an ordinary child heading that is not an alias, the refusal
+      is unchanged
+- [ ] a nested agent's aliases update the nested agent, not its ancestor, and a
+      test pins it
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.17",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:24.666805Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] update-all visits every named file, agent or not    :commands:feature:perf:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.18
+:LABELS:   ["commands","feature","perf"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`org-agents-update-all` visits every file `org-agents-files` names, whether or not
+it holds an agent, and leaves each one modified rather than saved.
+
+Both are deliberate.  Leaving buffers modified is stated in the docstring — "so an
+update can be read over, and undone, before it is kept" — and is the right default
+for a command that rewrites headings.  Visiting every named file is fine while the
+setting names agent files, which is what it is for.
+
+The cost appears when a user points `org-agents-files` at a directory: every Org
+file below it is opened, most of them holding no agent, and all of them left in
+the buffer list.  A cheap grep for the property name before visiting would skip
+them.
+
+## Evidence
+
+- `org-agents.el` — `org-agents--named-files` ("A directory contributes the Org
+  files below it"), `org-agents--agent-files`, and `org-agents-update-all`, whose
+  docstring states the leave-modified contract.
+- Task 9 report, concern 4, in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/task-9-report.md`
+  ("A grep-before-visit prefilter would help a corpus-sized setting; the
+  defcustom is meant to name agent files, so I did not add one").
+
+## What to do
+
+- Skip a file whose text does not contain `:AGENT_QUERY:` before visiting it.  A
+  literal search of the file on disk is enough, and a false positive costs only a
+  visit — `org-agents--buffer-agents` already refuses to call a heading an agent
+  just because the text appears in it.
+- Leave the modified-not-saved contract alone unless there is a reason to change
+  it; if it does change, it must be opt-in.
+
+## Acceptance Criteria
+
+- [ ] a directory holding one agent file and many others visits one file, proven
+      by a test that counts buffers
+- [ ] a file whose only occurrence of the property name is inside an annotation is
+      still visited, and still correctly yields no agent
+- [ ] the leave-modified contract is unchanged, or changed with an option and a
+      docstring that says so
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.18",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:24.788274Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] AGENT_COPY: copy a match's keyword, tags and priority onto its alias    :feature:tinderbox:view:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.2
+:LABELS:   ["feature","tinderbox","view"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+An alias today shows a link and, optionally, a suffix of property values.  It
+does not carry the match's tags, TODO keyword, priority or planning lines.
+`AGENT_COPY` was the deferred mechanism for copying some of those onto the alias
+so a children view reads like the entries it stands for.
+
+One caveat is already recorded and is the reason this needs thought rather than
+code: **copying planning lines would surface aliases in the agenda**, because the
+agenda collects scheduled and deadline entries regardless of TODO keyword.  A
+user with fifty aliases would find fifty duplicate agenda lines.
+
+## Evidence
+
+- Spec "Scope of Version 1": "alias display copying (`AGENT_COPY` — note
+  `planning` copying would surface aliases in the agenda, which collects
+  scheduled/deadline entries regardless of TODO keyword)".
+- Resolved decision 2 in the same spec: "Alias copying: none in v1".
+- `org-agents--render-children` and `org-agents--format-suffix` in
+  `org-agents.el` — where a copied field would have to be written, and where the
+  preservation rule decides what survives a re-render.
+
+## What to do
+
+- Support the safe fields first (tags, TODO keyword, priority) and decide
+  explicitly about planning: either refuse it, or make the exclusion default
+  (`org-agents-exclude`) also keep aliases out of the agenda.
+- Fit it to the preservation contract: a pristine alias is deleted and rewritten
+  each update, so copied fields regenerate; an annotated alias is preserved and
+  keeps its old copies.  Say which happens.
+
+## Acceptance Criteria
+
+- [ ] `:AGENT_COPY:` names fields, and only known field names are accepted
+      (diagnosed at read time, like every other agent property)
+- [ ] a test asserts a copied field regenerates on a pristine alias and is left
+      alone on an annotated one
+- [ ] planning copying is either refused, or a test asserts aliases do not
+      appear in an agenda built from the fixture
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.2",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.922650Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Elisp formats, computed columns and sort expressions    :feature:view:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.3
+:LABELS:   ["feature","view"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Three display features were cut to a property-name list each:
+
+- `:AGENT_FORMAT:` is whitespace-separated property names, not an Elisp
+  expression;
+- `:AGENT_COLUMNS:` names properties (plus `ITEM_BY_ID`), with no computed
+  columns;
+- `:AGENT_SORT:` accepts a closed set of element sorters plus `(column N)` /
+  `(ts-column N)`, with no sort expression.
+
+Each of the three would let the user write Elisp that runs per match.  The
+mechanism for that already exists and is the reason this is tractable:
+`org-agents--gate` is the package's single evaluation boundary, and residual
+Lisp already reaches org-ql through it after approval.
+
+## Evidence
+
+- Spec "Scope of Version 1": "Elisp `AGENT_FORMAT`/computed columns/sort
+  expressions" in the deferred list.
+- Design review, feature cuts item 10: "`AGENT_FORMAT`-as-Elisp (becomes a
+  property-name list), computed columns and Elisp sort keys".
+- `org-agents.el` — `org-agents--format-suffix`, `org-agents--table-row`,
+  `org-agents--sort-ok-p` / `org-agents--read-sort`, and
+  `org-agents--check-row-sort`, which is where each would have to be validated.
+
+## What to do
+
+- Take them one at a time; each is independent, and a computed column is the
+  most useful of the three.
+- Every one of them must be read with `org-agents--read-sexp`, expanded through
+  the `$PROP` layer, and gated.  A sort expression additionally runs once per
+  comparison, so the gate result must be memoized before sorting starts.
+
+## Acceptance Criteria
+
+- [ ] whichever is implemented goes through the existing gate; no new evaluator
+- [ ] a malformed or unapproved expression is diagnosed at the point the
+      property is read, naming the property, consistent with the rest of the
+      package
+- [ ] a test asserts the unapproved case does not evaluate
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.3",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.052274Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] AGENT_ADD_IDS: give matches stable link targets    :feature:view:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.4
+:LABELS:   ["feature","view"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Links to matches without an Org ID fall back to a `file:…::*heading` search
+string.  That works, and it is deliberate, but it produces three of the alias
+contract's four sharp edges:
+
+- two ID-less matches with **identical headings in one file** share one target,
+  so one alias may stand for both while the count says two;
+- a match that **gains an ID** between updates yields a stale alias plus a new
+  one, because the target changed;
+- a renamed heading breaks the search string.
+
+`AGENT_ADD_IDS` was the deferred answer: give matches an ID when one is needed,
+so every alias has a stable target.  It is the only one of these edges that can
+be closed rather than documented.
+
+The cost is that it writes to the user's files outside the agent's own subtree,
+which nothing in v1 does; that is a decision, not an oversight.
+
+## Evidence
+
+- Spec "Scope of Version 1" deferred list: `AGENT_ADD_IDS`.
+- `org-agents.el` Commentary, the alias-contract paragraph, which states all
+  three edges.
+- `org-agents--link-to` in `org-agents.el` — the `id:` versus
+  `file:…::*heading` decision, and the `org-id-add-location` registration.
+- Task 7 report concerns (a) and Minor 3 in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/task-7-report.md`.
+
+## What to do
+
+- An opt-in property (or defcustom) that makes an update assign IDs to matches
+  that have none, before links are built.
+- Decide whether it applies to every match or only to ambiguous ones (two
+  matches sharing a target is the case that is actually broken).
+- Say plainly in the docstring that it modifies files other than the agent's.
+
+## Acceptance Criteria
+
+- [ ] with the option on, two ID-less matches with the same heading in one file
+      render as two aliases with two distinct targets
+- [ ] with the option off, today's behaviour is unchanged (a test pins both)
+- [ ] the buffers it modifies are left modified, not saved, matching
+      `org-agents-update-all`'s existing contract
+- [ ] the Commentary's sharp-edge list is corrected for whichever edges close
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.4",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.164533Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Discover agents from the database instead of a file list    :commands:feature:prefilter:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.5
+:LABELS:   ["commands","feature","prefilter"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Agents are found by `org-agents-files`, an explicit list defaulting to
+`~/org/agents.org`.  A user who writes an agent anywhere else has to remember to
+add its file to that list, or the agent is never updated by
+`org-agents-update-all`.
+
+The deferred alternative is to ask the database: the corpus store already knows
+which entries carry an `:AGENT_QUERY:` property, so the registry could be
+discovered rather than declared.
+
+This is also the natural first consumer of a general `(org-db …)` org-ql
+predicate, and it is blocked by the same thing every property query is blocked by
+— `AGENT_QUERY` must be a stored property, which it is, as long as nobody writes
+an `:AGENT_QUERY+:` continuation.
+
+## Evidence
+
+- Spec "Scope of Version 1" deferred list: "db registry discovery"; and Resolved
+  decision 3: "Registry: explicit `org-agents-files`, default
+  `~/org/agents.org` (db discovery deferred)".
+- `org-agents.el` — `org-agents-files`, `org-agents--named-files`,
+  `org-agents--agent-files`.
+
+## What to do
+
+- Add an optional discovery path: query the database for entries carrying
+  `AGENT_QUERY`, resolve to files, and union with `org-agents-files`.
+- Keep the explicit list authoritative when the database is unavailable — the
+  package's rule everywhere else is that the database is an optimisation, never
+  a source of truth.
+- Warn about staleness: a newly written agent is invisible until the next
+  `org db sync`, which is exactly the staleness contract the prefilter already
+  documents.
+
+## Acceptance Criteria
+
+- [ ] discovery is opt-in and degrades to `org-agents-files` with no database
+- [ ] a discovered file is de-duplicated against the explicit list by truename,
+      the way `org-agents--agent-files` already does
+- [ ] the staleness consequence is documented where the option is defined
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.5",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.274145Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Push down todo/done and tags    :feature:prefilter:soundness:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.6
+:LABELS:   ["feature","prefilter","soundness"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+The push-down table has six rows.  Two obvious predicates are missing, and both
+were refused for measured reasons rather than for lack of time:
+
+- **`todo` / `done`**: the database's keyword columns are empty unless the store
+  ran with `--keywords`, and the database's notion of `todo` also includes done
+  keywords.  Pushing it would drop matches on either count.  What is needed is a
+  probe of the keyword configuration, so the Elisp side knows whether the store
+  that produced this database knew the keywords, and which of them are done.
+- **`tags`**: the database misses `#+FILETAGS:` entirely, so a pushed
+  `(tags "x")` under-matches.  That is an org-jw fix, tracked separately.
+
+Each new row needs a differential test of its own; that is the spec's own rule
+for growing the table.
+
+## Evidence
+
+- Spec soundness table: "Everything else is residual in v1 — explicitly
+  including `todo`/`done` (keyword columns are empty unless the store ran with
+  `--keywords`; DB `todo` also includes done), `tags` (misses `#+FILETAGS:`) …
+  Growing the table later requires a differential test per row and, where the DB
+  under-matches, an org-jw fix first."
+- `org-agents.el`, `org-agents--pushdown-fns` — the six classifier rows, each
+  commented with its divergence evidence.
+- The differential suite's red-team cases already assert the current refusals: a
+  DONE entry against `(todo)`, and `FILETAGS` against `(tags …)`.
+
+## What to do
+
+- For `todo`/`done`: find out what the CLI can tell you about the keyword
+  configuration of the database in front of you, and push only when the answer
+  is unambiguous.  If it cannot, say so and close this half.
+- For `tags`: wait for the org-jw FILETAGS fix, then add the row with its
+  differential case, and convert the red-team assertion.
+
+## Acceptance Criteria
+
+- [ ] each new row lands with a differential test asserting candidate files are a
+      superset of org-ql's matches for that conjunct
+- [ ] the corresponding red-team "must NOT be pushed" assertion is converted, not
+      deleted
+- [ ] the row's comment records the divergence evidence, matching the style of
+      the existing six
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.6",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.385823Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-deferred-features-fbk.6",
+    "depends_on_id": "orga-org-jw-followups-a35.4",
+    "type": "blocks",
+    "created_at": "2026-08-19T17:30:23.385823Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-deferred-features-fbk.6",
+    "depends_on_id": "orga-prove-the-prefilter-b9p.1",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:23.385823Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Traverse or/not and classify nested queries    :feature:prefilter:soundness:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.7
+:LABELS:   ["feature","prefilter","soundness"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+The spec once described a rule the implementation never had: "a nested query's
+push-down class is the class of its weakest member".  The splitter instead
+pushes nothing for a nested query (`parent`, `ancestors`, `children`,
+`descendants`), and does not traverse `or` or `not` at all.
+
+That is safe — pushing nothing can never drop a match — and the spec was
+corrected to say the rule is unimplemented rather than broken.  It is left as a
+v2 opportunity: a `(descendants (property "P"))` could legitimately narrow to
+files holding property P, and an `or` of two pushable conjuncts could narrow to
+the union.
+
+Doing this wrongly is exactly how a superset property is lost, so it needs the
+differential suite running first.
+
+## Evidence
+
+- Spec, "Soundness classes, not names" and the residual list; and the corrected
+  statement that `or`/`not` are not traversed and a nested query pushes nothing.
+- `org-agents.el` — `org-agents--skeleton` and `org-agents--pushdown-fns`.
+- Worklist item **E7** and doc item **B9** in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/wg-defer/task10-worklist.md`.
+- Task 5 report concerns 2 and 3.
+
+## What to do
+
+- `not`: a negated conjunct can never be pushed as itself; the only sound
+  treatment is to drop it (already what happens) — confirm and document.
+- `or`: push only when **every** branch pushes, and push the disjunction; one
+  unpushable branch makes the whole thing residual.
+- nested queries: decide per head whether the relation is one the database can
+  answer (it stores an ancestry ltree, so `descendants` is plausible).
+
+## Acceptance Criteria
+
+- [ ] each newly pushed shape has a differential case proving the superset
+      property, not an argument in a comment
+- [ ] a query with one unpushable branch of an `or` pushes nothing for that `or`
+- [ ] the spec's statement about the weakest-member rule is updated to match
+      whatever lands
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.7",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.498500Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-deferred-features-fbk.7",
+    "depends_on_id": "orga-prove-the-prefilter-b9p.1",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:23.498500Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] Push a property form carrying :inherit nil    :feature:prefilter:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.8
+:LABELS:   ["feature","prefilter"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+A `property` form carrying an explicit `:inherit nil` reads the entry's own
+drawer — exactly what the database holds — and so would be sound to push.  Today
+it pushes nothing, because the splitter's pattern only matches the one- and
+two-argument arities: a plist-bearing form "says for itself whether to inherit
+and has an arity no pattern matches".
+
+That is the conservative choice and it costs only speed.  Recovering it is a
+small, provable win for users who write `:inherit nil` deliberately.
+
+The subtlety worth carrying: the plain forms do **not** inherit, and the same
+false claim was written into a docstring and a spec table during development and
+had to be retracted twice.  Whatever lands here must not restate it.
+
+## Evidence
+
+- Spec soundness table: "A form carrying `:inherit` says for itself whether to
+  inherit and has an arity no pattern matches, so it pushes nothing."
+- `org-agents.el` — `org-agents--pushdown-fns`'s property rows, and the comment
+  above `org-agents--property-inherits-p` recording org-ql's actual inheritance
+  behaviour ("do not write 'plain forms inherit' anywhere").
+- Worklist item **E6** in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/wg-defer/task10-worklist.md`.
+- Ledger Rulings 20, 27 and the consolidation re-review, which measured the
+  inheritance behaviour at all three settings of
+  `org-use-property-inheritance`.
+
+## Acceptance Criteria
+
+- [ ] `(property "P" "v" :inherit nil)` pushes what the two-argument form pushes,
+      subject to the same whitespace and pushability tests
+- [ ] `:inherit t` and any other plist-bearing shape still push nothing
+- [ ] a differential case covers the new row
+- [ ] no comment, docstring or spec line claims that a plain `property` form
+      inherits
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.8",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.614621Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-deferred-features-fbk.8",
+    "depends_on_id": "orga-prove-the-prefilter-b9p.1",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:23.614621Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] A file-count ceiling for walking a directory scope live    :commands:feature:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-deferred-features-fbk.9
+:LABELS:   ["commands","feature"]
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+An unbounded scope — `active`, `all`, or any directory — refuses to run without a
+usable prefilter, rather than walking the files live.  That was the most
+user-visible decision in the whole change (Ruling 30): a directory promises no
+bound on what it holds, so reading it live means opening however many files it
+turns out to hold.
+
+The cost is real and was surfaced deliberately: a residual-only query under a
+small directory scope now errors where it could have simply worked.  An agent
+with `:AGENT_SCOPE: positron` and `:AGENT_QUERY: (about "positron")` — a query
+that pushes nothing — fails instead of walking a directory that may hold four
+files.
+
+The recorded v2 lever is a file-count ceiling: walk an unbounded scope live when
+it turns out to name fewer than N files.
+
+## Evidence
+
+- `org-agents--scope-files` in `org-agents.el` — the refusal, whose message names
+  the scope, the skeleton state and the CLI state.
+- `org-agents--needs-prefilter-p` — "`active` and `all` are the corpus by name,
+  and a directory promises no less".
+- Commentary, "corpus and directory scopes require the prefilter" paragraph,
+  which names this lever as unimplemented.
+- Ledger Ruling 30 in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`
+  ("if the user wants small directories to evaluate live, that's a
+  one-defcustom v2 addition (max-file-count threshold)").
+
+## What to do
+
+- A defcustom, default nil (today's behaviour), naming the greatest number of
+  files an unbounded scope may walk live.
+- Counting the files is itself the walk, so count with
+  `directory-files-recursively` once and reuse the list — do not count and then
+  walk again.
+- `active` and `all` should probably stay refused whatever the ceiling says; a
+  directory is the case with a legitimate small answer.
+
+## Acceptance Criteria
+
+- [ ] with the ceiling set, a directory scope holding fewer files than the
+      ceiling evaluates live and renders
+- [ ] with the ceiling unset, the current refusal is unchanged (pinned by test)
+- [ ] the file list is walked once, not twice
+- [ ] the Commentary paragraph is updated from "unimplemented lever" to what it
+      does
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-deferred-features-fbk.9",
+    "depends_on_id": "orga-deferred-features-fbk",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:23.729089Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#B] org-jw changes the prefilter depends on    :upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35
+:LABELS:   ["org-jw","upstream"]
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+The prefilter is only as sound as the producer behind it.  org-jw
+(/Users/johnw/src/org-jw, branch `org-db-query-file-json`) supplies the `org db`
+CLI that org-agents queries, and this project accumulated a list of org-jw
+defects and gaps — one of them a **known soundness break with a test recording
+it**, the rest correctness-neutral but blocking whole rows of the push-down
+table.
+
+Ruling 50 of the SDD ledger keeps that work in org-jw's own repository: the new
+repo documents the dependency rather than vendoring it.  These issues live here
+because org-agents is the consumer whose guarantees depend on them, and because
+nothing else is tracking them.
+
+## Scope
+
+Every org-jw item this project recorded, in dependency order:
+
+- `identifier` accepting `+`, plus accumulation semantics — the one soundness
+  break, and it closes two symptoms at once;
+- the batched file-path lookup and the three quadratic dedup passes;
+- test coverage for `Query.hs`, the 889-line sexp-to-SQL compiler this whole
+  design depends on;
+- `#+FILETAGS:` never reaching `entry_tags`, which is what keeps `(tags …)` out
+  of the push-down table;
+- two JSON-output defects in the legacy printers.
+
+## Success Criteria
+
+- [ ] every item is either fixed in org-jw or closed with a recorded decision
+- [ ] the `PROP+` expected-failure test in `org-agents-test.el` has become an
+      ordinary passing test
+- [ ] `Query.hs` has tests, so a change to the compiler can be reviewed against
+      something other than the differential suite
+- [ ] no org-agents guarantee still rests on an unfixed org-jw defect without
+      saying so in the README
+
+* TODO [#B] org-jw: a property name ending in + loses the whole drawer    :soundness:upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35.1
+:LABELS:   ["org-jw","soundness","upstream"]
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+## Context
+
+One two-line parser fix in org-jw closes two separate defects this project hit,
+one of them a proven soundness break in the prefilter.
+
+`FlatParse.Combinators.identifier` accepts only alphanumerics, `_` and space.
+Org property names may end in `+` (`:TOKENS+:` accumulates onto `:TOKENS:`), and
+`Org/Parse.hs` parses a property line as `between ':' ':' identifier`.  So a
+drawer holding any `+` line fails to parse **as a whole**: the entry gets no
+`entry_properties` rows at all, not even for its plain lines.
+
+Consequences measured on this project:
+
+1. A pushed `(property "TOKENS")` answers with no file while org-ql matches the
+   separator-joined value — an under-match, i.e. the prefilter is a subset, not
+   a superset.  This is the one `:expected-result :failed` test in the suite.
+2. An agent whose query is continued with `:AGENT_QUERY+:` loses the whole
+   drawer for storage purposes, which is why the package's Commentary tells
+   users never to write one.
+
+Fixing the parser is necessary but not sufficient: `Store.hs` then needs a
+decision on what an accumulated property *means* in the database — one row per
+line, or one joined row.  org-ql's `org-entry-get` answers with the lines joined
+by `org-property-separators` (whitespace by default), so a joined row is what
+makes equality comparable; separate rows keep the existing exact-match semantics
+and would leave the equality->existence downgrade in place.
+
+## Steps to Reproduce
+
+1. In /Users/johnw/src/org-jw (branch `org-db-query-file-json`), store a file
+   whose entry has:
+
+       :PROPERTIES:
+       :TOKENS: alpha
+       :TOKENS+: beta
+       :END:
+
+2. `org db query --ql '(property "TOKENS")' --format json` answers with no row
+   for that file.
+3. In Emacs, `(org-entry-get nil "TOKENS")` on the same entry answers
+   `"alpha beta"`, and `(org-ql-select … '(property "TOKENS" "alpha beta"))`
+   matches it.
+4. Equivalently, run the org-agents differential test
+   `org-agents-test-diff-accumulated-property-breaks-superset` against a scratch
+   database: it is written as an expected failure precisely because of this.
+
+## Evidence
+
+- `flatparse-util/src/FlatParse/Combinators.hs:121-122` —
+  `identifier = some (satisfy (\c -> isAlphaNum c || c == '_' || c == ' '))`.
+- `org-parse/src/Org/Parse.hs:63` — `between ':' ':' identifier` is the property
+  name parser, so the failure is at drawer level.
+- Measured during Task 10: `accum.org` parses with `_entryProperties = []` plus
+  a `PlainDrawer`.
+- Ledger: `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`
+  — Ruling 41 ("Needs the Haskell `identifier` fix … PLUS a design decision on
+  accumulation semantics in Store.hs … ONE identifier fix closes both this and
+  the AGENT_QUERY+ drawer loss").
+
+## Acceptance Criteria
+
+- [ ] `identifier` accepts `+` in a property name, with a `CombinatorsTest.hs`
+      case for it
+- [ ] a drawer containing a `:NAME+:` line parses, and its plain lines still
+      produce their rows
+- [ ] the accumulation decision is recorded in `Store.hs` (a comment naming
+      what a `+` line does to the stored value and why)
+- [ ] `org-agents-test-diff-accumulated-property-breaks-superset` passes as an
+      ordinary test against a scratch database, and its `:expected-result
+      :failed` marker is removed
+- [ ] the Commentary's warning about `:AGENT_QUERY+:` is revisited (it may
+      become unnecessary)
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-org-jw-followups-a35.1",
+    "depends_on_id": "orga-org-jw-followups-a35",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:21.790761Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-org-jw-followups-a35.1",
+    "depends_on_id": "orga-prove-the-prefilter-b9p.1",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:21.790761Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] org-jw: batch the file-path lookup in db query --format json    :perf:upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35.2
+:LABELS:   ["org-jw","perf","upstream"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+The org-jw patch this project asked for does the opposite of what the spec
+asked, and adds three quadratic passes on the way.
+
+The spec asked for a `files` join in `entrySelectSQL` — "one query, no per-row
+`queryFilePath` round trips".  What was built instead resolves file paths after
+the fact: `nub` the file ids, then one `queryFilePath` per distinct id, then a
+list `lookup` per output row.  At ~50k entries over ~1k files that is roughly
+75M comparisons plus 1k round trips.
+
+Correctness is unaffected — the final whole-branch review confirmed that — which
+is why it was recorded as a post-merge item rather than a blocker.  The right
+idiom is already used two calls later on the Emacs side (`org-agents--same-files`
+builds a hash table), so this is a consistency fix as much as a perf one.
+
+There is a third quadratic pass on the Emacs side, in
+`org-db-cli-query-files`; it is tracked separately under the hygiene epic so
+that each repo's change stands alone.
+
+## Evidence
+
+- `org-jw/bin/DB/Exec.hs:108-113` — the JSON arm:
+  `let fileIds = nub (map erFileId limited)`, then
+  `mapM (\fid -> (,) fid <$> queryFilePath db fid) fileIds`, then
+  `let pathFor fid = join (lookup fid pathPairs)`.
+- `org-db/src/Org/DB/Store.hs:450` — `queryFilePath` is one `SELECT` per call.
+- Ledger: `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`
+  — final whole-branch review item **I2**, and the spec's bridge section, which
+  now honestly records what was built with this as a deferred optimization.
+
+## What to do
+
+- Either join `files` in the entry select (the spec's original shape) or batch
+  the lookup as `SELECT id, path FROM files WHERE id = ANY(?)`.
+- Replace `nub` with an ordered set / `nubOrd`, and the per-row `lookup` with a
+  `Map` or `HashMap`.
+- Measure before and after against a real corpus — the point is a number, not a
+  refactor.
+
+## Acceptance Criteria
+
+- [ ] `db query --format json` issues one file-path query, not one per distinct
+      file id
+- [ ] no `nub`/`lookup` over a growing list remains on that path
+- [ ] output is byte-identical to today's for a fixture corpus (a test, not an
+      eyeball)
+- [ ] a before/after timing is recorded on a corpus-sized data set
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-org-jw-followups-a35.2",
+    "depends_on_id": "orga-org-jw-followups-a35",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:21.895655Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] org-jw: Query.hs has no tests    :test:upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35.3
+:LABELS:   ["org-jw","test","upstream"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+`Query.hs` is the sexp-to-SQL compiler the whole prefilter design depends on,
+and it has no tests of its own.  889 lines, and the org-db suite runs only
+`RenderTest` and `EmbedRetryTest`.
+
+This is not theoretical.  Both defects the final whole-branch review found lived
+in the interaction between `org-agents--push-planning` and this file's
+`parseDateFilter`/`compileDateConds`, and neither side had a test:
+
+- `parseDateFilter`'s `go` folds left over a record, so a repeated `:to` keeps
+  the **last** value, while Emacs `plist-get` takes the **first** — a candidate
+  set narrower than what org-ql matches, silently;
+- `compileDateConds` conjoins `day = ?` for `:on` with `day <= ?` for `:to`,
+  while `org-ql--from-to-on` lets `:on` overwrite both ends and discards the
+  bound.
+
+org-agents now refuses to push either shape, which is the safe direction, but
+the compiler is still unverified everywhere else.
+
+## Evidence
+
+- `org-db/src/Org/DB/Query.hs` — 889 lines; `parseDateFilter`'s fold at
+  :330-345, `compileDateConds` at :686-704, `resolveMjd` at :708-712.
+- `org-db/test/Spec.hs` — the test group is exactly
+  `[EmbedRetryTest.tests, RenderTest.tests]`.
+- Ledger: `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`
+  — final review item **I3** ("Query.hs (889 lines) still has no tests of its
+  own").
+
+## What to do
+
+Start with the arms org-agents actually pushes, because those are the ones whose
+divergence is a soundness break, and they are pure functions over a sexp:
+
+- date filters: each of `:from`/`:to`/`:on`, integer offsets, `today`, an
+  absolute date, a calendar-invalid date (which `resolveMjd` currently maps to
+  MJD 0), a repeated key, `:on` beside a bound;
+- `property` with one and two arguments;
+- `heading` with a literal and with several arguments;
+- the boolean heads, and a query the compiler should refuse.
+
+Golden-SQL assertions are enough for most of it and need no database.
+
+## Acceptance Criteria
+
+- [ ] `Query.hs` has a test module wired into `org-db/test/Spec.hs`
+- [ ] every conjunct shape org-agents pushes has a case, including the two the
+      review found and the calendar-invalid date
+- [ ] a deliberate mutation of the date fold (first-wins instead of last-wins)
+      fails a named test
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-org-jw-followups-a35.3",
+    "depends_on_id": "orga-org-jw-followups-a35",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.006345Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-org-jw-followups-a35.3",
+    "depends_on_id": "orga-prove-the-prefilter-b9p.1",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:22.006345Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] org-jw: file tags never reach entry_tags    :soundness:upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35.4
+:LABELS:   ["org-jw","soundness","upstream"]
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+A file's `#+FILETAGS:` never reaches the database, so `(tags …)` cannot be
+pushed down.  Org applies file tags to every entry in the file; org-ql matches
+accordingly; the database holds no `entry_tags` row for them.  Pushing
+`(tags "x")` would therefore answer with fewer files than org-ql matches — an
+under-match, the one thing a superset argument cannot survive.
+
+That is why the spec's soundness table lists `tags` as residual with the
+parenthetical "misses `#+FILETAGS:`", and why growing the push-down table to
+cover tags is blocked on this fix.
+
+The cause is that the header-tags parse is commented out in org-parse.
+
+## Steps to Reproduce
+
+1. Store a file whose header begins `#+FILETAGS: :ftag:` and whose entries carry
+   no tags of their own.
+2. `org db query --ql '(tags "ftag")' --format json` answers with nothing.
+3. In Emacs, `(org-ql-select "that-file.org" '(tags "ftag"))` matches every
+   entry in it.  (Measured during Task 10 on the differential fixture
+   `filetags.org`: `(tags "ftag")` matches twice.)
+
+## Evidence
+
+- `org-parse/src/Org/Parse.hs:78-111` — `parseFromProperty` sits inside a block
+  comment, and in `parseHeader` the `_headerTags <- … "filetags"` line is
+  commented out, so a header's file tags are parsed by nothing.
+- `org-db/src/Org/DB/Store.hs:657` — `INSERT INTO entry_tags (entry_id, tag,
+  is_inherited, source_id)`; the `is_inherited` column exists, so the schema
+  already anticipates tags an entry did not write itself.
+- Spec `docs/superpowers/specs/2026-08-18-org-agents-design.md`, soundness
+  table: "Everything else is residual in v1 — explicitly including … `tags`
+  (misses `#+FILETAGS:`)".
+
+## Acceptance Criteria
+
+- [ ] a file's `#+FILETAGS:` produce `entry_tags` rows for its entries, marked
+      inherited
+- [ ] a stored fixture with only file tags answers `db query --ql '(tags "x")'`
+- [ ] the org-agents differential suite gains (or converts) a case asserting the
+      `tags` conjunct is now a superset filter — a prerequisite for pushing it
+- [ ] the spec's soundness-table parenthetical is corrected when it lands
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-org-jw-followups-a35.4",
+    "depends_on_id": "orga-org-jw-followups-a35",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.120573Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] org-jw: legacy JSON printers emit unescaped control characters    :upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35.5
+:LABELS:   ["org-jw","upstream"]
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+The legacy JSON printers in the `org` executable emit invalid JSON for text
+containing C0 control characters.  `jsonEscape` handles newline, carriage
+return, tab, double quote and backslash, and passes every other control byte
+through raw.  A title holding a control character produces a document a strict
+parser rejects — and the Emacs bridge parses with `json-parse-string`, which is
+strict.
+
+The new `db query --format json` arm does not have this problem: Task 1 added
+`Org.DB.Render.jsonEscapeText`, which escapes any control character as a
+backslash-u escape, with a test.  The legacy printers behind `db search`,
+`db review` and the grouped output still use the old function.
+
+This is the same defect class the org-agents bridge was hardened against on the
+Emacs side (a malformed line is counted and skipped rather than signalled), so
+the symptom would be silently missing rows rather than a visible error.
+
+## Steps to Reproduce
+
+1. Store an entry whose title contains a raw control character (character 1, for
+   instance).
+2. Run `org db search … --format json`, or `db review --format json`.
+3. Pipe the output through any strict JSON parser, or `json-parse-string` in
+   Emacs: it rejects the line.
+4. Compare with `db query --format json` over the same entry, which escapes the
+   character properly.
+
+## Evidence
+
+- `org-jw/bin/DB/Exec.hs:303-309` — `jsonEscape` is five `T.replace` calls and
+  nothing else.
+- `org-db/src/Org/DB/Render.hs:34` onward — `jsonEscapeText` is the correct one,
+  with `isControl`/`ord` handling and a test at
+  `org-db/test/RenderTest.hs:46-52`.
+- Ledger:
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`
+  — Task 1 concern 2, "pre-existing executable jsonEscape lacks control-char
+  escaping (search/group JSON) — out of scope, not changed", and worklist item
+  **E2**.
+
+## Acceptance Criteria
+
+- [ ] the legacy printers use `Org.DB.Render.jsonEscapeText`, or a shared
+      equivalent, rather than the local `jsonEscape`
+- [ ] a test asserts a control character in a title comes out escaped from the
+      `search` printer, and that the raw byte is absent
+- [ ] no second escaping implementation is left in the executable
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-org-jw-followups-a35.5",
+    "depends_on_id": "orga-org-jw-followups-a35",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.231657Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] org-jw: printers emit an entry ltree where a file path belongs    :upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35.6
+:LABELS:   ["org-jw","upstream"]
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Several of the legacy printers put the entry's **ltree path** — a dotted chain of
+entry ids maintained by a database trigger — where a file path belongs, one of
+them under a JSON key literally named `"file"`.  A consumer reading that field
+gets something that is not a path and cannot be opened.
+
+`entries.path` is `ltree` (the entry's ancestry); `files.path` is the file's
+path.  `erPath` is selected from `e.path::text`, i.e. the ltree, and is then used
+as `fpath`.  The correct source is `queryFilePath`, or a joined `files.path`,
+which the newer `db query --format json` arm and `printSearchRowJson` both use.
+
+Nothing in org-agents depends on these printers — the prefilter uses `db query`
+— so this is a correctness issue for other consumers of the CLI, recorded here
+because this project found it.
+
+## Steps to Reproduce
+
+1. Store any file with nested entries.
+2. Run `org db review --format json`, and the grouped text output.
+3. The `"file"` value is a dotted ltree of entry ids, not a path; compare with
+   the `"file"` value from `db query --format json` for the same entry.
+
+## Evidence
+
+- `org-db/src/Org/DB/Schema.hs:194` — `path ltree` on `entries`; `:153` —
+  `path TEXT NOT NULL UNIQUE` on `files`.
+- `org-db/src/Org/DB/Store.hs:486` — `e.path::text` is what fills `erPath`.
+- `org-jw/bin/DB/Exec.hs:214`, `:403`, `:429-433`, `:453` — four printers do
+  `let fpath = fromMaybe (erFileId row) (erPath row)`, and :433 emits it as
+  `"file"`.
+- Compare `org-jw/bin/DB/Exec.hs:253-259` (`printSearchRowJson`), which resolves
+  the path with `queryFilePath` and is right.
+- Worklist item **E1** in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/wg-defer/task10-worklist.md`.
+
+## Acceptance Criteria
+
+- [ ] every printer that names a file resolves it through the `files` table
+- [ ] `erPath` is either renamed to say it is an ltree, or dropped from the rows
+      that only wanted a file path
+- [ ] a test asserts `db review --format json`'s `"file"` is a real path for a
+      nested entry
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-org-jw-followups-a35.6",
+    "depends_on_id": "orga-org-jw-followups-a35",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.337115Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] org-jw: three small items to confirm or refute    :upstream:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-org-jw-followups-a35.7
+:LABELS:   ["org-jw","upstream"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Three small org-jw items were recorded while org-agents was built.  None of the
+three was verified against the code by the person filing this issue, so each is
+written as a claim to check first, not a defect to fix on sight.  They are kept
+together because each is a few lines and none is worth its own thread until
+someone confirms it.
+
+Filed so they are not lost; close whichever turns out not to be true.
+
+## Evidence
+
+Recorded in the Task 1 review's deferred minors and carried into worklist item
+,**E3** —
+`/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/wg-defer/task10-worklist.md`.
+
+## What to do
+
+1. **`--list-predicates` for `db query`.**  The Elisp side keeps its own table of
+   predicate heads the CLI understands (`org-agents--cli-only-heads`, and the
+   `org-ql-ext`-aware table behind `org-agents--known-predicate-p`).  A flag
+   printing the compiler's supported heads would let the consumer check its
+   table instead of guessing, and would make the CLI-spelling gate's error
+   messages verifiable against the CLI rather than against a comment.
+2. **A `LOWER(name)` functional index** on the property tables, if property-name
+   lookups are in fact case-insensitive in the compiled SQL — check what
+   `Query.hs` emits before adding an index for a comparison it does not make.
+3. **Run pending migrations before `db query`**, or fail with a message naming
+   the migration to run.  A stale schema currently surfaces as a raw SQL error.
+
+## Acceptance Criteria
+
+- [ ] each of the three is confirmed or refuted against the current code, and
+      the finding is written into this issue
+- [ ] the confirmed ones are fixed, or split into their own issues
+- [ ] this issue is closed once none of the three is still an open question
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-org-jw-followups-a35.7",
+    "depends_on_id": "orga-org-jw-followups-a35",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.468929Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Housekeeping in the dot-emacs parent repo
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-parent-repo-housekeeping-ta4
+:LABELS:   ["dot-emacs"]
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+org-agents now lives in its own repository, nested at
+`~/.emacs.d/lisp/org-agents`, which resolves through an out-of-store
+home-manager symlink to `/Users/johnw/src/dot-emacs/lisp/org-agents` — inside the
+dot-emacs repository.  Two of its hard dependencies, `org-ql-ext.el` and
+`org-ext.el`, are that parent directory's own files, reachable with `-L ..`.
+
+That closeness means a handful of loose ends belong to the parent repository
+rather than to this one.  They are tracked here because this project found them
+and nothing else is watching them.
+
+## Scope
+
+- a false statement in dot-emacs's own `lisp/CLAUDE.md`;
+- a dead `(require 'cl)` in both repo-local dependencies, which the byte-compile
+  gate has to work around;
+- registering this repository with dot-emacs the way `llm-setup` is registered;
+- one imported commit whose subject describes behaviour the branch no longer has.
+
+## Success Criteria
+
+- [ ] every item is either done in dot-emacs, or closed with a decision
+- [ ] the byte-compile gate's dependency workaround is either still needed for a
+      recorded reason, or removed
+- [ ] dot-emacs's relationship to this repository is explicit rather than a
+      `.git/info/exclude` entry nobody remembers
+
+* TODO [#E] dot-emacs lisp/CLAUDE.md claims .elc files are tracked    :docs:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-parent-repo-housekeeping-ta4.1
+:LABELS:   ["docs","dot-emacs"]
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+dot-emacs's `lisp/CLAUDE.md` — the instructions every agent working in that
+directory is told to follow — states as fact:
+
+    Byte-compiled files (`.elc`) are tracked in the repository
+
+They are not.  `.gitignore:1` is `*.elc`, and `git ls-files lisp/ | grep -c
+'\.elc$'` answers 0.
+
+This is not cosmetic: the false claim already cost this project a wrong ruling.
+Ruling 29 concluded that a `Package cl is deprecated` warning was inherited from a
+Nix-managed dependency and had to be parked; Ruling 35 superseded it after
+measuring that the warning was a *worktree artifact* — the `.elc` exists in the
+main checkout but is not tracked, so a fresh worktree compiles the dependency as
+source and inherits its warning.  The byte-compile gate now compiles those
+dependencies first, precisely to reproduce the environment the untracked `.elc`
+creates.
+
+## Steps to Reproduce
+
+1. `grep -n '\.elc' /Users/johnw/src/dot-emacs/lisp/CLAUDE.md` — line 346 makes
+   the claim.
+2. `grep -n elc /Users/johnw/src/dot-emacs/.gitignore` — line 1 is `*.elc`.
+3. `git -C /Users/johnw/src/dot-emacs ls-files lisp | grep -c '\.elc$'` — 0.
+
+## Evidence
+
+- `/Users/johnw/src/dot-emacs/lisp/CLAUDE.md:346`.
+- `/Users/johnw/src/dot-emacs/.gitignore:1`.
+- Ledger Rulings 29 and 35 in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`,
+  and Task 10 report, Concerns 6.
+
+## Acceptance Criteria
+
+- [ ] the line says what is true (`.elc` files are gitignored)
+- [ ] while there: the note is worth keeping in some form, because the *absence*
+      of tracked `.elc` is what makes a fresh worktree compile dependencies from
+      source, which is the fact the byte-compile gate is built around
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-parent-repo-housekeeping-ta4.1",
+    "depends_on_id": "orga-parent-repo-housekeeping-ta4",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:25.999867Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Drop the dead cl require from org-ql-ext.el and org-ext.el    :hygiene:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-parent-repo-housekeeping-ta4.2
+:LABELS:   ["dot-emacs","hygiene"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Both repo-local dependencies of org-agents carry a dead `(require 'cl)`:
+
+    /Users/johnw/src/dot-emacs/lisp/org-ql-ext.el:32
+    /Users/johnw/src/dot-emacs/lisp/org-ext.el:32
+
+`cl` has been deprecated since Emacs 27, and neither file uses a bare `cl`
+macro — the only `cl`-era spellings in `org-ql-ext.el` are `push` and `when-let`,
+which are core and `subr-x`.  Each file requires `cl-lib` already.
+
+This costs org-agents something concrete.  Byte-compiling `org-agents.el` in a
+checkout with no `.elc` reports "Package cl is deprecated" against **its own**
+`(require 'org-ql-ext)` line, so `tools/org-agents-byte-compile-gate.sh` has to
+compile `org-ext.el` and then `org-ql-ext.el` first (in that order — the second
+requires the first) to reproduce an environment where the warning does not fire.
+Dropping the two lines would remove the need for that stage.
+
+Measured during development: dropping the require from only one of the two files
+leaves the warning (each is necessary, neither sufficient); dropping both gives a
+zero-warning compile of `org-agents.el` and `org-db-cli.el`.  Neither file becomes
+warning-free in itself — `org-ext.el` has 13 unrelated warnings and `org-ql-ext.el`
+3 — so this is not a cleanup that finishes anything, just one that removes a dead
+line and a build workaround.
+
+These are the user's live configuration files, which is why they were deliberately
+not edited during the org-agents work.
+
+## Evidence
+
+- `/Users/johnw/src/dot-emacs/lisp/org-ql-ext.el:30-33` —
+  `(require 'cl-lib)` followed by `(eval-when-compile (require 'cl) (require
+  'cl-macs))`.
+- `/Users/johnw/src/dot-emacs/lisp/org-ext.el:32` — the same line.
+- The measurement table in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/wg-defer/task10-worklist.md`
+  ("Appendix — byte-compile provenance"), rows `bc-nocl`, `bc-both`, `bc-all3`.
+- Ledger Ruling 35, and Task 10 report Concerns 7.
+- `tools/org-agents-byte-compile-gate.sh` — the dependency stage this would
+  retire.
+
+## Acceptance Criteria
+
+- [ ] both `(require 'cl)` lines are gone and both files still byte-compile with
+      no *new* warning
+- [ ] `org-ql-ext.el` and `org-ext.el` still load and work in the user's live
+      Emacs (they are configuration, so this is a real check, not a formality)
+- [ ] the byte-compile gate is re-run; if its dependency stage is now unnecessary,
+      it is simplified, and if it is still needed the reason is written in the
+      script
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-parent-repo-housekeeping-ta4.2",
+    "depends_on_id": "orga-parent-repo-housekeeping-ta4",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:26.122971Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Register org-agents with dot-emacs as a submodule
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-parent-repo-housekeeping-ta4.3
+:LABELS:   ["dot-emacs"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+This repository sits inside the dot-emacs working tree
+(`/Users/johnw/src/dot-emacs/lisp/org-agents`, reached as
+`~/.emacs.d/lisp/org-agents` through an out-of-store home-manager symlink).  At
+extraction time dot-emacs was told to ignore that directory via
+`.git/info/exclude` — a machine-local file, deliberately chosen so that the
+extraction did not commit anything to dot-emacs unasked.
+
+That leaves the relationship implicit and machine-local: a fresh clone of
+dot-emacs knows nothing about org-agents, and the ignore rule exists only on this
+machine.
+
+dot-emacs already has the idiom for this: `llm-setup` is a git submodule.  Once
+org-agents has a remote, registering it the same way makes the dependency explicit
+and reproducible.
+
+## Evidence
+
+- Ledger, "PHASE 2 — extraction into a standalone repo" in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`:
+  "Plan: ignore it from dot-emacs via `.git/info/exclude` (NOT a committed
+  `.gitignore` — the user did not ask me to modify dot-emacs).  Precedent for
+  later: dot-emacs already uses a submodule (llm-setup), so submodule registration
+  is the idiomatic follow-up once the new repo has a remote."
+- `/Users/johnw/src/dot-emacs/lisp/CLAUDE.md` — describes `llm-setup` as the sole
+  remaining git submodule, and will need a sentence about this one.
+
+## What to do
+
+- Give this repository a remote.
+- In dot-emacs: remove the `.git/info/exclude` entry and add the submodule at
+  `lisp/org-agents`.
+- Update `lisp/CLAUDE.md`, which currently says `llm-setup` is the only submodule.
+- Mind the symlink: the path is `lisp/org-agents` from dot-emacs's point of view,
+  and `~/.emacs.d/lisp/org-agents` from Emacs's.
+
+## Acceptance Criteria
+
+- [ ] a fresh clone of dot-emacs with `--recurse-submodules` produces a working
+      `lisp/org-agents`
+- [ ] the `.git/info/exclude` workaround is removed once the submodule replaces it
+- [ ] `lisp/CLAUDE.md` names both submodules
+- [ ] `init.org`'s use-package block for org-agents still loads from the same path
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-parent-repo-housekeeping-ta4.3",
+    "depends_on_id": "orga-parent-repo-housekeeping-ta4",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:26.248476Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#E] One imported commit describes a design that was rejected    :docs:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-parent-repo-housekeeping-ta4.4
+:LABELS:   ["docs","dot-emacs"]
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+The imported history contains one commit whose subject asserts behaviour the code
+does not have.  Commit `112215377` describes a guard against the `today` UTC/local
+skew — "push a relative date only when the local and UTC dates agree, else treat
+the conjunct as residual" — and the very next design change, `e87611bfa`, removed
+that guard in favour of rewriting relative dates to an absolute local date.
+
+The final honesty audit found it and called it what it is: not a defect, but a
+decision the repository's owner should make deliberately — "commit `112215377`'s
+subject asserts behavior the branch does not have (its guard was undone by
+`e87611bfa`).  Squash-or-keep is a merge-shape decision, not a defect."
+
+The 35-commit history was preserved through extraction on purpose (Ruling 49),
+because the commit messages explain why each fix exists.  This one message is the
+exception: read alone, it describes a design the project rejected.
+
+## Evidence
+
+- Ledger: the "Observation accepted, needs the owner's decision at merge" line and
+  Rulings 39, 40, 43 and 49 in
+  `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`.
+- The two commits themselves, `112215377` and `e87611bfa`, now in this
+  repository's history under whatever hashes the extraction produced.
+- `org-agents.el` — `org-agents--absolute-date` and the surrounding comments are
+  the design that won; nothing named in `112215377`'s subject remains.
+
+## What to do
+
+Pick one, and it is a matter of taste:
+
+- leave it, since the following commit explains itself and the history is
+  otherwise a faithful record of how the design was found; or
+- amend or squash the pair, so no message in the history describes a rejected
+  design.  Rewriting is cheapest now, before anything is pushed or shared.
+
+## Acceptance Criteria
+
+- [ ] the decision is made and recorded (in this issue is enough)
+- [ ] if the history is rewritten, the suite and the byte-compile gate are re-run
+      afterwards, and no other commit's message is left describing behaviour the
+      code no longer has
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-parent-repo-housekeeping-ta4.4",
+    "depends_on_id": "orga-parent-repo-housekeeping-ta4",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:26.368678Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#B] Prove the database prefilter's superset property    :differential:prefilter:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prove-the-prefilter-b9p
+:LABELS:   ["differential","prefilter"]
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+org-agents evaluates every query with org-ql against live buffers.  The
+PostgreSQL database behind the org-jw `org db` CLI is only an optional
+,*candidate-file prefilter*: `org-agents--skeleton` pushes the conjuncts of a
+query that are provably superset filters, `org-db-cli-query-files` asks the CLI
+which files satisfy them, and `org-agents--same-files` intersects that answer
+with the scope's own files.  The whole design rests on one property:
+
+> for every row of `org-agents--pushdown-fns`, the candidate FILE set the
+> prefilter answers with is a SUPERSET of the files org-ql actually matches.
+
+A conjunct that is not a superset silently drops true matches.  No unit test
+over the skeleton string can detect that — only running both engines over one
+corpus can.  A 20-test differential suite exists for exactly this and **has
+never been executed**: no PostgreSQL was reachable during development (the
+user's real database is remote at postgres.vulcan.lan behind a keychain
+password), so all 20 tests skip.
+
+Every green number the project reports measures the Emacs half.
+
+## Scope
+
+- run the differential suite once against a scratch database (the single
+  highest-value action available on this project);
+- fix or record what it finds;
+- measure what the prefilter is actually worth once a live database is
+  reachable.
+
+The two known soundness breaks it is expected to surface both live in org-jw
+and are tracked under the org-jw epic.
+
+## Success Criteria
+
+- [ ] the 20 differential tests have executed against a live scratch database
+      at least once, with the run's output kept
+- [ ] every superset assertion either passes, or fails with a filed issue that
+      names the diverging conjunct
+- [ ] the project no longer has to carry the caveat "the prefilter's superset
+      property is designed, wired, self-verifying and unproven"
+
+* TODO [#A] Run the 20 differential tests against a scratch PostgreSQL database    :differential:prefilter:test:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prove-the-prefilter-b9p.1
+:LABELS:   ["differential","prefilter","test"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+## Context
+
+The differential suite is the only test that can prove the prefilter's superset
+property, and it has never run.  All 20 tests `skip-unless` four environment
+variables, and during development no PostgreSQL was reachable, so the final
+suite result reads "176 tests, 156 as expected, 0 unexpected, **20 skipped**".
+
+This matters because the two defects the final whole-branch review found both
+lived in the one interaction — `org-agents--push-planning` against the CLI's
+`parseDateFilter` — where neither side had a test.  Running this suite once is
+the only thing that would have caught that class independently.
+
+## Evidence
+
+- `org-agents-test.el`, section `;;;; Differential (database prefilter
+  superset)` — the header comment carries the complete operator setup, the four
+  variables and why each is required.
+- Ledger: `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`
+  — "OPEN FOR THE USER (DoD-relevant, cannot resolve autonomously)", and the
+  final DoD's "CAVEAT CARRIED TO THE OWNER, NOT WAIVED".
+- Design: `wg-diff/differential-suite-design.md` (991 lines) beside that ledger
+  — the fixture corpus, the exact CLI lines, and the per-row assertions.
+
+## What to do
+
+1. Create a scratch database.  The DSN's name **must** contain
+   `org_agents_test`: the harness refuses any other DSN, because it hands the
+   database to `db unstore`, which drops every data table in it.
+
+       createdb org_agents_test
+       psql -d org_agents_test -c 'CREATE EXTENSION IF NOT EXISTS ltree;
+                                   CREATE EXTENSION IF NOT EXISTS vector'
+
+   (`db init` creates both best-effort, but they need a superuser.)
+
+2. Build the **patched** CLI.  The `org` on PATH predates the one-field org-jw
+   patch and emits no `file` field; without it every candidate set comes back
+   empty, which looks exactly like a sound but narrow prefilter.  In
+   /Users/johnw/src/org-jw (branch `org-db-query-file-json`):
+   `nix develop -c cabal build org-jw`.
+
+3. Export the four variables and run only the differential selector:
+
+       export ORG_AGENTS_TEST_DB_URL=postgresql:///org_agents_test
+       export ORG_AGENTS_TEST_CONFIG=$HOME/org/org.yaml
+       export ORG_AGENTS_TEST_KEYWORDS=$HOME/org/org.dot
+       export ORG_AGENTS_TEST_ORG_EXE=<cabal-built org binary>
+       "$EMACS" -batch -L . -L .. -l org-agents-test.el \
+         --eval '(ert-run-tests-batch-and-exit "org-agents-test-diff")'
+
+   `ORG_AGENTS_TEST_KEYWORDS` is not optional: the YAML declares empty keyword
+   lists, so without it every entry stores with `keyword_value` NULL and "TODO"
+   glued onto the front of its title.
+
+4. The harness resets the scratch database itself, in the fixed order
+   `db unstore` -> `db init --dimensions 1536` -> `db store`; `unstore` drops
+   the settings row, so the `init` between the two is required.
+
+5. Record the output.  A set-but-broken environment fails loudly by design
+   rather than skipping, so a red result here is information, not noise.
+
+## Acceptance Criteria
+
+- [ ] the 20 `org-agents-test-diff-*` tests execute (not skip) against a
+      scratch database, and the run's output is kept somewhere durable
+- [ ] `org-agents-test-diff-accumulated-property-breaks-superset` still reports
+      as the one expected failure, or the org-jw fix has landed and it is a pass
+- [ ] any superset assertion that fails gets its own issue naming the conjunct,
+      the fixture and the diverging engine
+- [ ] the run's setup is written down (or scripted) so the second run is cheap
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prove-the-prefilter-b9p.1",
+    "depends_on_id": "orga-prove-the-prefilter-b9p",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:21.565882Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Measure what the prefilter is actually worth    :perf:prefilter:
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prove-the-prefilter-b9p.2
+:LABELS:   ["perf","prefilter"]
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 10:30]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+## Context
+
+Nobody has measured what the prefilter is worth.  Its whole purpose is to keep
+a corpus-wide agent from opening every one of ~3,670 `.org` files, and the
+design review measured the corpus size but never an end-to-end agent update
+with and without the database.
+
+The perf follow-up in the CLI's JSON arm (one `queryFilePath` per distinct file
+id, plus three quadratic dedup passes) was left unfixed for exactly this
+reason: the final review recorded it as "correctness unaffected; wants the
+live-DB harness to measure against".  Once a scratch database is reachable,
+both numbers become cheap to get.
+
+## Evidence
+
+- Ledger: `/Users/johnw/src/dot-emacs/.superpowers/sdd/2026-08-18-org-agents/progress.md`
+  — final whole-branch review item **I2** ("~75M comparisons at ~50k
+  entries/~1k files … wants the live-DB harness to measure against").
+- `org-agents--scope-files` (org-agents.el) — the base-file walk is deliberately
+  deferred so that the refusal path does not pay for it; that ordering is the
+  thing worth timing.
+
+## What to do
+
+- With a live database, time `org-agents-update` on a corpus-scope agent whose
+  query pushes at least one conjunct: total time, the CLI round trip alone, the
+  truename intersection, and the org-ql verification pass.
+- Compare against the same agent with `org-db-cli-db-url` unset and the scope
+  changed to an explicit file list of comparable size (a corpus scope refuses
+  outright without a prefilter, so it cannot be the baseline).
+- Report the numbers in the README's own words, replacing any claim that is
+  currently argued rather than measured.
+
+## Acceptance Criteria
+
+- [ ] a measured before/after for one realistic corpus-scope agent, on the real
+      ~/org corpus
+- [ ] the CLI round trip's share of the total is known, so the batched-lookup
+      issue can be judged worth doing or not
+- [ ] the numbers land in the repo (README or a docs note), not only in a chat
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prove-the-prefilter-b9p.2",
+    "depends_on_id": "orga-org-jw-followups-a35.2",
+    "type": "related",
+    "created_at": "2026-08-19T17:30:22.580940Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-prove-the-prefilter-b9p.2",
+    "depends_on_id": "orga-prove-the-prefilter-b9p",
+    "type": "parent-child",
+    "created_at": "2026-08-19T17:30:22.580940Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-prove-the-prefilter-b9p.2",
+    "depends_on_id": "orga-prove-the-prefilter-b9p.1",
+    "type": "blocks",
+    "created_at": "2026-08-19T17:30:22.580940Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
