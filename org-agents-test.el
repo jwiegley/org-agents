@@ -323,7 +323,8 @@
   "Run BODY with `dir' bound to a temp corpus of two org files and
 `agent-file' bound to a file containing one agent entry.
 `a' and `b' name the corpus files, whose absolute paths the agent
-entry's `:AGENT_SCOPE:' lists.  The database bridge is left
+entry's `:AGENT_SCOPE:' lists.  `org-directory' is the corpus, so no
+test can reach the developer's own; the database bridge is left
 unconfigured and property inheritance off, so a test that wants either
 must arrange it; buffers visiting the corpus are killed afterwards,
 because the files they visit are about to be deleted."
@@ -332,6 +333,7 @@ because the files they visit are about to be deleted."
           (a (expand-file-name "a.org" dir))
           (b (expand-file-name "b.org" dir))
           (agent-file (expand-file-name "agents.org" dir))
+          (org-directory dir)
           (org-db-cli-config-file nil)
           (org-db-cli-db-url nil)
           (org-use-property-inheritance nil)
@@ -352,6 +354,10 @@ because the files they visit are about to be deleted."
              (with-current-buffer buf (set-buffer-modified-p nil))
              (kill-buffer buf))))
        (delete-directory dir t))))
+
+(defun org-agents-test--titles (matches)
+  "The headline text of MATCHES, in order."
+  (mapcar (lambda (element) (org-element-property :raw-value element)) matches))
 
 (defmacro org-agents-test--in-agent (&rest body)
   "Run BODY in the agent buffer of `org-agents-test--with-corpus', at its start."
@@ -425,9 +431,50 @@ reaches `read-from-string' as an end of file."
     (goto-char (point-max))
     (should (= 1 (marker-position (plist-get (org-agents--read-agent) :marker))))))
 
+(ert-deftest org-agents-test-read-agent-rejects-unreadable-scope-and-sort ()
+  "A malformed value must not escape as `end-of-file'.
+`org-agents-update-all' answers for one agent at a time by catching
+`user-error', and would abort the whole run over anything else."
+  (org-agents-test--in-agent
+    (org-entry-put nil "AGENT_SCOPE" "(\"a.org\"")
+    (should-error (org-agents--read-agent) :type 'user-error)
+    (org-entry-delete nil "AGENT_SCOPE")
+    (org-entry-put nil "AGENT_SORT" "(date")
+    (should-error (org-agents--read-agent) :type 'user-error)))
+
 (ert-deftest org-agents-test-scope-base-files-rejects-bad-scope ()
   (should-error (org-agents--scope-base-files '(path "x")) :type 'user-error)
   (should-error (org-agents--scope-base-files 42) :type 'user-error))
+
+(ert-deftest org-agents-test-scope-base-files-branches ()
+  "What each scope names, over a corpus with an archive in it."
+  (org-agents-test--with-corpus
+    (make-directory (expand-file-name "sub/archive" dir) t)
+    (make-directory (expand-file-name "archive" dir) t)
+    (let ((archived (expand-file-name "archive/old.org" dir))
+          (nested (expand-file-name "sub/archive/older.org" dir))
+          (kept (expand-file-name "sub/kept.org" dir)))
+      (dolist (file (list archived nested kept))
+        (write-region "* TODO Something\n" nil file nil 'quiet))
+      (let ((active (org-agents--scope-base-files 'active))
+            (all (org-agents--scope-base-files 'all)))
+        ;; `active' descends the corpus, but into no `archive' directory,
+        ;; however deep it sits.
+        (should (member a active))
+        (should (member kept active))
+        (should-not (member archived active))
+        (should-not (member nested active))
+        ;; `all' spares nothing.
+        (should (member archived all))
+        (should (member nested all)))
+      ;; A directory scope walks that subtree, relative to `org-directory'.
+      (let ((sub (org-agents--scope-base-files "sub")))
+        (should (member kept sub))
+        (should (member nested sub))
+        (should-not (member a sub)))
+      ;; `agenda' defers to `org-agenda-files' whatever the corpus holds.
+      (let ((org-agenda-files (list a)))
+        (should (equal (list a) (org-agents--scope-base-files 'agenda)))))))
 
 (ert-deftest org-agents-test-scope-conjunct ()
   "Only a directory scope earns a path conjunct, and it travels as plain text."
@@ -495,10 +542,31 @@ agent would silently match nothing at all."
       (should (null (org-agents--collect agent))))))
 
 (ert-deftest org-agents-test-collect-corpus-scope-needs-prefilter ()
+  "And it says so before walking the corpus it is refusing to read."
   (org-agents-test--in-agent
     (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
-      (cl-letf (((symbol-function 'org-db-cli-available-p) #'ignore))
+      (cl-letf (((symbol-function 'org-db-cli-available-p) #'ignore)
+                ((symbol-function 'org-agents--scope-base-files)
+                 (lambda (_scope) (error "must not walk the corpus"))))
         (should-error (org-agents--collect agent) :type 'user-error)))))
+
+(ert-deftest org-agents-test-collect-directory-scope-needs-prefilter ()
+  "A directory needs the prefilter as much as `all' does.
+Nothing about naming a directory bounds it below corpus size, and the
+recursive walk it would otherwise take is what the prefilter is for."
+  (org-agents-test--in-agent
+    (let ((agent (plist-put (org-agents--read-agent) :scope "sub")))
+      (cl-letf (((symbol-function 'org-db-cli-available-p) #'ignore)
+                ((symbol-function 'org-agents--scope-base-files)
+                 (lambda (_scope) (error "must not walk the corpus"))))
+        (should-error (org-agents--collect agent) :type 'user-error)))))
+
+(ert-deftest org-agents-test-collect-requires-a-marker ()
+  "Without a marker the self-skip cannot run, and the agent would render
+itself as one of its own matches.  Say so instead."
+  (org-agents-test--in-agent
+    (let ((agent (plist-put (org-agents--read-agent) :marker nil)))
+      (should-error (org-agents--collect agent) :type 'user-error))))
 
 (ert-deftest org-agents-test-collect-corpus-scope-needs-a-skeleton ()
   "A query with nothing to push must not open the whole corpus either."
@@ -565,7 +633,16 @@ which for an agent is the file the agent itself lives in."
       (should (= 2 (length (org-agents--collect agent))))
       (should (= 1 (length (org-agents--collect (plist-put agent :limit 1)))))
       (should (= 2 (length (org-agents--collect (plist-put agent :limit 9)))))
-      (should (null (org-agents--collect (plist-put agent :limit 0)))))))
+      (should (null (org-agents--collect (plist-put agent :limit 0))))
+      ;; Sorted, then cut: `reverse' brings the second entry of a.org to
+      ;; the front, so a limit of 1 keeps that one and not the first.
+      (should (equal '("Fix widget" "Old thing")
+                     (org-agents-test--titles
+                      (org-agents--collect (plist-put agent :limit 9)))))
+      (setq agent (plist-put agent :sort 'reverse))
+      (should (equal '("Old thing")
+                     (org-agents-test--titles
+                      (org-agents--collect (plist-put agent :limit 1))))))))
 
 (ert-deftest org-agents-test-element-sort ()
   "org-ql sorts elements; a table view sorts rendered rows of strings."

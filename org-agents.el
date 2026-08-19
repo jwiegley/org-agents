@@ -495,10 +495,11 @@ A list of files and directories, or the symbol `agenda'."
   :type '(choice (const agenda) (repeat file)) :group 'org-agents)
 
 (defconst org-agents--corpus-scopes '(active all)
-  "Scopes naming so much of the corpus that they require a prefilter.")
+  "Scope names that stand for the corpus rather than for named files.")
 
 (defconst org-agents--scope-names '("agenda" "active" "all")
-  "The `:AGENT_SCOPE:' values that name a corpus rather than a directory.")
+  "The `:AGENT_SCOPE:' values read as symbols.
+Any other bare value names a directory, relative to `org-directory'.")
 
 (defconst org-agents--element-sorts '(date todo priority reverse)
   "The `:AGENT_SORT:' methods org-ql can sort matched elements by.
@@ -521,11 +522,21 @@ but empty and not written at all mean the same thing here."
   (when-let* ((value (org-entry-get nil property)))
     (unless (string-blank-p value) value)))
 
+(defun org-agents--read-sexp (property value)
+  "Read VALUE, the `:PROPERTY:' of an agent entry, as a Lisp form.
+A malformed value reaches `read-from-string' as an end of file, which
+`org-agents-update-all' cannot tell from a bug in this package: it
+answers for one agent at a time by catching `user-error', and anything
+else aborts the whole run."
+  (condition-case err (car (read-from-string value))
+    (error (user-error "org-agents: unreadable :%s: `%s': %s"
+                       property value (error-message-string err)))))
+
 (defun org-agents--read-scope (value)
   "Read the `:AGENT_SCOPE:' property VALUE, which may be nil."
   (cond
    ((null value) 'agenda)
-   ((string-prefix-p "(" value) (car (read-from-string value)))
+   ((string-prefix-p "(" value) (org-agents--read-sexp "AGENT_SCOPE" value))
    ;; Only the three corpus names are symbols.  Interning every bare
    ;; value would leave no way to write the directory scope the design
    ;; calls for, and no `stringp' scope could ever reach
@@ -547,14 +558,12 @@ whose query matched nothing."
   "Read the agent entry at point into a plist."
   (let ((q (org-agents--entry-get "AGENT_QUERY")))
     (unless q (user-error "No :AGENT_QUERY: at point"))
-    (let ((query (condition-case err (car (read-from-string q))
-                   (error (user-error "org-agents: unreadable query %s: %s"
-                                      q (error-message-string err))))))
+    (let ((query (org-agents--read-sexp "AGENT_QUERY" q)))
       (list :query (org-agents--expand query)
             :view (intern (or (org-agents--entry-get "AGENT_VIEW") "children"))
             :scope (org-agents--read-scope (org-agents--entry-get "AGENT_SCOPE"))
             :sort (when-let* ((s (org-agents--entry-get "AGENT_SORT")))
-                    (car (read-from-string s)))
+                    (org-agents--read-sexp "AGENT_SORT" s))
             :limit (org-agents--read-limit (org-agents--entry-get "AGENT_LIMIT"))
             :columns (org-agents--entry-get "AGENT_COLUMNS")
             :format (org-agents--entry-get "AGENT_FORMAT")
@@ -584,9 +593,13 @@ whose query matched nothing."
      (mapcar #'expand-file-name scope))
     (_ (user-error "org-agents: bad scope %S" scope))))
 
-(defun org-agents--corpus-scope-p (scope)
-  "Non-nil when SCOPE may only be resolved through the database prefilter."
-  (memq scope org-agents--corpus-scopes))
+(defun org-agents--needs-prefilter-p (scope)
+  "Non-nil when SCOPE is unbounded, so may only be resolved through the DB.
+`active' and `all' are the corpus by name, and a directory promises no
+less: nothing about naming one bounds what it holds, and reading it live
+means opening however many files it turns out to hold.  `agenda' and an
+explicit file list name their files, and are read live."
+  (or (memq scope org-agents--corpus-scopes) (stringp scope)))
 
 (defun org-agents--scope-conjunct (scope)
   "CLI path conjunct for directory SCOPE, else nil.
@@ -618,31 +631,41 @@ reads and the links that will be followed."
   (let* ((scope (plist-get agent :scope))
          (skeleton (org-agents--skeleton (plist-get agent :query)
                                          (org-agents--scope-conjunct scope)))
-         (base (org-agents--scope-base-files scope))
          (candidates (and skeleton
                           (org-db-cli-available-p)
                           (org-db-cli-query-files skeleton))))
+    ;; The base files are gathered only where they will be used: for an
+    ;; unbounded scope, gathering them is the recursive walk that the
+    ;; prefilter exists to make unnecessary, and the refusal below must
+    ;; not pay for it first.
     (cond
-     (candidates (org-agents--same-files base candidates))
-     ;; No candidates, and a scope too large to read live.  The bridge
-     ;; returns nil for a failure and for a genuinely empty answer
-     ;; alike, so an agent that matches nothing at all is reported here
-     ;; as a missing prefilter -- a needless error, but never a wrong
-     ;; answer, and the alternative is opening the whole corpus.
-     ((org-agents--corpus-scope-p scope)
+     (candidates (org-agents--same-files (org-agents--scope-base-files scope)
+                                         candidates))
+     ;; No candidates, and a scope with no bound on what it would open.
+     ;; The bridge returns nil for a failure and for a genuinely empty
+     ;; answer alike, so an agent matching nothing at all is reported
+     ;; here as a missing prefilter -- a needless error, but never a
+     ;; wrong answer, and the alternative is opening everything.
+     ((org-agents--needs-prefilter-p scope)
       (user-error
-       "org-agents: scope `%s' needs the database prefilter (skeleton %s, cli %s)"
+       ;; `%s': only a reserved name or a directory reaches this, and
+       ;; `%S' would quote the directory twice over.
+       (concat "org-agents: scope `%s' needs the database prefilter or a"
+               " pushable query (skeleton %s, cli %s); for live evaluation"
+               " use `agenda' or an explicit file list")
        scope (if skeleton "ok" "empty")
        (if (org-db-cli-available-p) "failed" "unconfigured")))
-     (t base))))
+     (t (org-agents--scope-base-files scope)))))
 
 (defun org-agents--self-match-p (element marker)
   "Non-nil when ELEMENT is the very entry MARKER points at.
 org-ql sets `:org-hd-marker' to the headline's `:begin', and resolves a
 file to a buffer already visiting it -- by truename, so a scope that
 names the agent's file by another spelling still yields the same buffer.
-An agent matched by its own query is therefore recognized by position."
-  (when-let* ((m (and marker (org-element-property :org-hd-marker element))))
+An agent matched by its own query is therefore recognized by position.
+MARKER must be one: `org-agents--collect' refuses an agent without a
+marker rather than let this comparison quietly stop being made."
+  (when-let* ((m (org-element-property :org-hd-marker element)))
     (and (eq (marker-buffer m) (marker-buffer marker))
          (= (marker-position m) (marker-position marker)))))
 
@@ -650,6 +673,10 @@ An agent matched by its own query is therefore recognized by position."
   "Return AGENT's sorted, limited matches as headlines with markers."
   (unless (org-agents--gate (plist-get agent :query))
     (user-error "org-agents: query not approved"))
+  ;; Without a marker the self-skip cannot be made, and the agent
+  ;; renders itself as one of its own matches.
+  (unless (markerp (plist-get agent :marker))
+    (user-error "org-agents: agent has no marker"))
   (let* ((query (plist-get agent :query))
          (self (plist-get agent :marker))
          (sort (plist-get agent :sort))
