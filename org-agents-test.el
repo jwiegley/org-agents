@@ -2317,6 +2317,37 @@ is on line 1 as though it were three lines further down."
         ;; unreadable property sits, nor line 4, the drawer's last line.
         (should (string-match-p "agents\\.org:1)" report))))))
 
+(ert-deftest org-agents-test-update-buffer-updates-an-agent-after-a-block ()
+  "An agent following a block-view agent renders its own view.
+The first agent has no block yet, so one is written at the end of its
+meta-data -- which, its drawer being followed only by the next heading,
+is exactly where the second agent's anchor sits.  With a marker of the
+default insertion type that anchor does not advance, so the second agent
+is found inside the block just written, renders the FIRST agent's block
+again, and silently never renders its own: no block, no AGENT_MATCHED,
+yet counted as updated.  Found by running the package on a real file."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* Block agent first\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (property \"NEXT_REVIEW\")\n"
+              ":AGENT_VIEW:  list\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"
+              "* Block agent second\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+              ":AGENT_VIEW:  list\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (set-window-buffer (selected-window) (current-buffer))
+      (org-agents-update-buffer)
+      ;; Both agents carry a count, and the buffer holds two blocks.
+      (goto-char (point-min))
+      (should (org-entry-get nil "AGENT_MATCHED"))
+      (search-forward "* Block agent second")
+      (should (org-entry-get nil "AGENT_MATCHED"))
+      (should (= 2 (cl-count-if
+                    (lambda (l) (string-match-p "#\\+BEGIN: org-agents" l))
+                    (split-string (buffer-string) "\n")))))))
+
 (ert-deftest org-agents-test-update-buffer-updates-every-agent ()
   "Every agent in the buffer, each rendering under its own heading.
 That the agents are collected as markers before any of them renders is

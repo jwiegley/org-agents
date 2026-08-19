@@ -1846,7 +1846,19 @@ is no agent one.  The whole buffer is read, whatever it is narrowed to."
        ;; happens -- and not the heading this loop just found.
        (let ((heading (match-beginning 0)))
          (when (org-agents--entry-get "AGENT_QUERY")
-           (push (copy-marker heading) markers)))))
+           ;; Insertion type t, and the choice is load-bearing.  A
+           ;; block-view agent whose block does not exist yet has it
+           ;; inserted at the end of its own meta-data, which for an agent
+           ;; whose drawer is followed only by the next heading is exactly
+           ;; where the NEXT agent's marker sits.  A marker of the default
+           ;; insertion type does not advance for text inserted at its own
+           ;; position, so that marker would be left pointing at the block
+           ;; just written -- and the next agent, found there, would render
+           ;; the previous agent's block a second time and never its own.
+           ;; This is the same hazard Task 7 closed for alias insertion by
+           ;; inserting before the subtree's final newline; here the anchor
+           ;; itself is made to advance.
+           (push (copy-marker heading t) markers)))))
     (nreverse markers)))
 
 (defun org-agents--update-markers (markers)
