@@ -195,13 +195,34 @@
       (should (org-agents--gate (org-agents--expand '$ITEM))))))
 
 (ert-deftest org-agents-test-skeleton-property-exists ()
-  (should (equal (org-agents--skeleton '(and (todo) (property "NEXT_REVIEW")))
-                 "(property \"NEXT_REVIEW\")")))
+  (let ((org-use-property-inheritance nil))
+    (should (equal (org-agents--skeleton '(and (todo) (property "NEXT_REVIEW")))
+                   "(property \"NEXT_REVIEW\")"))))
 
 (ert-deftest org-agents-test-skeleton-property-ts-implies-exists ()
-  (should (equal (org-agents--skeleton
-                  '(and (todo) (property-ts "NEXT_REVIEW" :to today)))
-                 "(property \"NEXT_REVIEW\")")))
+  (let ((org-use-property-inheritance nil))
+    (should (equal (org-agents--skeleton
+                    '(and (todo) (property-ts "NEXT_REVIEW" :to today)))
+                   "(property \"NEXT_REVIEW\")"))))
+
+(ert-deftest org-agents-test-skeleton-rejects-invalid-date ()
+  "An impossible date empties the candidate set instead of narrowing it."
+  (should (null (org-agents--skeleton '(deadline :to "2026-02-30"))))
+  (should (null (org-agents--skeleton '(deadline :to "2026-13-45"))))
+  (should (equal (org-agents--skeleton '(deadline :to "2026-12-31"))
+                 "(deadline :to \"2026-12-31\")"))
+  ;; A leap day in a leap year is a real date.
+  (should (equal (org-agents--skeleton '(deadline :to "2028-02-29"))
+                 "(deadline :to \"2028-02-29\")")))
+
+(ert-deftest org-agents-test-skeleton-multitoken-value-downgrades-to-existence ()
+  "An accumulated value is one string to org-ql and several rows to the DB."
+  (let ((org-use-property-inheritance nil))
+    (should (equal (org-agents--skeleton '(property "TAGS_TEXT" "a b"))
+                   "(property \"TAGS_TEXT\")"))
+    ;; A single token can still be compared whole.
+    (should (equal (org-agents--skeleton '(property "TAGS_TEXT" "a"))
+                   "(property \"TAGS_TEXT\" \"a\")"))))
 
 (ert-deftest org-agents-test-skeleton-empty-for-residual-only ()
   (should (null (org-agents--skeleton '(todo))))
@@ -248,9 +269,24 @@
                  "(and (property \"URL\") (scheduled :to 7) (path \"positron/\"))")))
 
 (ert-deftest org-agents-test-skeleton-no-ts-structs ()
-  "Serialization must come from the pre-normalization sexp."
+  "Serialization must come from the pre-normalization sexp, and stay readable."
   (let ((s (org-agents--skeleton '(and (scheduled :to 7) (property "X")))))
-    (should-not (string-match-p "#s(" s))))
+    (should-not (string-match-p "#s(" s))
+    (should-not (string-match-p "#(" s))))
+
+(ert-deftest org-agents-test-skeleton-strips-text-properties ()
+  "A literal lifted from a buffer carries properties the CLI cannot read."
+  (let ((org-use-property-inheritance nil))
+    (should (equal (org-agents--skeleton
+                    `(and (heading ,(propertize "Review" 'face 'bold)) (todo)))
+                   "(heading \"Review\")"))
+    (should (equal (org-agents--skeleton
+                    `(property "STYLE" ,(propertize "habit" 'face 'bold)))
+                   "(property \"STYLE\" \"habit\")"))
+    (should-not (string-match-p
+                 "#("
+                 (org-agents--skeleton
+                  `(heading ,(propertize "Review" 'face 'bold)))))))
 
 (ert-deftest org-agents-test-skeleton-special-properties-residual ()
   "A special property is entry structure, not a drawer row, so it never pushes."

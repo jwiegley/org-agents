@@ -342,23 +342,38 @@ holds no property row at all, so pushing one as a property test would
 drop true matches.
 
 An inheriting name is unsafe for the same reason, and not only for
-equality: the value may come from a file-level `#+PROPERTY:' line or
-from `org-global-properties', neither of which creates a property row
-in any file.  Existence is then false of every row in a file whose
-entries all match, so even the weaker conjunct would drop the file
-from the candidate set."
+equality.  org-ql's `property' predicate takes `&key inherit' and,
+when the query does not say, uses the boolean value of
+`org-use-property-inheritance', so a plain form inherits for such a
+name.  `org-entry-get-with-inheritance' answers from an ancestor, and
+failing that from a `#+PROPERTY:' keyword or `org-global-properties',
+and those last two create no property row in any file.  Existence is
+then false of every row in a file whose entries all match, so even the
+weaker conjunct would drop the file from the candidate set."
   (and (stringp name)
        (not (member-ignore-case name (cons "CATEGORY" org-special-properties)))
        (not (org-agents--property-inherits-p name))))
+
+(defun org-agents--date-string-p (v)
+  "Non-nil when V is a YYYY-MM-DD string naming a date that exists.
+The database reads an impossible date as MJD 0 and answers with no
+files at all, while org-ql normalizes it and matches -- so a typo like
+\"2026-02-30\" would empty the candidate set rather than narrow it.
+Only a date that survives the round trip is read alike by both sides."
+  (and (stringp v)
+       (string-match-p "\\`[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9]\\'" v)
+       (equal v (ignore-errors
+                  (format-time-string
+                   "%Y-%m-%d"
+                   (encode-time
+                    (parse-time-string (concat v " 00:00:00"))))))))
 
 (defun org-agents--date-arg-ok-p (plist)
   "Non-nil when PLIST holds only :from/:to/:on with CLI-safe values."
   (cl-loop for (k v) on plist by #'cddr
            always (and (memq k '(:from :to :on))
                        (or (integerp v) (eq v 'today)
-                           (and (stringp v)
-                                (string-match-p
-                                 "\\`[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9]\\'" v))))))
+                           (org-agents--date-string-p v)))))
 
 (defun org-agents--push-planning (form)
   "Push planning FORM unchanged, provided its date arguments are CLI-safe."
@@ -377,10 +392,19 @@ from the candidate set."
              (`(property ,(and name (pred org-agents--property-pushable-p)))
               `(property ,name))
              ;; Equality: both sides compare the entry's own value, and
-             ;; a pushable name is one that cannot have inherited it.
+             ;; a pushable name is one that cannot have inherited it.  A
+             ;; form carrying `:inherit' has an arity neither pattern
+             ;; matches, so it pushes nothing at all.
              (`(property ,(and name (pred org-agents--property-pushable-p))
                          ,(and val (pred stringp)))
-              `(property ,name ,val))
+              (if (string-match-p "[[:space:]]" val)
+                  ;; `:NAME+:' lines accumulate into a single value,
+                  ;; joined by `org--property-get-separator' -- a space
+                  ;; unless `org-property-separators' says otherwise.
+                  ;; The database keeps one row per line and compares it
+                  ;; whole, so no row can equal the joined value.
+                  `(property ,name)
+                `(property ,name ,val)))
              (_ nil))))
    (cons 'property-ts
          (lambda (form)
@@ -406,6 +430,16 @@ from the candidate set."
              (_ nil)))))
   "Alist of predicate head → superset-safe CLI conjunct, or nil.")
 
+(defun org-agents--plain-strings (form)
+  "Return FORM with the text properties stripped from every string in it.
+A heading literal or property value lifted out of an Org buffer carries
+properties, and `prin1' writes such a string as `#(\"Review\" 0 6
+ (face bold))', which the CLI's reader cannot parse."
+  (cond ((stringp form) (substring-no-properties form))
+        ((consp form) (cons (org-agents--plain-strings (car form))
+                            (org-agents--plain-strings (cdr form))))
+        (t form)))
+
 (defun org-agents--skeleton (query &optional scope-conjunct)
   "Extract the CLI prefilter skeleton from expanded QUERY as a string.
 Only top-level `and' conjuncts (or the whole query when it is a single
@@ -427,7 +461,8 @@ already known to the caller and does not earn a query."
          (print-length nil))
     (when pushed                     ; scope alone is not worth a round trip
       (prin1-to-string
-       (if (cdr all) (cons 'and all) (car all))))))
+       (org-agents--plain-strings
+        (if (cdr all) (cons 'and all) (car all)))))))
 
 (provide 'org-agents)
 ;;; org-agents.el ends here
