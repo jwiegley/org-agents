@@ -5,7 +5,7 @@
 ;; Author: John Wiegley <johnw@gnu.org>
 ;; Created: 18 Aug 2026
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (org-ql "0.8") (ts "0.2"))
+;; Package-Requires: ((emacs "29.1") (org-ql "0.8"))
 ;; Keywords: org agent query outlines
 ;; X-URL: https://github.com/jwiegley/dot-emacs
 
@@ -220,11 +220,7 @@
 (require 'org-id)
 (require 'org-ql)
 (require 'org-ql-search)                ; `org-agents-preview' delegates to it
-;; `org-agents--absolute-date' resolves a relative date with the same
-;; `ts-adjust' org-ql resolves one with, so the two cannot drift apart.
-(require 'ts)
 (require 'org-ql-ext)
-(require 'org-db-cli)
 
 ;; `org-ql-select' expands into a call to this, which org-ql does not
 ;; autoload: without the declaration the compiler reports it as possibly
@@ -381,9 +377,17 @@ Set `custom-file' to a file of its own to keep approvals."
 (defvar org-agents--session-approved (make-hash-table :test 'equal)
   "Query hashes approved for this session only.")
 
-(defconst org-agents--cli-only-heads
+(defconst org-agents--misspelled-heads
   '((headline . heading) (re . regexp) (p . priority))
-  "CLI grammar spellings that are not valid org-ql, with replacements.")
+  "Predicate spellings that are not valid org-ql, with their replacements.
+The three most often written by hand for org-ql predicates that are
+spelled otherwise.  `h' and `r' ARE org-ql aliases, so `re' and `p' look
+like the same abbreviation habit -- which is what makes them worth
+diagnosing.  Without the diagnostic the failure is not a clean one:
+`org-agents--structurally-safe-p' returns nil, the query is put to the
+user as unsafe (which it is not), and if approved it fails at match time
+as a `void-function' from inside org-ql's own generated matcher, naming
+neither the agent nor the word that was wrong.")
 
 (defconst org-agents--special-accessors
   (mapcar #'cdr org-agents--specials)
@@ -428,8 +432,8 @@ case that needs saying, since org-ql would reach it as a void variable."
         ((consp form) (or (org-agents--leftover-ref (car form))
                           (org-agents--leftover-ref (cdr form))))))
 
-(defun org-agents--check-cli-spelling (form)
-  "Signal `user-error' if FORM uses a CLI-only predicate spelling.
+(defun org-agents--check-head-spelling (form)
+  "Signal `user-error' if FORM uses a spelling org-ql has no reading for.
 Only query positions are examined -- combinators, nested queries, and
 the arguments of known predicates, the same descent
 `org-agents--structurally-safe-p' makes -- because those are the
@@ -438,20 +442,20 @@ positions where the user meant to write a query.  `(property \"K\"
 is an ordinary variable or datum, and diagnosing it would answer a
 question the user was never asked."
   (when (and (consp form) (proper-list-p form))
-    (when-let* ((fix (alist-get (car form) org-agents--cli-only-heads)))
-      (user-error "org-agents: `%s' is CLI-only syntax; use `%s'"
+    (when-let* ((fix (alist-get (car form) org-agents--misspelled-heads)))
+      (user-error "org-agents: `%s' is not an org-ql predicate; use `%s'"
                   (car form) fix))
     (when (or (memq (car form) org-agents--boolean-heads)
               (memq (car form) org-agents--nested-query-heads)
               (org-agents--known-predicate-p (car form)))
-      (mapc #'org-agents--check-cli-spelling (cdr form)))))
+      (mapc #'org-agents--check-head-spelling (cdr form)))))
 
 (defun org-agents--check-spelling (form)
   "Signal `user-error' if FORM cannot be evaluated as written.
 FORM has already been through `org-agents--expand', so a surviving
 $ref sits in a position the expander has no reading for, and would
 otherwise reach org-ql as a void variable at match time."
-  (org-agents--check-cli-spelling form)
+  (org-agents--check-head-spelling form)
   (when-let* ((ref (org-agents--leftover-ref form)))
     (user-error "org-agents: no expansion for `%s' in `%S'" ref form)))
 
@@ -494,14 +498,27 @@ skipped instead of prompting."
 
 ;;;; Splitter
 
-;; The splitter picks out the conjuncts of an expanded query that the
-;; `org db query' CLI may answer as a candidate-file prefilter.  The
-;; CLI's semantics diverge from org-ql's on most predicates, so a
-;; conjunct may be pushed only when the database's answer is provably a
-;; SUPERSET of org-ql's: the prefilter narrows which files are opened,
-;; and org-ql alone decides what matches.  Whatever cannot be proven a
-;; superset stays residual, at the price of a wider candidate set.
-;; Divergence evidence: docs/superpowers/specs/2026-08-18-org-agents-design-review.md C1.
+;; The splitter picks out the conjuncts of an expanded query that a
+;; ripgrep prefilter may answer over the raw bytes of the corpus.  There
+;; is exactly one evaluation engine -- org-ql, against live buffers -- so
+;; the prefilter only ever chooses which FILES that engine opens, and a
+;; conjunct may be pushed only when the files ripgrep answers with are
+;; provably a SUPERSET of the files org-ql's own matches would come from.
+;; Whatever cannot be proven a superset stays residual, at the price of a
+;; wider candidate set.
+;;
+;; Narrowing too little is merely slow.  Narrowing too much is a wrong
+;; answer with no error at all.  So the analysis is in two layers on
+;; purpose: this one decides WHICH conjuncts are superset-safe, in an
+;; abstract vocabulary -- `(property NAME)', `(property NAME VALUE)',
+;; `(scheduled)', `(deadline)', `(closed)', `(heading LITERAL...)' -- and
+;; the emitter in the next section decides how ripgrep expresses one, or
+;; declines to, which only widens.  Each layer states its own superset
+;; argument, row by row and pattern by pattern.
+;;
+;; Soundness evidence: the `org-agents-test-rg-covers-*' tests, each of
+;; which names the fixture file it loses under the mutation it guards
+;; against, and docs/design.md.
 
 (defconst org-agents--literal-regexp "[][*+?^$\\.{}|]"
   "Characters that make a string a regexp rather than a literal.")
@@ -520,9 +537,9 @@ skipped instead of prompting."
 ;; applies that default only to a `property' form that carries an extra
 ;; plist.  The plain `(property NAME)' and `(property NAME VALUE)' forms
 ;; -- the only two this splitter pushes -- leave `inherit' at its nil
-;; default and read the entry's own drawer, which is exactly what the
-;; database stores.  Measured twice.  Do not write "plain forms inherit"
-;; anywhere: it is false.
+;; default and read the entry's own drawer, which is exactly what a
+;; `:NAME:' line in the file is.  Measured twice.  Do not write "plain
+;; forms inherit" anywhere: it is false.
 (defun org-agents--property-inherits-p (name)
   "Non-nil when property NAME might be inherited at match time.
 Mirrors `org-property-inherit-p', including its case-insensitive
@@ -540,10 +557,13 @@ rather than a correctness requirement; the `property' row of
 
 (defun org-agents--property-pushable-p (name)
   "Non-nil when NAME is an ordinary drawer property that cannot inherit.
-`org-entry-get' answers a special property such as CATEGORY or
-DEADLINE from the entry's structure or its file, where the database
-holds no property row at all, so pushing one as a property test would
-drop true matches.
+`org-entry-get' answers a special property such as CATEGORY or DEADLINE
+from the entry's structure or its file, and no drawer anywhere holds a
+`:TODO:' or a `:CATEGORY:' line for it, so pushing one as a property
+test would return no files at all for a query that matches thousands.
+The refused set is `(cons \"CATEGORY\" org-special-properties)', which
+is exactly the set `org-entry-get' special-cases in its own first
+clause; the two lists are aligned by construction.
 
 A name in `org-use-property-inheritance' is refused as well.  That is a
 conservative guard rather than a correctness requirement; the `property'
@@ -552,105 +572,48 @@ row of `org-agents--pushdown-fns' records why."
        (not (member-ignore-case name (cons "CATEGORY" org-special-properties)))
        (not (org-agents--property-inherits-p name))))
 
-(defun org-agents--date-string-p (v)
-  "Non-nil when V is a YYYY-MM-DD string naming a date that exists.
-The database reads an impossible date as MJD 0 and answers with no
-files at all, while org-ql normalizes it and matches -- so a typo like
-\"2026-02-30\" would empty the candidate set rather than narrow it.
-Only a date that survives the round trip is read alike by both sides."
-  (and (stringp v)
-       (string-match-p "\\`[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9]\\'" v)
-       (equal v (ignore-errors
-                  (format-time-string
-                   "%Y-%m-%d"
-                   (encode-time
-                    (parse-time-string (concat v " 00:00:00"))))))))
+(defun org-agents--property-value-pushable-p (name value)
+  "Non-nil when VALUE for property NAME is spelled by ONE drawer line.
+`org-entry-get' builds a value by joining the `:NAME:' line with every
+`:NAME+:' line, separated by `org--property-get-separator'.  A value
+assembled from more than one line is therefore spelled on NO line of the
+file at all, and a line-oriented matcher such as ripgrep cannot find it:
+pushing it would empty the candidate set rather than narrow it.
 
-(defun org-agents--absolute-date (value &optional now)
-  "VALUE as an absolute local `YYYY-MM-DD' string, or nil if it is no date.
-NOW is the `ts' instant a relative VALUE is resolved against, defaulting to
-`(ts-now)'.  It is there so that a test can name a particular instant: the
-daylight-saving hazard described below cannot be exercised at all without
-one, because the local zone cannot be moved inside a running Emacs.
-`today' and an integer day offset are resolved HERE, in local time, rather
-than pushed for the database to resolve for itself.  That is what keeps
-the two engines from disagreeing: the database resolves a relative value
-against `utctDay <$> getCurrentTime', the UTC day, while org-ql resolves
-it against `(ts-now)', the local one -- so a relative value pushed
-verbatim names a different day to each of them, and for part of every day
-the prefilter would drop entries org-ql matches.  Naming the day removes
-that disagreement rather than working around it.
+A VALUE that does not contain the separator was assembled from exactly
+one line.  `org-entry-get' drops only a MISSING piece from its list, not
+an empty one, so two pieces always put a separator between them --
+measured: `:FOO:' with no value followed by `:FOO+: bar' yields
+\" bar\", leading space and all.
 
-The substitution is exact, not approximate.  org-ql gives an absolute
-string precisely the treatment it gives `today': `:from' and `:on' floored
-to 00:00:00 and `:to' ceilinged to 23:59:59 of that local day
-\(`org-ql--from-to-on'), and the database compares whole-day MJD integers,
-so both sides select by the same calendar day.
+Two shapes make that argument unavailable and are refused:
 
-The offset is computed with `ts-adjust', which is what org-ql uses itself,
-so the arithmetic is identical by construction rather than by
-reimplementation.  Seconds arithmetic would not do: on the day before a
-daylight-saving change `(time-add now 86400)' lands on a different
-calendar day than `ts-adjust' does, and the prefilter would be a day out
-exactly when the query crosses the change.  Do not \"simplify\" this to
-seconds; `org-agents-test-absolute-date-crosses-a-daylight-saving-change'
-is there to catch it, and was written because a mutation to seconds passed
-the whole suite without it."
-  (let ((now (or now (ts-now))))
-    (cond
-     ((eq value 'today) (ts-format "%Y-%m-%d" now))
-     ((integerp value) (ts-format "%Y-%m-%d" (ts-adjust 'day value now)))
-     ;; Already absolute: kept as written, so its calendar-validity round
-     ;; trip still answers for it.
-     ((org-agents--date-string-p value) value))))
+An empty separator.  Measured: with `org-property-separators' bound to
+`((\"P\") . \"\")', `:P: al' plus `:P+: pha' answers \"alpha\" -- and
+every string contains the empty separator, so the test above cannot
+distinguish one line from two.
 
-(defun org-agents--push-planning (form)
-  "Push planning FORM with every date argument resolved to a local date.
-A form whose arguments are not all `:from'/`:to'/`:on' naming a date this
-package can resolve pushes nothing at all, since a bound the database
-would read differently is worse than no bound.  A form with no arguments
-asks whether the stamp is there, which needs no date and is pushed as it
-stands.
+An empty VALUE.  `org-entry-get' answers \"\" for a property that is
+present and empty, whose line is spelled `:NAME:' with nothing after the
+colon -- which the value pattern cannot match, because it demands
+`[ \\t]+' there.
 
-Two shapes are refused for that same reason, because the two engines do
-not read them alike:
+Note what this rule is NOT: a test for whitespace.  With the default
+separator the two coincide, which is why the whitespace test served
+until now.  But measured with `org-property-separators' bound to
+`((\"P\") . \"/\")', `:P: al' plus `:P+: pha' answers \"al/pha\" -- a
+value holding no whitespace that no single line spells.  The whitespace
+test would push it and lose the file."
+  (let ((sep (org--property-get-separator name)))
+    (and (stringp value)
+         (not (string-empty-p value))
+         (stringp sep)
+         (not (string-empty-p sep))
+         (not (string-search sep value)))))
 
-A key given twice.  `plist-get' answers with the FIRST value, while the
-CLI's `parseDateFilter' folds left and keeps the LAST -- so
-`(scheduled :to today :to \"2026-01-01\")' bounds by today in org-ql and
-by 2026-01-01 in the database, and the prefilter drops entries org-ql
-matches without saying anything.
-
-`:on' beside `:from' or `:to'.  `org-ql--from-to-on' lets `:on' overwrite
-both ends and ignores the bound, while `compileDateConds' emits
-`day = on' AND the bound -- so the database can answer with nothing where
-org-ql matches.
-
-Neither is a bound read wrongly; each is a bound read DIFFERENTLY, which
-is the one thing a superset argument cannot cover."
-  (if (null (cdr form))
-      form
-    (let ((plist (cdr form))
-          (resolved nil)
-          (seen nil)
-          (ok t))
-      (while (and ok plist)
-        (let* ((key (car plist))
-               (date (and (memq key '(:from :to :on))
-                          (not (memq key seen))
-                          (org-agents--absolute-date (cadr plist)))))
-          (if date
-              (progn (push key seen)
-                     (setq resolved (nconc resolved (list key date))))
-            (setq ok nil))
-          (setq plist (cddr plist))))
-      (and ok
-           (not (and (memq :on seen) (or (memq :from seen) (memq :to seen))))
-           (cons (car form) resolved)))))
-
-;; Each classifier returns the CLI conjunct to push for a form, or nil
-;; to leave it residual.  Every row states why its conjunct is a
-;; superset of what org-ql will accept at match time.
+;; Each classifier returns the abstract conjunct to push for a form, or
+;; nil to leave it residual.  Every row states why the files its conjunct
+;; selects are a superset of the files org-ql will match in.
 (defconst org-agents--pushdown-fns
   (list
    (cons 'property
@@ -660,30 +623,33 @@ is the one thing a superset argument cannot cover."
            ;; forms that carry an extra plist; the plain (property NAME)
            ;; and (property NAME VALUE) forms this classifier pushes
            ;; leave `inherit' at its nil default, so org-ql reads the
-           ;; entry's own drawer only -- exactly what the database
-           ;; stores.  Refusing to push for a name in
+           ;; entry's own drawer only -- and a drawer line is exactly
+           ;; what the pattern looks for.  Refusing to push for a name in
            ;; `org-use-property-inheritance' is therefore not required
            ;; for correctness; it is a conservative guard that only
-           ;; widens the candidate set and never drops a match.
+           ;; widens the candidate set and never drops a match.  Keep it
+           ;; anyway: org-ql's `property' docstring reads the other way,
+           ;; and if a future org-ql made that true of the plain forms,
+           ;; this guard is the only thing between that change and a
+           ;; silent wrong answer.
            (pcase form
-             ;; Existence is local on both sides: one-argument `property'
-             ;; reads this entry's own drawer, as the database rows do.
+             ;; Existence.  A non-nil `org-entry-get' with `inherit' nil
+             ;; requires at least one line in the file matching
+             ;; `org-property-re' whose key upcases to NAME or NAME+, and
+             ;; every such line is what the pattern matches.
              (`(property ,(and name (pred org-agents--property-pushable-p)))
               `(property ,name))
-             ;; Equality: both sides compare the entry's own value.  A
-             ;; form carrying `:inherit' says for itself whether to
-             ;; inherit, and has an arity neither pattern matches, so it
-             ;; pushes nothing at all.
+             ;; Equality: org-ql's body is `string-equal' against the
+             ;; entry's own value.  A form carrying `:inherit' says for
+             ;; itself whether to inherit, and has an arity neither
+             ;; pattern matches, so it pushes nothing at all.
              (`(property ,(and name (pred org-agents--property-pushable-p))
                          ,(and val (pred stringp)))
-              (if (string-match-p "[[:space:]]" val)
-                  ;; `:NAME+:' lines accumulate into a single value,
-                  ;; joined by `org--property-get-separator' -- a space
-                  ;; unless `org-property-separators' says otherwise.
-                  ;; The database keeps one row per line and compares it
-                  ;; whole, so no row can equal the joined value.
-                  `(property ,name)
-                `(property ,name ,val)))
+              (if (org-agents--property-value-pushable-p name val)
+                  `(property ,name ,val)
+                ;; The value spans two lines, or cannot be argued not
+                ;; to.  Existence is wider, and wider is sound.
+                `(property ,name)))
              (_ nil))))
    (cons 'property-ts
          (lambda (form)
@@ -693,57 +659,444 @@ is the one thing a superset argument cannot cover."
                             . ,_)
               `(property ,name))
              (_ nil))))
-   ;; Planning stamps are stored for exactly these three keywords, and
-   ;; both sides bound the raw stamp, so the bounds select alike -- once
-   ;; every bound names a calendar day rather than a relative one, which
-   ;; is what `org-agents--absolute-date' is for.
-   (cons 'scheduled #'org-agents--push-planning)
-   (cons 'deadline #'org-agents--push-planning)
-   (cons 'closed #'org-agents--push-planning)
+   ;; Planning stamps: the head alone decides the conjunct, and every
+   ;; argument is dropped.  All three predicates share
+   ;; `org-ql--predicate-ts''s body, whose every branch begins with a
+   ;; `re-search-forward' for the keyword followed by an opening bracket,
+   ;; so org-ql cannot match without that text being in the file.
+   ;; Dropping the bounds drops a CONJUNCT of org-ql's condition and
+   ;; never adds one: "there is a stamp in the period" implies "there is
+   ;; a stamp".  So `(deadline)', `(deadline :from F :to T)',
+   ;; `(deadline 7)' and `(deadline auto)' all push the same thing, all
+   ;; soundly -- which is a coverage GAIN: the last two pushed nothing at
+   ;; all while a date had to be serialized for a second engine to read.
+   (cons 'scheduled (lambda (form) (list (car form))))
+   (cons 'deadline (lambda (form) (list (car form))))
+   (cons 'closed (lambda (form) (list (car form))))
    (cons 'heading
          (lambda (form)
            (pcase form
-             ;; ILIKE over the raw heading line ⊇ org-ql's quoted match
-             ;; over the cleaned title, and the database ORs the patterns
-             ;; org-ql ANDs.  Only literals: a regexp is neither.
+             ;; org-ql normalizes `heading' to `heading-regexp' with each
+             ;; argument `regexp-quote'd, and matches every one of them
+             ;; against `(org-get-heading t t)' with `case-fold-search'
+             ;; bound to t.  That cleaned title is a verbatim substring
+             ;; of the raw heading line, except for a substring spanning
+             ;; the junction between a priority cookie and the title --
+             ;; and every one of those holds the `]' that
+             ;; `org-agents--literal-strings-p' refuses.  So a literal
+             ;; org-ql matched is in the raw line, which begins with `*'
+             ;; at column 0, which is what the pattern anchors on.  Only
+             ;; literals: a regexp is neither.
              (`(heading . ,(and strs (pred org-agents--literal-strings-p)))
               `(heading ,@strs))
              (_ nil)))))
-  "Alist of predicate head → superset-safe CLI conjunct, or nil.")
+  "Alist of predicate head to superset-safe abstract conjunct, or nil.")
 
-(defun org-agents--plain-strings (form)
-  "Return FORM with the text properties stripped from every string in it.
-A heading literal or property value lifted out of an Org buffer carries
-properties, and `prin1' writes such a string as `#(\"Review\" 0 6
- (face bold))', which the CLI's reader cannot parse."
-  (cond ((stringp form) (substring-no-properties form))
-        ((consp form) (cons (org-agents--plain-strings (car form))
-                            (org-agents--plain-strings (cdr form))))
-        (t form)))
+(defun org-agents--prefilter-conjuncts (query)
+  "The superset-safe conjuncts of expanded QUERY, as a list.
+Only top-level `and' conjuncts -- or the whole query, when it is a single
+pushable predicate -- are considered, in query order.  A conjunct under
+`or' or `not', and every nested query, is residual by omission, which
+widens.  The list is empty when nothing pushes, and the caller reads that
+as \"this query offers no narrowing\" rather than as an empty answer."
+  (let ((conjuncts (if (eq (car-safe query) 'and) (cdr query) (list query))))
+    (delq nil
+          (mapcar (lambda (conjunct)
+                    (when-let* ((fn (alist-get (car-safe conjunct)
+                                               org-agents--pushdown-fns)))
+                      (funcall fn conjunct)))
+                  conjuncts))))
 
-(defun org-agents--skeleton (query &optional scope-conjunct)
-  "Extract the CLI prefilter skeleton from expanded QUERY as a string.
-Only top-level `and' conjuncts (or the whole query when it is a single
-pushable predicate) are considered, in query order, with SCOPE-CONJUNCT
-last.  Return nil when no conjunct pushes: a scope on its own is
-already known to the caller and does not earn a query."
-  (let* ((conjuncts (if (eq (car-safe query) 'and) (cdr query) (list query)))
-         (pushed
-          (delq nil
-                (mapcar (lambda (c)
-                          (when-let* ((fn (alist-get (car-safe c)
-                                                     org-agents--pushdown-fns)))
-                            (funcall fn c)))
-                        conjuncts)))
-         (all (append pushed (and scope-conjunct (list scope-conjunct))))
-         ;; As in `org-agents--query-hash': an abbreviated skeleton is a
-         ;; different query, and the CLI would read it as one.
-         (print-level nil)
-         (print-length nil))
-    (when pushed                     ; scope alone is not worth a round trip
-      (prin1-to-string
-       (org-agents--plain-strings
-        (if (cdr all) (cons 'and all) (car all)))))))
+;;;; Prefilter
+
+;; The emitter, and the subprocess.  Everything here answers one
+;; question: which files under a root could possibly hold a match, given
+;; a conjunct the splitter has already proven superset-safe.  A pattern
+;; that cannot be written soundly is not written at all -- the conjunct
+;; then contributes no narrowing, which is slow and correct rather than
+;; fast and wrong.
+;;
+;; Three facts about ripgrep that the patterns and the argument vector
+;; are built around, each measured rather than read off a manual page:
+;;
+;;   - Its regexp dialect is the Rust `regex' crate's, whose
+;;     metacharacter set is not Emacs's.  `(' and `)' are literal in an
+;;     Emacs regexp and grouping in a Rust one, so `regexp-quote' leaves
+;;     a heading literal `Ship it (finally)' unprotected and the pattern
+;;     then demands the text `Ship it finally'.
+;;   - In its default Unicode mode `.' matches a CODEPOINT, so `.*'
+;;     cannot cross an invalid UTF-8 byte.  A pure-ASCII literal after a
+;;     latin-1 character on the same heading line is missed by
+;;     `^\*+.*LIT' and found by `^\*+(?-u:.)*LIT'.
+;;   - Its exit status is 0 for a match, 1 for no match, and 2 for an
+;;     error -- and an error can arrive WITH a partial answer printed, so
+;;     status 2 must discard whatever came with it.
+
+(defcustom org-agents-prefilter 'auto
+  "Whether to narrow an unbounded scope's files with ripgrep before evaluating.
+Evaluation is always org-ql's, against live buffers.  A prefilter only
+chooses which FILES org-ql opens, so it can never change an answer --
+but without one, a scope with no bound on what it holds is read by
+opening everything it turns out to hold.  Measured on a 3,634-file
+corpus: 45.98 seconds and 885 MB for a query with no prefilter, 3.90
+seconds with one, returning the same 764 matches.
+
+Only `active', `all' and a directory scope are ever prefiltered.
+`agenda' and an explicit file list name their files and are always read
+live, where a prefilter is pure overhead: such an update costs 0.018
+seconds while one ripgrep run costs 0.10 to 0.45 seconds.
+
+  `auto'     Use ripgrep when `org-agents-rg-executable' is found and
+             the query offers a conjunct to push.  Otherwise scan live,
+             with one message naming the number of files, so that the
+             slowness is explained rather than mysterious.  The default.
+  `require'  Refuse an unbounded scope that cannot be narrowed, with a
+             `user-error' naming the scope and the reason, rather than
+             scanning it live.  This is the behaviour of the releases
+             that resolved an unbounded scope through a database.
+  nil        Never run ripgrep; read every scope live."
+  :type '(choice (const :tag "Use ripgrep when it is available" auto)
+                 (const :tag "Require ripgrep; refuse a scope without it"
+                        require)
+                 (const :tag "Never prefilter" nil))
+  :group 'org-agents)
+
+(defcustom org-agents-rg-executable "rg"
+  "Name or path of the ripgrep executable used to narrow candidate files.
+Looked up with `executable-find', so a bare name is resolved against
+`exec-path'.  ripgrep 13 or later is wanted: the prefilter passes
+`--crlf', without which a value pattern cannot match in a file with CRLF
+line endings.  Every flag was verified against 15.2.0 and against no
+other version; 13 is named as a round, safely old floor."
+  :type 'string
+  :group 'org-agents)
+
+(defconst org-agents--rg-meta-characters "\\.+*?()|[]{}^$#&-~"
+  "The characters `regex_syntax::escape' escapes, and only those.
+Escaping anything else is not merely unnecessary, it is dangerous: `\\<'
+is a word-start ASSERTION in the Rust regexp crate, so escaping a `<'
+changes the pattern's meaning rather than protecting it.  Measured:
+`a\\<b' finds nothing in a line reading `a<b', while `a\\-b', `a\\#b',
+`a\\&b' and `a\\~b' all match their literal.")
+
+(defconst org-agents--rg-literal-re "\\`[ -~]+\\'"
+  "A literal that may be pushed: non-empty, and printable ASCII throughout.
+One rule closes four holes at once.
+
+Encoding.  ripgrep decodes as UTF-8; Emacs may decode an Org file as
+latin-1 through a coding cookie or `file-coding-system-alist'.
+Measured: a latin-1 file holding `* Cafe Review' -- with the `e'
+accented -- matches the ASCII pattern `Caf' and does NOT match the UTF-8
+pattern for the accented spelling.  No flag fixes that: `--encoding' is
+one global setting and a corpus is mixed.
+
+Newlines, tabs and control characters.  ripgrep rejects a pattern
+holding a newline and exits 2, which would report a harmless query as a
+prefilter failure.  org-ql could never match such a literal against a
+one-line heading anyway, so refusing it loses nothing.
+
+The empty literal.  `(heading \"\")' matches every entry in org-ql, and
+an empty pattern matches every file, so pushing it is sound and useless.
+
+Note what this rule is NOT justified by: case folding.  That was checked
+and is safe for non-ASCII too.  Measured exhaustively over
+#x0-#x10FFFF, no non-ASCII character is case-equivalent to an ASCII
+letter under Emacs's default case table, so for an ASCII pattern Emacs's
+fold classes are exactly {X,x}, which `--ignore-case' always covers; and
+of the 1,405 non-ASCII pairs Emacs does equate, `rg -i' matched all
+1,405.")
+
+(defconst org-agents--rg-name-re "\\`[!-9;-~]+\\'"
+  "A property name that may be pushed.
+Printable ASCII as `org-agents--rg-literal-re' requires, less the space
+and the colon: an Org property key is `\\S-+' with no colon in it, so a
+name holding either is no key and matches no drawer line.")
+
+(defun org-agents--rg-quote (string)
+  "Return STRING as a literal in ripgrep's Rust regexp dialect.
+Text properties are dropped here rather than by a walk over the whole
+conjunct list: a literal lifted out of an Org buffer carries them, and
+this is the one place a literal becomes something a subprocess sees."
+  (mapconcat (lambda (c)
+               (if (string-search (char-to-string c)
+                                  org-agents--rg-meta-characters)
+                   (string ?\\ c)
+                 (string c)))
+             (substring-no-properties string) ""))
+
+(defun org-agents--rg-literal-p (string)
+  "Non-nil when STRING may be pushed as a literal.
+See `org-agents--rg-literal-re' for what the answer rests on."
+  (and (stringp string) (string-match-p org-agents--rg-literal-re string)))
+
+(defun org-agents--rg-name-p (string)
+  "Non-nil when STRING may be pushed as a property name.
+See `org-agents--rg-name-re'."
+  (and (stringp string) (string-match-p org-agents--rg-name-re string)))
+
+(defconst org-agents--rg-planning-patterns
+  '((scheduled . "SCHEDULED:[ \\t]*<")
+    (deadline . "DEADLINE:[ \\t]*<")
+    (closed . "CLOSED:[ \\t]*\\["))
+  "One ripgrep pattern per planning keyword, independent of every bound.
+Deliberately NOT anchored to the start of the line.  Measured: all three
+keywords may share one planning line, in any order, so `^[ \\t]*DEADLINE:'
+misses `CLOSED: [..] DEADLINE: <..>' -- an under-match.  Org's own
+`org-planning-line-re' also allows the line to be indented, which is why
+even an anchored form would need `[ \\t]*'.
+
+The opening bracket is not decoration.  An active Org timestamp begins
+with `<' and an inactive one with `[', and org-ql's own regexps require
+the same character, so demanding it narrows for free: measured over
+3,669 corpus files, the bare keywords select 216, 91 and 18 files while
+these patterns select 203, 76 and 3.")
+
+(defun org-agents--rg-property-pattern (name)
+  "The ripgrep pattern for a `:NAME:' drawer line.
+`\\+?' admits the accumulating spelling, and it is exact rather than
+generous: `org--property-local-values' looks up `:NAME' and `:NAME+' and
+nothing else.  It is also REQUIRED.  Measured: an entry whose drawer
+holds only `:NEXT_REVIEW+: plusvalue' answers `org-entry-get' with
+\"plusvalue\" and org-ql matches `(property \"NEXT_REVIEW\")', so a
+pattern anchored on `:NEXT_REVIEW:' alone misses the file.
+
+`^[ \\t]*' rather than `^' because `org-property-re' allows leading
+whitespace and Org reads a tab-indented property line inside an indented
+drawer.  Case is left to `--ignore-case': measured both ways, a drawer
+key `:next_review:' answers a query for \"NEXT_REVIEW\" and the
+reverse."
+  (concat "^[ \\t]*:" (org-agents--rg-quote name) "\\+?:"))
+
+(defun org-agents--rg-patterns (conjunct)
+  "The ripgrep patterns CONJUNCT compiles to, as a list of regexp strings.
+Zero, one, or several -- several only for a multi-literal `heading', and
+those are INTERSECTED by `org-agents--rg-files' rather than combined
+into one pattern, because org-ql requires every literal in ONE heading
+and that implies a heading line for each of them, in any order and on
+any line.
+
+Returns nil when CONJUNCT cannot be expressed soundly.  That is not a
+failure: the conjunct then contributes no narrowing and stays residual
+for org-ql, which is the widening direction.
+
+Pure: nothing here spawns anything."
+  (pcase conjunct
+    (`(property ,name)
+     (when (org-agents--rg-name-p name)
+       (list (org-agents--rg-property-pattern name))))
+    (`(property ,name ,value)
+     (when (org-agents--rg-name-p name)
+       (list (if (org-agents--rg-literal-p value)
+                 ;; org-ql compared the whole value with `string-equal',
+                 ;; and the splitter has established that the value is
+                 ;; spelled by one line: the line's text with the leading
+                 ;; `[ \t]+' consumed and the trailing `[ \t]*' excluded.
+                 ;; `--ignore-case' makes this match MORE values than
+                 ;; org-ql's case-sensitive comparison, which is the safe
+                 ;; direction.
+                 (concat (org-agents--rg-property-pattern name)
+                         "[ \\t]+" (org-agents--rg-quote value) "[ \\t]*$")
+               ;; A value ripgrep cannot carry: fall back to existence,
+               ;; which is wider and always sound.
+               (org-agents--rg-property-pattern name)))))
+    (`(,(and head (or 'scheduled 'deadline 'closed)))
+     (list (alist-get head org-agents--rg-planning-patterns)))
+    (`(heading . ,literals)
+     (delq nil
+           (mapcar (lambda (literal)
+                     (when (org-agents--rg-literal-p literal)
+                       ;; `(?-u:.)' rather than `.': in ripgrep's default
+                       ;; Unicode mode `.' matches a codepoint and cannot
+                       ;; cross an invalid UTF-8 byte, so `^\\*+.*Review'
+                       ;; misses a latin-1 heading whose accented
+                       ;; character precedes the literal.  Measured; and
+                       ;; `[^\\n]*' does not fix it either.
+                       (concat "^\\*+(?-u:.)*"
+                               (org-agents--rg-quote literal))))
+                   literals)))
+    (_ nil)))
+
+(defun org-agents--rg-args (pattern root)
+  "The ripgrep argument vector for PATTERN under ROOT.
+Named as a function of its own so that a test can pin it: five of the
+under-matches measured while this backend was designed were a missing
+flag, not a wrong pattern.
+
+  `--files-with-matches'  only file names are wanted.
+  `--null'                paths are NUL-terminated, so a newline in a
+                          file name cannot split one path into two.
+  `--ignore-case'         org-ql's `heading' binds `case-fold-search' to
+                          t inside its own body, and `org-entry-get' is
+                          case-insensitive over property names.
+  `--text'                an .org file holding a NUL is still an Org
+                          file to Emacs; without this ripgrep stops at
+                          the NUL and reports nothing for that file.
+  `--crlf'                without it `$' cannot match before a CRLF line
+                          ending and the value pattern misses every CRLF
+                          file.
+  `--no-ignore'           ripgrep honours .gitignore by default and a
+                          corpus is commonly a git repository, while
+                          `directory-files-recursively' honours nothing.
+  `--hidden'              ripgrep skips dot-files and dot-directories by
+                          default; `directory-files-recursively'
+                          descends into them.
+  `--follow'              `directory-files-recursively' LISTS a symlink
+                          to a file outside the tree and org-ql matches
+                          through it, while ripgrep does not follow a
+                          symlink found by traversal without this.  A
+                          symlink loop makes ripgrep exit 2, which
+                          abandons the prefilter for a live scan -- slow
+                          and correct.
+  `--iglob \\='*.org\\='       `directory-files-recursively' matches its
+                          regexp with the ambient `case-fold-search',
+                          which is t, so NOTES.ORG is in the base file
+                          set.  `--glob' would not match it.
+
+`--regexp' before the pattern so that a literal beginning with `-' -- a
+heading such as `* -- notes' -- cannot be read as a flag, and `--'
+before the root for the same reason.  One pattern per invocation:
+ripgrep ORs several `--regexp' arguments, and every combination this
+package needs is an AND."
+  (list "--files-with-matches" "--null" "--ignore-case" "--text" "--crlf"
+        "--no-ignore" "--hidden" "--follow" "--iglob" "*.org"
+        "--regexp" pattern "--" root))
+
+(defun org-agents--file-contents (file)
+  "Return FILE's contents, trimmed, or an empty string if unreadable."
+  (or (ignore-errors
+        (with-temp-buffer
+          (insert-file-contents file)
+          (string-trim (buffer-string))))
+      ""))
+
+(defun org-agents--rg-paths (raw)
+  "Split RAW, ripgrep's NUL-terminated stdout, into a list of file names.
+RAW is read as BYTES and each path decoded with the file-name coding
+system.  Decoding the whole stream with `coding-system-for-read' would
+be decoding file NAMES with a coding system for file CONTENTS: on a
+Darwin HFS+ volume `default-file-name-coding-system' is `utf-8-hfs',
+which normalizes NFD to NFC, and a name decoded the other way would
+neither `equal' nor share a `file-truename' with the name
+`directory-files-recursively' produced.
+
+A NUL cannot occur in a POSIX file name, so splitting on NUL is exact
+and no quoting is involved.  An empty element -- or one still holding a
+NUL after decoding -- is dropped, because `expand-file-name' signals on
+such a string."
+  (delq nil
+        (mapcar (lambda (bytes)
+                  (let ((name (decode-coding-string
+                               bytes (or file-name-coding-system
+                                         default-file-name-coding-system
+                                         'utf-8))))
+                    (unless (or (string-empty-p name)
+                                (string-search "\0" name))
+                      name)))
+                (split-string raw "\0" t))))
+
+(defun org-agents--rg-run (pattern root)
+  "Files under ROOT whose text matches PATTERN, or the symbol `unavailable'.
+Returns a LIST -- possibly the EMPTY list, which means \"ripgrep
+answered, and no file matches\".  That is an answer, and the caller must
+treat it as one: reporting it as a missing prefilter is the defect this
+backend exists to remove.  Only the symbol `unavailable' means \"no
+answer\".  Callers test with `listp', which is exact: `(listp nil)' is t
+and `(listp \\='unavailable)' is nil.
+
+The status test is `(eq code 0)' and `(eq code 1)', never `(> code 1)':
+`call-process' answers with a STRING such as \"Killed: 9\" when the
+process dies on a signal, and a non-integer must fall to the failure
+branch rather than slip past a numeric comparison.
+
+Status 2 discards whatever was printed.  Measured: with one unreadable
+file among two, ripgrep prints the readable match, writes `Permission
+denied' to stderr, AND exits 2 -- so the printed answer is missing a
+file, and a partial answer is exactly the unsound direction.
+
+Never signals an error.  A `quit' from C-g during the synchronous call
+still escapes, as it must.  Spawned from `temporary-file-directory',
+because a `default-directory' that has been deleted makes `call-process'
+signal and a remote one would run the binary on another host, against
+files that are not the corpus."
+  (condition-case err
+      (let ((stderr-file (make-temp-file "org-agents-rg-stderr")))
+        (unwind-protect
+            (with-temp-buffer
+              ;; `default-directory' is buffer-local, so this must be
+              ;; bound with the temp buffer current to have any effect on
+              ;; the process `call-process' spawns.
+              (let* ((default-directory temporary-file-directory)
+                     (coding-system-for-read 'binary)
+                     (code (apply #'call-process org-agents-rg-executable
+                                  nil (list (current-buffer) stderr-file)
+                                  nil (org-agents--rg-args pattern root))))
+                (cond
+                 ((eq code 1) nil)      ; an answer: no file matches
+                 ((eq code 0) (org-agents--rg-paths (buffer-string)))
+                 (t
+                  (let ((stderr (org-agents--file-contents stderr-file)))
+                    (message "org-agents: %s exited %s: %s"
+                             org-agents-rg-executable code
+                             (if (string-empty-p stderr)
+                                 (string-trim (buffer-string))
+                               stderr)))
+                  'unavailable))))
+          (ignore-errors (delete-file stderr-file))))
+    (error
+     (message "org-agents: %s failed: %s"
+              org-agents-rg-executable (error-message-string err))
+     'unavailable)))
+
+(defun org-agents--intersect-files (a b)
+  "The members of A that B holds too, in A's order.
+Compared with `equal' rather than by truename: every pattern is run
+against the same root and ripgrep prints paths built from that root's
+spelling, so plain string equality is exact here.  The truename
+comparison is needed once only, against the scope's own file list --
+`org-agents--same-files'."
+  (let ((seen (make-hash-table :test #'equal)))
+    (dolist (file b) (puthash file t seen))
+    (cl-remove-if-not (lambda (file) (gethash file seen)) a)))
+
+(defun org-agents--rg-files (conjuncts root)
+  "Candidate files under ROOT for CONJUNCTS.
+Three kinds of answer, and conflating any two of them is a bug:
+
+  a LIST          ripgrep answered.  The empty list is such an answer,
+                  and it means no file can match.
+  `unavailable'   ripgrep could not be run, or failed.  One failed run
+                  poisons the whole prefilter: an intersection missing
+                  one of its terms would be WIDER, and therefore sound,
+                  but a partial answer from a broken tool is not a thing
+                  to build on and the live fallback is merely slower.
+  t               no conjunct offered a pattern, so nothing was narrowed
+                  at all.  Distinct from the empty list, which is the
+                  narrowest possible answer.
+
+Each pattern is a separate invocation and the resulting file sets are
+INTERSECTED.  Independent runs rather than clever reuse, because they
+are measured to be cheap: a whole-corpus run costs 0.10 seconds for a
+property pattern and 0.45 for a heading one, against 3.90 seconds for
+the prefiltered query as a whole.  As soon as the running intersection
+is empty the walk stops -- there is nothing left to intersect, and in
+particular the scope's base files must not be gathered to intersect
+against, which is the expensive thing the prefilter exists to avoid."
+  (let ((candidates t)
+        (failed nil))
+    (catch 'org-agents--rg-done
+      (dolist (conjunct conjuncts)
+        (dolist (pattern (org-agents--rg-patterns conjunct))
+          (let ((answer (org-agents--rg-run pattern root)))
+            (unless (listp answer)
+              (setq failed t)
+              (throw 'org-agents--rg-done nil))
+            (setq candidates
+                  (if (eq candidates t)
+                      answer
+                    (org-agents--intersect-files candidates answer)))
+            (when (null candidates)
+              (throw 'org-agents--rg-done nil))))))
+    (if failed 'unavailable candidates)))
 
 ;;;; Collection
 
@@ -757,8 +1110,7 @@ already known to the caller and does not earn a query."
   "Conjunct appended to every agent query and to previews.
 Keeps agents from matching generated aliases.  Appended last so cheap
 predicates short-circuit first; applied only on the Emacs side, never
-in the database skeleton.  Set to nil to match aliases like any other
-entry."
+in the prefilter.  Set to nil to match aliases like any other entry."
   :type 'sexp :group 'org-agents)
 
 (defcustom org-agents-files '("~/org/agents.org")
@@ -871,7 +1223,7 @@ else aborts the whole run."
    ;; Only the three corpus names are symbols.  Interning every bare
    ;; value would leave no way to write the directory scope the design
    ;; calls for, and no `stringp' scope could ever reach
-   ;; `org-agents--scope-conjunct'.
+   ;; `org-agents--scope-root'.
    ((member value org-agents--scope-names) (intern value))
    (t value)))
 
@@ -948,32 +1300,57 @@ whose query matched nothing."
     (_ (user-error "org-agents: bad scope %S" scope))))
 
 (defun org-agents--needs-prefilter-p (scope)
-  "Non-nil when SCOPE is unbounded, so may only be resolved through the DB.
+  "Non-nil when SCOPE is unbounded, so is worth narrowing before it is read.
 `active' and `all' are the corpus by name, and a directory promises no
 less: nothing about naming one bounds what it holds, and reading it live
 means opening however many files it turns out to hold.  `agenda' and an
-explicit file list name their files, and are read live."
+explicit file list name their files, and are read live -- where a
+prefilter is pure overhead, not an optimization declined."
   (or (memq scope org-agents--corpus-scopes) (stringp scope)))
 
-(defun org-agents--scope-conjunct (scope)
-  "CLI path conjunct for directory SCOPE, else nil.
-The conjunct is this package's contract with the CLI: a path prefix
-relative to the corpus root.  An absolute directory is no such prefix,
-so it pushes nothing and narrows the candidates by `base' alone, as any
-other unpushable conjunct does.  The directory travels as plain text: a
-scope lifted out of a buffer carries text properties, which `prin1'
-would write into the skeleton in a form the CLI's reader cannot parse."
-  (when (and (stringp scope) (not (file-name-absolute-p scope)))
-    `(path ,(file-name-as-directory (substring-no-properties scope)))))
+(defun org-agents--scope-root (scope)
+  "The directory ripgrep searches for SCOPE, or nil when SCOPE names files.
+Only an unbounded scope has a root: `active' and `all' are the corpus,
+and a string scope is a directory relative to `org-directory'.  The path
+is expanded, so ripgrep prints absolute names.
+
+A directory that is not there is refused HERE rather than left for
+ripgrep, whose exit status for a missing path is the same 2 it uses for a
+broken pattern: reporting a mistyped scope as a prefilter failure would
+name the wrong fault.  The message is the one
+`org-agents--scope-base-files' raises for the same mistake, so which of
+them gets there first cannot change what the user reads.
+
+For `active' the root is the whole corpus, `archive' directories
+included, which the scope's own file list excludes.  That is harmless --
+`org-agents--same-files' drops them -- and a scope-dependent
+`--glob' exclusion would be a second, differently-spelled expression of
+the same bound, which is one more chance for one of them to be narrower
+than the file list."
+  (pcase scope
+    ((or 'active 'all) (expand-file-name org-directory))
+    ((pred stringp)
+     (let ((path (expand-file-name scope org-directory)))
+       (unless (file-directory-p path)
+         (user-error "org-agents: scope `%s' names no directory (%s)"
+                     scope (abbreviate-file-name path)))
+       path))
+    (_ nil)))
 
 (defun org-agents--same-files (base candidates)
   "Return the members of BASE that CANDIDATES names too.
-Names are compared as truenames: the database answers with canonical
-absolute paths, while BASE is reached through `org-directory', commonly
-itself a symlink, so under `equal' the two spellings of one file have
-nothing in common and every agent would match nothing.  BASE's own
-spellings are what is returned, because those are the names the user
-reads and the links that will be followed."
+Names are compared as truenames.  `org-directory' is commonly itself a
+symlink -- it is on the author's machine -- and ripgrep answers with
+paths built from the root it was handed, so the two sides can name one
+file two ways and under `equal' they would have nothing in common and
+every agent would match nothing.  BASE's own spellings are what is
+returned, because those are the names the user reads and the links that
+will be followed.
+
+Letting BASE have the last word also means that any disagreement between
+ripgrep's `--iglob' and `directory-files-recursively''s regexp over an
+odd file name can only drop a file ripgrep added, never add one BASE
+refused."
   (let ((wanted (make-hash-table :test #'equal)))
     (dolist (candidate candidates)
       (puthash (file-truename candidate) t wanted))
@@ -981,35 +1358,62 @@ reads and the links that will be followed."
                       base)))
 
 (defun org-agents--scope-files (agent)
-  "Resolve AGENT's scope to files, applying the DB prefilter when possible."
-  (let* ((scope (plist-get agent :scope))
-         (skeleton (org-agents--skeleton (plist-get agent :query)
-                                         (org-agents--scope-conjunct scope)))
-         (candidates (and skeleton
-                          (org-db-cli-available-p)
-                          (org-db-cli-query-files skeleton))))
-    ;; The base files are gathered only where they will be used: for an
-    ;; unbounded scope, gathering them is the recursive walk that the
-    ;; prefilter exists to make unnecessary, and the refusal below must
-    ;; not pay for it first.
-    (cond
-     (candidates (org-agents--same-files (org-agents--scope-base-files scope)
-                                         candidates))
-     ;; No candidates, and a scope with no bound on what it would open.
-     ;; The bridge returns nil for a failure and for a genuinely empty
-     ;; answer alike, so an agent matching nothing at all is reported
-     ;; here as a missing prefilter -- a needless error, but never a
-     ;; wrong answer, and the alternative is opening everything.
-     ((org-agents--needs-prefilter-p scope)
-      (user-error
-       ;; `%s': only a reserved name or a directory reaches this, and
-       ;; `%S' would quote the directory twice over.
-       (concat "org-agents: scope `%s' needs the database prefilter or a"
-               " pushable query (skeleton %s, cli %s); for live evaluation"
-               " use `agenda' or an explicit file list")
-       scope (if skeleton "ok" "empty")
-       (if (org-db-cli-available-p) "failed" "unconfigured")))
-     (t (org-agents--scope-base-files scope)))))
+  "Resolve AGENT's scope to files, narrowing an unbounded scope with ripgrep.
+A scope that NAMES its files is returned as it stands: prefiltering an
+`agenda' scope or an explicit list would spend a subprocess to narrow a
+set that is already small, and measured, that makes the common case 5 to
+25 times slower to reach the same answer.
+
+For an unbounded scope, the query's superset-safe conjuncts are turned
+into ripgrep patterns and the answer is intersected with the scope's own
+file list.  An EMPTY answer is an answer -- the agent renders nothing --
+and only a failure, a missing ripgrep, a query with nothing to push, or
+`org-agents-prefilter' set to nil sends this down the fallback below.
+
+The base files are gathered only where they will be used: for an
+unbounded scope, gathering them is the recursive walk the prefilter
+exists to make unnecessary."
+  (let ((scope (plist-get agent :scope)))
+    (if (not (org-agents--needs-prefilter-p scope))
+        (org-agents--scope-base-files scope)
+      ;; Before anything is spawned, so a mistyped directory is named as
+      ;; one rather than as a prefilter failure.
+      (let* ((root (org-agents--scope-root scope))
+             (conjuncts (org-agents--prefilter-conjuncts
+                         (plist-get agent :query)))
+             (reason
+              (cond ((null org-agents-prefilter) "prefiltering off")
+                    ((null conjuncts) "no pushable conjunct")
+                    ((not (executable-find org-agents-rg-executable))
+                     "ripgrep not found")))
+             (candidates (unless reason
+                           (org-agents--rg-files conjuncts root))))
+        (cond ((eq candidates 'unavailable) (setq reason "ripgrep failed"))
+              ;; Belt: every pattern declined, so nothing ran and nothing
+              ;; was narrowed.  `t' is not the empty answer.
+              ((eq candidates t) (setq reason "no pushable conjunct")))
+        (cond
+         (reason
+          (when (eq org-agents-prefilter 'require)
+            (user-error
+             ;; `%s': only a reserved name or a directory reaches this,
+             ;; and `%S' would quote the directory twice over.
+             (concat "org-agents: scope `%s' cannot be narrowed (%s) and"
+                     " `org-agents-prefilter' is `require'; for live"
+                     " evaluation set it to `auto', or use `agenda' or an"
+                     " explicit file list")
+             scope reason))
+          (let ((base (org-agents--scope-base-files scope)))
+            ;; Said once, and naming the count: 45.98 seconds and 885 MB
+            ;; of RSS over 3,640 buffers is a shocking thing to happen
+            ;; without explanation, and a file count explains it.
+            (message (concat "org-agents: scope `%s' not narrowed (%s);"
+                             " scanning %d files live")
+                     scope reason (length base))
+            base))
+         ((null candidates) nil)
+         (t (org-agents--same-files (org-agents--scope-base-files scope)
+                                    candidates)))))))
 
 (defun org-agents--self-match-p (element marker)
   "Non-nil when ELEMENT is the very entry MARKER points at.
@@ -2075,17 +2479,18 @@ rather than insert anything."
 ;; way to update one: before the buffer holding it is saved.  Three refusals
 ;; are what make that affordable rather than a nuisance.
 ;;
-;; No save contacts the database, whatever the `org-db-cli-*' options are set
-;; to.  A save is a keystroke, and `org-db-cli--run' is a synchronous
-;; `call-process' with no timeout against a host that is commonly remote.
-;; `org-agents--update-on-save' therefore runs with the bridge bound
-;; unavailable; the reasoning is written out there, where the binding is.
+;; No save spawns a prefilter.  `org-agents--scope-files' already declines
+;; one for every scope a save updates -- `agenda' and an explicit file list
+;; name their files -- so this is a belt rather than the rule, and
+;; `org-agents--update-on-save' wears it by binding `org-agents-prefilter'
+;; to nil for its whole extent.  That makes "a save spawns no subprocess" a
+;; property of that function rather than a consequence of a rule stated
+;; elsewhere.
 ;;
-;; An agent whose scope needs that prefilter is not updated on save at all.
-;; `active', `all' and a directory have no bound on what they would open, so
-;; they are resolved through the database rather than walked live -- and with
-;; the bridge unavailable such an agent would simply fail on every save.
-;; Those agents are dropped before the update and named once instead.
+;; An agent whose scope needs a prefilter is not updated on save at all.
+;; `active', `all' and a directory have no bound on what they would open,
+;; so an update of one is left for a command that was asked for.  Those
+;; agents are dropped before the update and named once instead.
 ;;
 ;; And an update that renders exactly what was already rendered puts the
 ;; buffer back as it was.  Without that, `:AGENT_MATCHED:' alone would make
@@ -2122,9 +2527,9 @@ of lines however large the file is."
 
 (defun org-agents--savable-markers (markers)
   "Split MARKERS into (SAVABLE . SKIPPED) for an update before a save.
-SKIPPED holds the labels of the agents whose scope needs the database
-prefilter, which are not updated on save: `org-agents-update' still
-refreshes one of those when it is asked to.
+SKIPPED holds the labels of the agents whose scope needs a prefilter,
+which are not updated on save: `org-agents-update' still refreshes one of
+those when it is asked to.
 
 An agent this package cannot READ is not skipped.  Reading a scope means
 reading a property out of a file, which may be malformed -- and a
@@ -2160,22 +2565,20 @@ along with it: a half-written render is not what the user asked to keep.
 reason, catching it only long enough to put the block's previous body back
 before signaling it again.
 
-Nothing done here contacts the database, whatever the `org-db-cli-*'
-options are set to."
+No subprocess is spawned here, whatever `org-agents-prefilter' is set
+to."
   (condition-case err
-      ;; The whole of it runs with the bridge bound unavailable, which is
-      ;; what makes "a save never contacts the database" a property of this
-      ;; function rather than a hope about its callees.
+      ;; The whole of it runs with the prefilter bound off, which is what
+      ;; makes "a save spawns no subprocess" a property of this function
+      ;; rather than a hope about its callees.
       ;;
-      ;; Skipping the agents whose SCOPE needs the prefilter, just below, is
-      ;; not enough to arrange that: `org-agents--scope-files' consults the
-      ;; bridge for ANY query with a pushable conjunct, whatever the scope,
-      ;; and `org-db-cli--run' is a synchronous `call-process' with no
-      ;; timeout.  So an ordinary `agenda' agent carrying a `(property ...)'
-      ;; conjunct would have every C-x C-s spawn a subprocess and wait on
-      ;; whatever host the DSN names -- commonly a remote one -- for as long
-      ;; as TCP takes to give up.  A save that hangs is worth less than an
-      ;; agent that is out of date.
+      ;; It is a belt, not the rule.  `org-agents--scope-files' consults
+      ;; ripgrep only for a scope with no bound on what it holds --
+      ;; `active', `all', a directory -- and every one of those is dropped
+      ;; by `org-agents--savable-markers' just below, so no agent that
+      ;; survives to be updated here would have reached the prefilter
+      ;; anyway.  Binding it says so where the save is, instead of leaving
+      ;; a reader to derive it from a rule stated two sections away.
       ;;
       ;; Safe because the prefilter only ever NARROWS the candidate file set
       ;; and never changes an answer: without it a surviving agent reads the
@@ -2185,16 +2588,13 @@ options are set to."
       ;; The two rules answer different questions and both are wanted.  The
       ;; skip below is about what an update COSTS -- a corpus scope has no
       ;; bound on what it would open, so it is left for a command that was
-      ;; asked for.  This is about a save never blocking on a network.  Only
+      ;; asked for.  This is about a save doing no work that cannot pay for
+      ;; itself: a ripgrep run costs 0.10 to 0.45 seconds and an
+      ;; `agenda'-scope update costs 0.018, so narrowing a scope that names
+      ;; its files makes a keystroke slower to reach the same answer.  Only
       ;; the manual commands keep the prefilter, which is where waiting for
       ;; it is something the user chose to wait for.
-      ;;
-      ;; They also compose in one direction worth naming: with the bridge
-      ;; bound unavailable here, a corpus-scope agent would not walk the
-      ;; corpus -- `org-agents--scope-files' refuses it -- but would fail on
-      ;; every single save.  Dropping it below is what turns that into one
-      ;; message naming it.
-      (let ((org-db-cli-db-url nil))
+      (let ((org-agents-prefilter nil))
         (when-let* ((markers (org-agents--buffer-agents)))
           (pcase-let ((`(,savable . ,skipped)
                        (org-agents--savable-markers markers)))
@@ -2202,7 +2602,7 @@ options are set to."
             ;; is no place to report an agent at a time.
             (when skipped
               (message (concat "org-agents: not updated on save, the scope"
-                               " needs the database prefilter: %s")
+                               " needs a prefilter: %s")
                        (string-join skipped "; ")))
             (when savable
               ;; Widened throughout.  `org-agents--buffer-agents' answers for
@@ -2236,14 +2636,15 @@ Every agent in the buffer is rendered afresh as part of the save, so what
 reaches the file is what the queries match now.  Three things are
 deliberately not done.
 
-No save contacts the database, whatever the `org-db-cli-*' options are set
-to: the bridge is a synchronous subprocess with no timeout, and the
-prefilter it provides can only narrow a set of candidate files and never
-change an answer, so an agent updated without it matches what it would
-have matched anyway.  The manual commands keep the prefilter.
+No save spawns a prefilter, whatever `org-agents-prefilter' is set to.
+The prefilter can only narrow a set of candidate files and never change
+an answer, so an agent updated without it matches what it would have
+matched anyway -- having merely opened more files to find out.  The
+manual commands keep it, which is where waiting for it is something the
+user chose to wait for.
 
-An agent whose `:AGENT_SCOPE:' needs that prefilter -- `active', `all', or
-a directory -- is named in the echo area and left as it was, since there is
+An agent whose `:AGENT_SCOPE:' needs a prefilter -- `active', `all', or a
+directory -- is named in the echo area and left as it was, since there is
 no bound on what it would otherwise open.  Use \\[org-agents-update] to
 refresh one of those.
 

@@ -119,7 +119,7 @@ leftover-reference check names them."
                (lambda (&rest _) (error "must not re-prompt"))))
       (should (org-agents--gate query)))))
 
-(ert-deftest org-agents-test-gate-rejects-cli-only-spelling ()
+(ert-deftest org-agents-test-gate-rejects-a-misspelled-head ()
   (should-error (org-agents--gate '(headline "foo")) :type 'user-error))
 
 (ert-deftest org-agents-test-gate-rejects-leftover-ref ()
@@ -178,8 +178,8 @@ leftover-reference check names them."
         (noninteractive t))
     (should-not (org-agents--gate '(and (todo) . foo)))))
 
-(ert-deftest org-agents-test-gate-cli-spelling-in-argument ()
-  "A CLI-only spelling is caught in a predicate argument, but not in Lisp."
+(ert-deftest org-agents-test-gate-misspelled-head-in-argument ()
+  "A misspelled head is caught in a predicate argument, but not in Lisp."
   (should-error (org-agents--gate '(property "K" (headline "x")))
                 :type 'user-error)
   (should-error (org-agents--gate '(property "K" (re "y")))
@@ -239,332 +239,126 @@ leftover-reference check names them."
       (should (org-agents--gate (org-agents--expand '$TAGS)))
       (should (org-agents--gate (org-agents--expand '$ITEM))))))
 
-(ert-deftest org-agents-test-skeleton-property-exists ()
+(ert-deftest org-agents-test-conjuncts-property-exists ()
   (let ((org-use-property-inheritance nil))
-    (should (equal (org-agents--skeleton '(and (todo) (property "NEXT_REVIEW")))
-                   "(property \"NEXT_REVIEW\")"))))
+    (should (equal (org-agents--prefilter-conjuncts
+                    '(and (todo) (property "NEXT_REVIEW")))
+                   '((property "NEXT_REVIEW"))))))
 
-(ert-deftest org-agents-test-skeleton-property-ts-implies-exists ()
+(ert-deftest org-agents-test-conjuncts-property-ts-implies-exists ()
   (let ((org-use-property-inheritance nil))
-    (should (equal (org-agents--skeleton
+    (should (equal (org-agents--prefilter-conjuncts
                     '(and (todo) (property-ts "NEXT_REVIEW" :to today)))
-                   "(property \"NEXT_REVIEW\")"))))
+                   '((property "NEXT_REVIEW"))))))
 
-(ert-deftest org-agents-test-skeleton-rejects-invalid-date ()
-  "An impossible date empties the candidate set instead of narrowing it."
-  (should (null (org-agents--skeleton '(deadline :to "2026-02-30"))))
-  (should (null (org-agents--skeleton '(deadline :to "2026-13-45"))))
-  (should (equal (org-agents--skeleton '(deadline :to "2026-12-31"))
-                 "(deadline :to \"2026-12-31\")"))
-  ;; A leap day in a leap year is a real date.
-  (should (equal (org-agents--skeleton '(deadline :to "2028-02-29"))
-                 "(deadline :to \"2028-02-29\")")))
+(ert-deftest org-agents-test-conjuncts-empty-for-residual-only ()
+  (should (null (org-agents--prefilter-conjuncts '(todo))))
+  (should (null (org-agents--prefilter-conjuncts '(tags "urgent"))))
+  (should (null (org-agents--prefilter-conjuncts '(regexp "colou?r")))))
 
-(ert-deftest org-agents-test-skeleton-multitoken-value-downgrades-to-existence ()
-  "An accumulated value is one string to org-ql and several rows to the DB."
-  (let ((org-use-property-inheritance nil))
-    (should (equal (org-agents--skeleton '(property "TAGS_TEXT" "a b"))
-                   "(property \"TAGS_TEXT\")"))
-    ;; A single token can still be compared whole.
-    (should (equal (org-agents--skeleton '(property "TAGS_TEXT" "a"))
-                   "(property \"TAGS_TEXT\" \"a\")"))))
+(ert-deftest org-agents-test-conjuncts-heading-literal-only ()
+  (should (equal (org-agents--prefilter-conjuncts '(and (heading "Review") (todo)))
+                 '((heading "Review"))))
+  (should (equal (org-agents--prefilter-conjuncts '(heading "Review" "widget"))
+                 '((heading "Review" "widget"))))
+  (should (null (org-agents--prefilter-conjuncts '(heading "Rev.*iew")))))
 
-(ert-deftest org-agents-test-skeleton-empty-for-residual-only ()
-  (should (null (org-agents--skeleton '(todo))))
-  (should (null (org-agents--skeleton '(tags "urgent"))))
-  (should (null (org-agents--skeleton '(regexp "colou?r")))))
+(ert-deftest org-agents-test-conjuncts-planning-drops-every-bound ()
+  "The head alone decides a planning conjunct, whatever the bounds say.
+ripgrep cannot compare dates, so a bound is left residual for org-ql and
+the conjunct asks only whether the stamp is there at all.  Dropping a
+conjunct of org-ql's condition only widens: `there is a stamp in the
+period' implies `there is a stamp'.
 
-(ert-deftest org-agents-test-skeleton-heading-literal-only ()
-  (should (equal (org-agents--skeleton '(and (heading "Review") (todo)))
-                 "(heading \"Review\")"))
-  (should (null (org-agents--skeleton '(heading "Rev.*iew")))))
+This is a coverage GAIN over pushing a date.  Every shape below pushes
+now; `(deadline 7)' and `(deadline auto)' pushed NOTHING while a date had
+to be resolved to a calendar day a second engine would read the same way,
+and the two shapes org-ql and that engine read DIFFERENTLY -- a repeated
+key, and `:on' beside a bound -- had to be refused outright.  With one
+engine there is no second reading to disagree with."
+  (dolist (case '(((scheduled) . (scheduled))
+                  ((scheduled :to 7) . (scheduled))
+                  ((scheduled :to today) . (scheduled))
+                  ((scheduled :from "2026-01-01" :to "2026-12-31") . (scheduled))
+                  ;; A date that is not a date at all, and one that names
+                  ;; a day that does not exist: org-ql normalizes both and
+                  ;; the pattern reads neither.
+                  ((scheduled :to "2026-02-30") . (scheduled))
+                  ((scheduled :before today) . (scheduled))
+                  ;; The two shapes the old splitter refused.
+                  ((scheduled :to today :to "2026-01-01") . (scheduled))
+                  ((closed :on today :from 1 :to 7) . (closed))
+                  ((deadline) . (deadline))
+                  ((deadline 7) . (deadline))
+                  ((deadline auto) . (deadline))
+                  ((closed :on "2026-08-01") . (closed))))
+    (should (equal (org-agents--prefilter-conjuncts (car case))
+                   (list (cdr case)))))
+  ;; And it is still a conjunct among others, in query order.
+  (should (equal (org-agents--prefilter-conjuncts
+                  '(and (property "URL") (scheduled :to 7) (todo)))
+                 '((property "URL") (scheduled)))))
 
-(ert-deftest org-agents-test-skeleton-planning ()
-  ;; Relative bounds are resolved to absolute local dates at push time, so
-  ;; the expectations are computed the same way rather than hardcoded --
-  ;; hardcoded, they would rot tomorrow.
-  (let ((today (ts-format "%Y-%m-%d" (ts-now)))
-        (in-7 (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))
-    (should (equal (org-agents--skeleton '(and (scheduled :to 7) (tags "x")))
-                   (format "(scheduled :to \"%s\")" in-7)))
-    (should (equal (org-agents--skeleton '(deadline :from today :to "2026-12-31"))
-                   (format "(deadline :from \"%s\" :to \"2026-12-31\")" today))))
-  ;; An absolute bound is kept exactly as written.
-  (should (equal (org-agents--skeleton '(scheduled :to "2026-12-31"))
-                 "(scheduled :to \"2026-12-31\")"))
-  ;; A bare planning form asks whether the stamp is there at all, which
-  ;; needs no date and is pushed as it stands.
-  (should (equal (org-agents--skeleton '(scheduled)) "(scheduled)")))
-
-(ert-deftest org-agents-test-absolute-date ()
-  "A relative date resolves to a local calendar date.
-This test does NOT establish that the arithmetic is calendar arithmetic:
-it computes what it expects with `ts-adjust', the same call the code under
-test makes, so it cannot tell that implementation from any other that
-agrees with it today.  What has teeth for the daylight-saving property is
-`org-agents-test-absolute-date-crosses-a-daylight-saving-change', which
-names a fixed instant and a literal answer."
-  (should (equal (org-agents--absolute-date 'today)
-                 (ts-format "%Y-%m-%d" (ts-now))))
-  ;; Pinned a second way, through Emacs rather than through `ts', so that
-  ;; `ts-now' drifting from the local clock could not pass unnoticed.
-  (should (equal (org-agents--absolute-date 'today)
-                 (format-time-string "%Y-%m-%d")))
-  (dolist (n '(0 1 7 -1 -7 30 -365))
-    (should (equal (org-agents--absolute-date n)
-                   (ts-format "%Y-%m-%d" (ts-adjust 'day n (ts-now))))))
-  ;; Every answer is a date this package would accept as absolute, so the
-  ;; calendar-validity round trip still holds for what is pushed.
-  (dolist (v '(today 0 1 -1 400))
-    (should (org-agents--date-string-p (org-agents--absolute-date v))))
-  ;; An absolute date is kept as written; anything else is not a date.
-  (should (equal "2026-12-31" (org-agents--absolute-date "2026-12-31")))
-  (dolist (v '("2026-02-30" "2026-13-45" "tomorrow" "" nil 1.5 (7)))
-    (should (null (org-agents--absolute-date v)))))
-
-(ert-deftest org-agents-test-absolute-date-crosses-a-daylight-saving-change ()
-  "The day arithmetic is CALENDAR arithmetic, and this is what proves it.
-org-ql advances a relative date with `ts-adjust', which moves the day field
-and keeps the wall-clock time; seconds arithmetic moves a fixed 86400 and
-therefore lands an hour late across a spring-forward -- which on the last
-half hour of the previous day is a different calendar DAY.  The prefilter
-would then bound by a day org-ql did not, exactly when a query crosses the
-change.
-
-Two things make this discriminating where the test above is not.  The
-expectation is the literal string, not a value computed with `ts-adjust':
-an expectation built the same way as the implementation agrees with it by
-construction, whatever either does.  And the reference instant is named
-rather than taken from the clock, because the local zone cannot be moved
-inside a running Emacs -- measured: neither a `process-environment'
-let-binding nor `setenv \"TZ\"' moves what `format-time-string' reports.
-
-Skipped where the local zone has no such transition, so that it is honest
-elsewhere rather than merely green."
-  (skip-unless (/= (car (current-time-zone
-                         (encode-time (list 0 0 12 7 3 2026 nil -1 nil))))
-                   (car (current-time-zone
-                         (encode-time (list 0 0 12 8 3 2026 nil -1 nil))))))
-  (let ((eve (ts-parse "2026-03-07 23:30:00")))
-    ;; Literal answers.  One calendar day after the 7th is the 8th, however
-    ;; many hours that night turns out to hold.
-    (should (equal "2026-03-08" (org-agents--absolute-date 1 eve)))
-    (should (equal "2026-03-07" (org-agents--absolute-date 0 eve)))
-    (should (equal "2026-03-07" (org-agents--absolute-date 'today eve)))
-    (should (equal "2026-03-09" (org-agents--absolute-date 2 eve)))
-    (should (equal "2026-03-06" (org-agents--absolute-date -1 eve)))
-    ;; And the defect this stands guard over, spelled out rather than
-    ;; alluded to: from that instant, seconds arithmetic is a day late.
-    (should (equal "2026-03-09"
-                   (format-time-string "%Y-%m-%d" (time-add (ts-unix eve) 86400))))
-    ;; The reference instant is not consumed, so a caller may reuse it.
-    (should (equal "2026-03-08" (org-agents--absolute-date 1 eve)))))
-
-(ert-deftest org-agents-test-skeleton-relative-dates-become-absolute ()
-  "Every relative bound leaves the splitter as an absolute local date.
-The database resolves a relative value against the UTC day and org-ql
-against the local one, so a relative value pushed verbatim would name a
-different day to each engine and the prefilter would drop entries org-ql
-matches -- an under-match in the one property the whole push-down table
-exists to guarantee.  Naming the day removes the disagreement."
-  (let ((today (ts-format "%Y-%m-%d" (ts-now))))
-    ;; The shape that made this worth fixing rather than documenting: for a
-    ;; "what is due" agent the date is the ONLY pushable conjunct -- `todo'
-    ;; is residual and no other row applies -- so a splitter that refused
-    ;; to push it would leave the skeleton empty, and a corpus or directory
-    ;; scope answers an empty skeleton with a hard error.  Resolving the
-    ;; date always pushes, so that agent has no hour at which it breaks.
-    (should (equal (org-agents--skeleton '(and (todo) (scheduled :to today)))
-                   (format "(scheduled :to \"%s\")" today)))
-    (should (null (org-agents--skeleton '(todo))))
-    (dolist (case (list
-                   (cons '(scheduled :to today)
-                         (format "(scheduled :to \"%s\")" today))
-                   (cons '(scheduled :from today)
-                         (format "(scheduled :from \"%s\")" today))
-                   (cons '(scheduled :on today)
-                         (format "(scheduled :on \"%s\")" today))
-                   (cons '(closed :on today)
-                         (format "(closed :on \"%s\")" today))
-                   (cons '(deadline :to 0)
-                         (format "(deadline :to \"%s\")" today))
-                   (cons '(deadline :to 7)
-                         (format "(deadline :to \"%s\")"
-                                 (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))
-                   (cons '(deadline :from -7)
-                         (format "(deadline :from \"%s\")"
-                                 (ts-format "%Y-%m-%d" (ts-adjust 'day -7 (ts-now)))))
-                   (cons '(scheduled :from today :to 7)
-                         (format "(scheduled :from \"%s\" :to \"%s\")" today
-                                 (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))))
-      (should (equal (org-agents--skeleton (car case)) (cdr case))))
-    ;; No `today' and no bare integer survives into any skeleton.
-    (dolist (q '((scheduled :to today) (deadline :from -7 :to 7)
-                 (closed :on today)
-                 (and (property "URL") (scheduled :to today) (todo))))
-      (let ((skel (org-agents--skeleton q)))
-        (should skel)
-        (should-not (string-match-p "today" skel))
-        (should-not (string-match-p ":to [-0-9]" skel))
-        (should-not (string-match-p ":from [-0-9]" skel))))
-    ;; A value that is no date at all still pushes nothing, so the guard
-    ;; that rejects a calendar-invalid date is not weakened by any of this.
-    (dolist (q '((scheduled :to "2026-02-30") (deadline :on "2026-13-45")
-                 (scheduled :to today :from "2026-02-30")
-                 (scheduled :before today) (closed :to 1.5)))
-      (should (null (org-agents--skeleton q))))
-    ;; `property-ts' pushes existence only and discards its dates, so it is
-    ;; untouched by any of this.
-    (should (equal (org-agents--skeleton '(property-ts "NEXT_REVIEW" :to today))
-                   "(property \"NEXT_REVIEW\")"))))
-
-(ert-deftest org-agents-test-absolute-date-selects-what-the-relative-one-did ()
-  "org-ql answers a normalized bound exactly as it answered the relative one.
-This is the soundness argument for resolving the date here, and it is
-checked against org-ql itself rather than asserted: `org-ql--from-to-on'
-floors `:from'/`:on' to 00:00:00 and ceilings `:to' to 23:59:59 of the
-named local day, which is the same treatment it gives `today', so
-substituting the day cannot change which entries match.  Needs no
-database -- both sides of this comparison are org-ql."
-  (let ((dir (make-temp-file "org-agents-dates" t))
-        (org-element-use-cache nil))
-    (unwind-protect
-        (let ((file (expand-file-name "dates.org" dir)))
-          ;; An entry on each of several days around today, so a bound that
-          ;; moved by even one day would select a different set.
-          (with-temp-file file
-            (dolist (n '(-8 -7 -1 0 1 7 8))
-              (insert (format "* TODO Day %+d\nSCHEDULED: <%s>\n" n
-                              (ts-format "%Y-%m-%d %a"
-                                         (ts-adjust 'day n (ts-now)))))))
-          (dolist (pair '((:to today) (:from today) (:on today)
-                          (:to 7) (:from -7) (:on 1) (:on -1)
-                          (:from -7 :to 7)))
-            (let* ((relative (cons 'scheduled pair))
-                   ;; The absolute form the splitter would push, read back
-                   ;; from the skeleton so this tests what really ships.
-                   (skeleton (org-agents--skeleton relative))
-                   (absolute (car (read-from-string skeleton)))
-                   (titles (lambda (q)
-                             (sort (org-ql-select (list file) q
-                                     :action '(org-get-heading t t t t))
-                                   #'string<))))
-              (should skeleton)
-              (should-not (equal relative absolute))
-              ;; The two select the same entries, and something at that.
-              (should (funcall titles relative))
-              (should (equal (funcall titles relative)
-                             (funcall titles absolute))))))
-      (dolist (buf (buffer-list))
-        (when-let* ((f (buffer-file-name buf)))
-          (when (string-prefix-p (file-name-as-directory dir) f)
-            (with-current-buffer buf (set-buffer-modified-p nil))
-            (kill-buffer buf))))
-      (delete-directory dir t))))
-
-(ert-deftest org-agents-test-skeleton-refuses-a-date-filter-read-two-ways ()
-  "A date plist the two engines read differently pushes nothing at all.
-Not a bound read wrongly -- a bound read DIFFERENTLY, which is the one
-thing a superset argument cannot cover, and which shows up as a rendered
-count that is simply too small with no error anywhere.
-
-A repeated key: `plist-get' answers with the FIRST value, while the CLI's
-`parseDateFilter' folds left and keeps the LAST.  `:on' beside a bound:
-`org-ql--from-to-on' lets `:on' overwrite both ends and drops the bound,
-while `compileDateConds' emits `day = on' AND the bound, so the database
-can answer with nothing where org-ql matches."
-  ;; The premise, pinned on the Emacs side so the asymmetry is on record.
-  (should (eq 'today (plist-get '(:to today :to "2026-01-01") :to)))
-  ;; A key given twice, relative or absolute, in any of the three keys.
-  (dolist (q '((scheduled :to today :to "2026-01-01")
-               (scheduled :from "2026-01-01" :from "2026-06-01")
-               (deadline :on today :on "2026-01-01")
-               (closed :to 7 :to 1)
-               (scheduled :from "2026-01-01" :to "2026-06-01" :to "2026-12-31")))
-    (should (null (org-agents--skeleton q))))
-  ;; `:on' fixes both ends, so a bound beside it answers the same question
-  ;; twice -- in whichever order they are written.
-  (dolist (q '((scheduled :on "2026-08-19" :to "2026-08-10")
-               (scheduled :on today :from "2026-01-01")
-               (deadline :from "2026-01-01" :on today)
-               (closed :on today :from 1 :to 7)))
-    (should (null (org-agents--skeleton q))))
-  ;; Each key at most once, and no `:on' beside a bound, still pushes.
-  (should (org-agents--skeleton '(scheduled :from "2026-01-01" :to "2026-12-31")))
-  (should (org-agents--skeleton '(scheduled :on today)))
-  (should (org-agents--skeleton '(deadline :to 7)))
-  (should (org-agents--skeleton '(closed :from -7 :to 7)))
-  ;; And it is the conjunct that drops out, not the query: another pushable
-  ;; conjunct beside it still narrows.
-  (should (equal (org-agents--skeleton
-                  '(and (property "URL") (scheduled :to today :to "2026-01-01")))
-                 "(property \"URL\")")))
-
-(ert-deftest org-agents-test-skeleton-property-equality-respects-inheritance ()
+(ert-deftest org-agents-test-conjuncts-property-equality-respects-inheritance ()
   (let ((org-use-property-inheritance '("OVERLAY")))
     ;; A name that cannot inherit pushes as before.
-    (should (equal (org-agents--skeleton '(property "STYLE" "habit"))
-                   "(property \"STYLE\" \"habit\")"))
-    (should (equal (org-agents--skeleton '(property "STYLE"))
-                   "(property \"STYLE\")"))
+    (should (equal (org-agents--prefilter-conjuncts '(property "STYLE" "habit"))
+                   '((property "STYLE" "habit"))))
+    (should (equal (org-agents--prefilter-conjuncts '(property "STYLE"))
+                   '((property "STYLE"))))
     ;; An inheriting name pushes nothing, not even existence: the value
     ;; may come from a file-level #+PROPERTY: line or from
-    ;; `org-global-properties', neither of which creates a property row
-    ;; in any file, so the file would be dropped from the candidates.
-    (should (null (org-agents--skeleton '(property "OVERLAY" "x"))))
-    (should (null (org-agents--skeleton '(property "OVERLAY"))))
-    (should (null (org-agents--skeleton '(property-ts "OVERLAY" :to today))))
+    ;; `org-global-properties', neither of which is a `:NAME:' line in
+    ;; the matching file, so the file would be dropped from the
+    ;; candidates.
+    (should (null (org-agents--prefilter-conjuncts '(property "OVERLAY" "x"))))
+    (should (null (org-agents--prefilter-conjuncts '(property "OVERLAY"))))
+    (should (null (org-agents--prefilter-conjuncts
+                   '(property-ts "OVERLAY" :to today))))
     (let ((org-use-property-inheritance t))
-      (should (null (org-agents--skeleton '(property "STYLE" "habit"))))
-      (should (null (org-agents--skeleton '(property-ts "STYLE" :to today)))))))
+      (should (null (org-agents--prefilter-conjuncts '(property "STYLE" "habit"))))
+      (should (null (org-agents--prefilter-conjuncts
+                     '(property-ts "STYLE" :to today)))))))
 
-(ert-deftest org-agents-test-skeleton-nested-queries-residual ()
-  (should (null (org-agents--skeleton '(parent (property "X")))))
-  (should (null (org-agents--skeleton '(descendants (todo))))))
+(ert-deftest org-agents-test-conjuncts-nested-queries-residual ()
+  (should (null (org-agents--prefilter-conjuncts '(parent (property "X")))))
+  (should (null (org-agents--prefilter-conjuncts '(descendants (todo))))))
 
-(ert-deftest org-agents-test-skeleton-multiple-conjuncts-and-scope ()
-  (should (equal (org-agents--skeleton
-                  '(and (property "URL") (scheduled :to 7) (todo))
-                  '(path "positron/"))
-                 (format "(and (property \"URL\") (scheduled :to \"%s\") (path \"positron/\"))"
-                         (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))))
+(ert-deftest org-agents-test-conjuncts-several-in-query-order ()
+  (should (equal (org-agents--prefilter-conjuncts
+                  '(and (property "URL") (heading "Review") (closed :on today)
+                        (todo)))
+                 '((property "URL") (heading "Review") (closed)))))
 
-(ert-deftest org-agents-test-skeleton-no-ts-structs ()
-  "Serialization must come from the pre-normalization sexp, and stay readable."
-  (let ((s (org-agents--skeleton '(and (scheduled :to 7) (property "X")))))
-    (should-not (string-match-p "#s(" s))
-    (should-not (string-match-p "#(" s))))
+(ert-deftest org-agents-test-conjuncts-carry-no-ts-structs ()
+  "The analysis reads the PRE-normalization sexp, and says so structurally.
+org-ql's normalizer rewrites a relative bound into a `ts' struct; a
+conjunct list holding one would mean the splitter had been handed
+normalized input, and the emitter would then be quoting a struct into a
+pattern."
+  (let ((conjuncts (org-agents--prefilter-conjuncts
+                    '(and (scheduled :to 7) (property "X")))))
+    (should conjuncts)
+    (should (equal conjuncts '((scheduled) (property "X"))))
+    (dolist (conjunct conjuncts)
+      (dolist (element conjunct)
+        (should (or (symbolp element) (stringp element)))))))
 
-(ert-deftest org-agents-test-skeleton-strips-text-properties ()
-  "A literal lifted from a buffer carries properties the CLI cannot read."
-  (let ((org-use-property-inheritance nil))
-    (should (equal (org-agents--skeleton
-                    `(and (heading ,(propertize "Review" 'face 'bold)) (todo)))
-                   "(heading \"Review\")"))
-    (should (equal (org-agents--skeleton
-                    `(property "STYLE" ,(propertize "habit" 'face 'bold)))
-                   "(property \"STYLE\" \"habit\")"))
-    (should-not (string-match-p
-                 "#("
-                 (org-agents--skeleton
-                  `(heading ,(propertize "Review" 'face 'bold)))))))
-
-(ert-deftest org-agents-test-skeleton-special-properties-residual ()
-  "A special property is entry structure, not a drawer row, so it never pushes."
-  (should (null (org-agents--skeleton '(property "CATEGORY" "work"))))
-  (should (null (org-agents--skeleton '(property "ITEM"))))
-  (should (null (org-agents--skeleton '(property-ts "DEADLINE" :to today))))
+(ert-deftest org-agents-test-conjuncts-special-properties-residual ()
+  "A special property is entry structure, not a drawer line, so it never pushes.
+`org-entry-get' answers CATEGORY, ITEM, DEADLINE and the rest from the
+entry or its file, and no drawer anywhere holds a line for one -- so a
+pushed pattern would return NO files for a query that matches thousands."
+  (should (null (org-agents--prefilter-conjuncts '(property "CATEGORY" "work"))))
+  (should (null (org-agents--prefilter-conjuncts '(property "ITEM"))))
+  (should (null (org-agents--prefilter-conjuncts '(property "TODO"))))
+  (should (null (org-agents--prefilter-conjuncts '(property "DEADLINE"))))
+  (should (null (org-agents--prefilter-conjuncts
+                 '(property-ts "DEADLINE" :to today))))
   ;; An ordinary name in the same position still pushes.
-  (should (equal (org-agents--skeleton '(property-ts "NEXT_REVIEW" :to today))
-                 "(property \"NEXT_REVIEW\")")))
-
-(ert-deftest org-agents-test-skeleton-resists-print-truncation ()
-  "An abbreviated skeleton is a different query, and the CLI reads it as one."
-  (let ((print-length 2)
-        (print-level 2))
-    (should (equal (org-agents--skeleton
-                    '(and (property "A") (property "B") (property "C")))
-                   "(and (property \"A\") (property \"B\") (property \"C\"))"))))
+  (should (equal (org-agents--prefilter-conjuncts
+                  '(property-ts "NEXT_REVIEW" :to today))
+                 '((property "NEXT_REVIEW")))))
 
 ;;;; Collection
 
@@ -573,9 +367,9 @@ can answer with nothing where org-ql matches."
 `agent-file' bound to a file containing one agent entry.
 `a' and `b' name the corpus files, whose absolute paths the agent
 entry's `:AGENT_SCOPE:' lists.  `org-directory' is the corpus, so no
-test can reach the developer's own; the database bridge is left
-unconfigured and property inheritance off, so a test that wants either
-must arrange it; the ID location table is a fresh one, so rendering a
+test can reach the developer's own; property inheritance is off, so a
+test that wants it must arrange it; the ID location table is a fresh one,
+so rendering a
 link cannot write a temporary corpus into the developer's
 `org-id-locations-file'; buffers visiting the corpus are killed
 afterwards, because the files they visit are about to be deleted.
@@ -597,8 +391,6 @@ and every later test in the process inherits it."
           (b (expand-file-name "b.org" dir))
           (agent-file (expand-file-name "agents.org" dir))
           (org-directory dir)
-          (org-db-cli-config-file nil)
-          (org-db-cli-db-url nil)
           (org-use-property-inheritance nil)
           (org-element-use-cache nil)
           (org-id-locations (make-hash-table :test #'equal))
@@ -789,49 +581,50 @@ property it came from."
         (should (equal (list a) (org-agents--scope-base-files 'agenda)))))))
 
 (ert-deftest org-agents-test-needs-prefilter-p ()
-  "Which scopes may only be resolved through the database.
+  "Which scopes are worth narrowing before they are read.
 `agenda' and an explicit file list name their files and are read live;
 the corpus names and any directory promise nothing about how much they
-hold.  The absolute-directory row is the one worth pinning: such a scope
-needs the prefilter and pushes no `path' conjunct to earn one with, so
-the two answers have to be read together."
+hold."
   (dolist (scope '(active all "sub" "sub/" "a/b" "/Users/johnw/org/sub"
                    "~/org/sub"))
     (should (org-agents--needs-prefilter-p scope)))
   (dolist (scope '(agenda ("a.org") ("a.org" "b.org") nil))
-    (should-not (org-agents--needs-prefilter-p scope)))
-  ;; An absolute directory needs the prefilter and pushes nothing.
-  (should (org-agents--needs-prefilter-p "/Users/johnw/org/sub"))
-  (should (null (org-agents--scope-conjunct "/Users/johnw/org/sub")))
-  ;; A relative one needs it too, and does push a conjunct.
-  (should (equal '(path "sub/") (org-agents--scope-conjunct "sub"))))
+    (should-not (org-agents--needs-prefilter-p scope))))
 
-(ert-deftest org-agents-test-scope-conjunct ()
-  "Only a directory scope earns a path conjunct, and it travels as plain text."
-  (should (equal (org-agents--scope-conjunct "positron") '(path "positron/")))
-  (should (equal (org-agents--scope-conjunct "positron/") '(path "positron/")))
-  (should (null (org-agents--scope-conjunct 'active)))
-  (should (null (org-agents--scope-conjunct '("a.org"))))
-  ;; The conjunct is a prefix relative to the corpus root, which an
-  ;; absolute directory is not, so it pushes nothing rather than asking
-  ;; the database a question in terms it does not share.
-  (should (null (org-agents--scope-conjunct "/Users/johnw/elsewhere")))
-  (let ((conjunct (org-agents--scope-conjunct (propertize "positron" 'face 'bold))))
-    (should (equal conjunct '(path "positron/")))
-    (should (null (text-properties-at 0 (cadr conjunct))))))
+(ert-deftest org-agents-test-scope-root ()
+  "Only an unbounded scope has a root, and a corpus scope is `org-directory'."
+  (org-agents-test--with-corpus
+    (should (equal (org-agents--scope-root 'active) (expand-file-name dir)))
+    (should (equal (org-agents--scope-root 'all) (expand-file-name dir)))
+    (should (null (org-agents--scope-root 'agenda)))
+    (should (null (org-agents--scope-root (list a b))))
+    (make-directory (expand-file-name "sub" dir))
+    (should (equal (org-agents--scope-root "sub")
+                   (expand-file-name "sub" dir)))
+    ;; An ABSOLUTE directory is a root like any other.  The refusal that
+    ;; used to sit here was a database artefact: the conjunct handed to
+    ;; the CLI had to be a path prefix relative to the corpus root, so an
+    ;; absolute directory could not be expressed and pushed nothing.
+    ;; ripgrep is handed a directory, and any directory will do.
+    (let ((absolute (expand-file-name "sub" dir)))
+      (should (equal (org-agents--scope-root absolute) absolute)))
+    ;; A directory that is not there is a mistyped scope, named as one.
+    (let ((err (should-error (org-agents--scope-root "no-such-subdir")
+                             :type 'user-error)))
+      (should (string-match-p "no-such-subdir" (error-message-string err))))))
 
 (ert-deftest org-agents-test-scope-files-intersects-by-truename ()
-  "The database canonicalizes; `org-directory' is commonly a symlink.
-Compared with `equal' the two spellings have nothing in common, and the
-agent would silently match nothing at all."
+  "`org-directory' is commonly a symlink, and ripgrep answers from its root.
+Compared with `equal' the two spellings of one file have nothing in
+common, and the agent would silently match nothing at all."
   (org-agents-test--with-corpus
     (let ((link (expand-file-name "link-a.org" dir)))
       (make-symbolic-link "a.org" link)
       (with-current-buffer (find-file-noselect agent-file)
         (goto-char (point-min))
         (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
-          (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
-                    ((symbol-function 'org-db-cli-query-files) (lambda (_) (list a)))
+          (cl-letf (((symbol-function 'org-agents--rg-files)
+                     (lambda (_conjuncts _root) (list a)))
                     ((symbol-function 'org-agents--scope-base-files)
                      (lambda (_scope) (list link b))))
             ;; The base spelling is what is returned: it is the name the
@@ -871,23 +664,27 @@ agent would silently match nothing at all."
       (setq agent (plist-put agent :query '(property "AGENT_QUERY")))
       (should (null (org-agents--collect agent))))))
 
-(ert-deftest org-agents-test-collect-corpus-scope-needs-prefilter ()
-  "And it says so before walking the corpus it is refusing to read."
+(ert-deftest org-agents-test-collect-corpus-scope-refuses-under-require ()
+  "Under `require' an unnarrowable corpus scope is refused, not walked.
+And it says so before walking the corpus it is refusing to read."
   (org-agents-test--in-agent
-    (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
-      (cl-letf (((symbol-function 'org-db-cli-available-p) #'ignore)
-                ((symbol-function 'org-agents--scope-base-files)
+    (let ((agent (plist-put (org-agents--read-agent) :scope 'active))
+          (org-agents-prefilter 'require)
+          (org-agents-rg-executable "no-such-program-xyzzy"))
+      (cl-letf (((symbol-function 'org-agents--scope-base-files)
                  (lambda (_scope) (error "must not walk the corpus"))))
         (should-error (org-agents--collect agent) :type 'user-error)))))
 
-(ert-deftest org-agents-test-collect-directory-scope-needs-prefilter ()
-  "A directory needs the prefilter as much as `all' does.
+(ert-deftest org-agents-test-collect-directory-scope-refuses-under-require ()
+  "A directory is as unbounded as `all' is.
 Nothing about naming a directory bounds it below corpus size, and the
 recursive walk it would otherwise take is what the prefilter is for."
   (org-agents-test--in-agent
-    (let ((agent (plist-put (org-agents--read-agent) :scope "sub")))
-      (cl-letf (((symbol-function 'org-db-cli-available-p) #'ignore)
-                ((symbol-function 'org-agents--scope-base-files)
+    (make-directory (expand-file-name "sub" dir))
+    (let ((agent (plist-put (org-agents--read-agent) :scope "sub"))
+          (org-agents-prefilter 'require)
+          (org-agents-rg-executable "no-such-program-xyzzy"))
+      (cl-letf (((symbol-function 'org-agents--scope-base-files)
                  (lambda (_scope) (error "must not walk the corpus"))))
         (should-error (org-agents--collect agent) :type 'user-error)))))
 
@@ -918,32 +715,31 @@ property that was wrong."
                                  :type 'user-error)))
           (should (string-match-p "live marker" (error-message-string err))))))))
 
-(ert-deftest org-agents-test-collect-corpus-scope-needs-a-skeleton ()
-  "A query with nothing to push must not open the whole corpus either."
+(ert-deftest org-agents-test-collect-corpus-scope-refuses-an-unpushable-query ()
+  "A query with nothing to push cannot be narrowed, and `require' says so."
   (org-agents-test--in-agent
-    (let ((agent (plist-put (org-agents--read-agent) :scope 'all)))
+    (let ((agent (plist-put (org-agents--read-agent) :scope 'all))
+          (org-agents-prefilter 'require))
       (setq agent (plist-put agent :query '(todo)))
-      (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
-                ((symbol-function 'org-db-cli-query-files)
-                 (lambda (_) (error "must not be called without a skeleton"))))
+      (cl-letf (((symbol-function 'org-agents--rg-run)
+                 (lambda (&rest _) (error "must not run without a conjunct"))))
         (should-error (org-agents--collect agent) :type 'user-error)))))
 
 (ert-deftest org-agents-test-collect-prefilter-intersects ()
   "A corpus scope narrows to the candidate files, and only those are read."
   (org-agents-test--with-corpus
     (let ((link (expand-file-name "link-a.org" dir))
-          (queried nil))
+          (asked nil))
       (make-symbolic-link "a.org" link)
       (with-current-buffer (find-file-noselect agent-file)
         (goto-char (point-min))
         (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
-          (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
-                    ((symbol-function 'org-db-cli-query-files)
-                     (lambda (skel) (setq queried skel) (list a)))
+          (cl-letf (((symbol-function 'org-agents--rg-files)
+                     (lambda (conjuncts _root) (setq asked conjuncts) (list a)))
                     ((symbol-function 'org-agents--scope-base-files)
                      (lambda (_scope) (list link b))))
             (let ((matches (org-agents--collect agent)))
-              (should (string-match-p "NEXT_REVIEW" queried))
+              (should (equal asked '((property "NEXT_REVIEW"))))
               (should (= 1 (length matches)))
               (should (equal "Fix widget"
                              (org-element-property :raw-value (car matches)))))))))))
@@ -960,9 +756,10 @@ which for an agent is the file the agent itself lives in."
       (goto-char (point-min))
       (let ((agent (plist-put (org-agents--read-agent)
                               :query '(heading "Decoy"))))
-        (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
-                  ((symbol-function 'org-db-cli-query-files)
-                   (lambda (_) (list (expand-file-name "elsewhere.org" dir)))))
+        (setq agent (plist-put agent :scope 'active))
+        (cl-letf (((symbol-function 'org-agents--rg-files)
+                   (lambda (_conjuncts _root)
+                     (list (expand-file-name "elsewhere.org" dir)))))
           (should (null (org-agents--scope-files agent)))
           (should (null (org-agents--collect agent))))))))
 
@@ -2834,11 +2631,11 @@ the render wrote what was already there."
         (should (string-match-p ":AGENT_MATCHED: 2 \\[" text))
         (should-not (string-match-p "2020-01-01" text))))))
 
-(ert-deftest org-agents-test-mode-save-skips-an-agent-needing-the-database ()
-  "A scope that needs the prefilter is named and left alone, not run.
-A save must not wait on the database, nor fail because it is unreachable.
-The agent is skipped rather than reported as an error, and the file is
-written all the same."
+(ert-deftest org-agents-test-mode-save-skips-an-agent-needing-a-prefilter ()
+  "A scope that needs a prefilter is named and left alone, not run.
+An update of such a scope has no bound on what it would open, and a save
+is a keystroke.  The agent is skipped rather than reported as an error,
+and the file is written all the same."
   (org-agents-test--with-corpus
     (with-current-buffer (find-file-noselect agent-file)
       (org-agents-mode 1)
@@ -2849,7 +2646,7 @@ written all the same."
         (should (cl-find-if
                  (lambda (m)
                    (and (string-prefix-p "org-agents: " m)
-                        (string-match-p "needs the database" m)
+                        (string-match-p "needs a prefilter" m)
                         (string-match-p "Review agent" m)))
                  msgs))
         ;; Skipped, not failed: no summary reporting a failure.
@@ -2881,73 +2678,6 @@ while the typo is being fixed."
         ;; The good agent rendered, and the bad one is still there to fix.
         (should (string-match-p "Fix widget" text))
         (should (string-match-p "Bad agent" text))))))
-
-(ert-deftest org-agents-test-mode-save-never-contacts-the-database ()
-  "No save spawns the CLI, however the bridge is configured.
-Filtering out the agents whose SCOPE needs the prefilter is not enough to
-keep the database off the save path: `org-agents--scope-files' consults it
-for any query with a pushable conjunct, whatever the scope, and
-`org-db-cli--run' is a synchronous `call-process' with no timeout.  So an
-ordinary `agenda' agent with a `(property ...)' conjunct would have every
-C-x C-s block on the network for as long as TCP takes to give up.
-
-The spawn is made DETECTABLE rather than assumed away: the executable is a
-script that touches a sentinel, and the test first proves that calling the
-bridge does create it, so an assertion that it is absent after a save
-cannot pass because the harness was broken.
-
-The last assertion is the other half of the rule: `org-agents-update-buffer'
-over the very same agent DOES reach the bridge.  The binding belongs to the
-save path alone -- moved down into `org-agents--update-markers' or
-`org-agents--scope-files' it would take the prefilter away from the manual
-commands too, where waiting for it is what the user asked for."
-  (org-agents-test--with-corpus
-    (let* ((sentinel (expand-file-name "cli-was-called" dir))
-           (fake (expand-file-name "fake-org" dir))
-           (config (expand-file-name "org.yaml" dir))
-           ;; An `agenda' scope, whose files are read live, and a property
-           ;; conjunct, which is pushable -- so this is exactly the agent
-           ;; that reaches the prefilter without needing it.
-           (query "(and (todo) (property \"NEXT_REVIEW\"))")
-           (org-agenda-files (list a b))
-           (org-db-cli-executable fake)
-           (org-db-cli-config-file config)
-           (org-db-cli-db-url "postgresql://nobody@example.invalid:5432/org"))
-      (with-temp-file config (insert "# unused by the fake\n"))
-      (with-temp-file fake
-        (insert "#!/bin/sh\n"
-                ;; Records the call and prints nothing, so the bridge reads
-                ;; an empty answer rather than a malformed one.
-                "touch " (shell-quote-argument sentinel) "\n"
-                "exit 0\n"))
-      ;; `executable-find' is what `org-db-cli-available-p' asks, and it
-      ;; wants a file it may actually run.
-      (set-file-modes fake #o755)
-      (should (org-db-cli-available-p))
-      ;; The harness works: the query pushes, and reaching the bridge with
-      ;; it does spawn the script.
-      (let ((skeleton (org-agents--skeleton (car (read-from-string query)))))
-        (should skeleton)
-        (org-db-cli-query-files skeleton))
-      (should (file-exists-p sentinel))
-      (delete-file sentinel)
-      (with-temp-file agent-file
-        (insert "* Review agent\n:PROPERTIES:\n"
-                ":AGENT_QUERY: " query "\n"
-                ":AGENT_SCOPE: agenda\n:END:\n"))
-      (with-current-buffer (find-file-noselect agent-file)
-        (org-agents-mode 1)
-        (set-buffer-modified-p t)
-        (save-buffer)
-        ;; The update really ran -- so the sentinel's absence is the save
-        ;; path declining the database, not the save path doing nothing.
-        (should (string-match-p "Fix widget"
-                                (org-agents-test--file-text agent-file)))
-        (should-not (file-exists-p sentinel))
-        ;; The same agent, updated by hand, does consult it: the binding is
-        ;; the save path's and not the renderer's.
-        (org-agents-update-buffer)
-        (should (file-exists-p sentinel))))))
 
 (ert-deftest org-agents-test-mode-save-survives-a-bug-in-the-update ()
   "A failure anywhere in the update is reported and the save goes on.
@@ -3037,96 +2767,435 @@ at save time anyway."
       (with-current-buffer (find-file-noselect agent-file)
         (should-not org-agents-mode)))))
 
-;;;; Differential (database prefilter superset)
+;;;; Prefilter (ripgrep)
 
-;; This section proves the one property the splitter must have: for every
-;; row of `org-agents--pushdown-fns', the candidate FILE set the `org db
-;; query' prefilter answers with is a SUPERSET of the files org-ql
-;; actually matches.  A conjunct that is not a superset would drop a true
-;; match, which no unit test over the skeleton string can detect: only
-;; running both engines over one corpus can.
+;; The prefilter chooses which FILES org-ql opens, so it can never change
+;; an answer -- unless it narrows too far, in which case matches vanish
+;; with no error at all.  Everything in this section exists to make that
+;; impossible, and it divides in two.
 ;;
-;; It therefore needs a real PostgreSQL database and the real Haskell CLI,
-;; and is gated on four variables.  Absent, the whole section skips
-;; silently; present but unusable, it fails loudly, because a mis-set DSN
-;; that quietly disabled the suite would be worse than a red test.
+;; The soundness tests below the fixture assert the invariant end to end:
+;; for a query Q over a scope's base files, the candidate set must cover
+;; every file org-ql's OWN matches came from.  The left-hand side of that
+;; assertion never asks the prefilter anything -- it runs `org-ql-select'
+;; over the whole base set, enumerated with `directory-files-recursively'
+;; rather than read out of the fixture's manifest -- so a bug in the
+;; prefilter cannot influence it.
 ;;
-;;   ORG_AGENTS_TEST_DB_URL   DSN of a SCRATCH database, which this suite
-;;                            drops and recreates every run.  Its name
-;;                            must contain "org_agents_test", so a DSN
-;;                            naming the user's real corpus cannot be
-;;                            handed to `db unstore' by accident.
-;;   ORG_AGENTS_TEST_CONFIG   org-jw YAML config, e.g. ~/org/org.yaml
-;;   ORG_AGENTS_TEST_KEYWORDS keywords DOT file, e.g. ~/org/org.dot.
-;;                            REQUIRED: the YAML declares empty keyword
-;;                            lists, so without it every entry stores
-;;                            with keyword_value NULL and "TODO" glued
-;;                            onto the front of its title.
-;;   ORG_AGENTS_TEST_ORG_EXE  the cabal-built `org' carrying the `file'
-;;                            field of this project's first task.  The
-;;                            `org' on PATH does NOT have it, and without
-;;                            the field every candidate set comes back
-;;                            empty -- which looks exactly like a sound
-;;                            but narrow prefilter, and would let a real
-;;                            regression pass unremarked.
-;;                            ORG_AGENTS_TEST_ORG_BIN is read as well, so
-;;                            that either spelling works.
-;;
-;; One-time operator setup:
-;;   createdb org_agents_test
-;;   psql -d org_agents_test -c 'CREATE EXTENSION IF NOT EXISTS ltree;
-;;                               CREATE EXTENSION IF NOT EXISTS vector'
-;; (`db init' creates both best-effort, but they need a superuser.)  Then
-;; build the CLI and run:
-;;   export ORG_AGENTS_TEST_DB_URL=postgresql:///org_agents_test
-;;   export ORG_AGENTS_TEST_CONFIG=$HOME/org/org.yaml
-;;   export ORG_AGENTS_TEST_KEYWORDS=$HOME/org/org.dot
-;;   export ORG_AGENTS_TEST_ORG_EXE=.../x/org/build/org/org
-;;   "$EMACS" -batch -L . -L ~/.emacs.d/lisp -l org-agents-test.el \
-;;     --eval '(ert-run-tests-batch-and-exit "org-agents-test-diff")'
+;; The unit tests above the fixture cover pattern construction, the
+;; argument vector and the exit-status contract with no subprocess at
+;; all, because that is where every under-match this backend was measured
+;; to have originates: a missing flag, a missing `\+?', an Emacs
+;; `regexp-quote' where a Rust one was wanted.
 
-(defconst org-agents-test--db-env
-  '("ORG_AGENTS_TEST_DB_URL" "ORG_AGENTS_TEST_CONFIG"
-    "ORG_AGENTS_TEST_KEYWORDS")
-  "The variables the differential suite needs besides the binary.")
+(ert-deftest org-agents-test-rg-quote-escapes-the-rust-dialect ()
+  "Exactly the 18 characters `regex_syntax::escape' escapes, and no others.
+Escaping more is not merely redundant, it is wrong: `\\<' is a word-start
+ASSERTION to the Rust regex crate, so escaping a `<' changes the
+pattern's meaning instead of protecting it."
+  (dolist (c (string-to-list "\\.+*?()|[]{}^$#&-~"))
+    (should (equal (org-agents--rg-quote (format "a%cb" c))
+                   (format "a\\%cb" c))))
+  (dolist (c (string-to-list "<>%_:=,!\"/ 0aZ"))
+    (should (equal (org-agents--rg-quote (format "a%cb" c))
+                   (format "a%cb" c))))
+  ;; The measured hazard: Emacs spells a group `\\(', so `regexp-quote'
+  ;; leaves a bare `(' alone and rg reads it as grouping.
+  (should (equal (regexp-quote "Review (draft)") "Review (draft)"))
+  (should (equal (org-agents--rg-quote "Review (draft)")
+                 "Review \\(draft\\)")))
 
-(defun org-agents-test--db-env ()
-  "Return the differential environment as a plist, or nil if incomplete.
-The binary is read from either spelling of its variable, so that both
-names this project has used for it work."
-  (let ((vals (mapcar #'getenv org-agents-test--db-env))
-        (bin (or (getenv "ORG_AGENTS_TEST_ORG_EXE")
-                 (getenv "ORG_AGENTS_TEST_ORG_BIN"))))
-    (when (cl-every (lambda (v) (and v (not (string-empty-p v))))
-                    (append vals (list bin)))
-      (list :dsn (nth 0 vals) :config (nth 1 vals)
-            :keywords (nth 2 vals) :bin bin))))
+(ert-deftest org-agents-test-rg-quote-strips-text-properties ()
+  "A literal lifted out of an Org buffer carries properties.
+This is the one place a literal becomes something a subprocess sees, so
+it is the one place they are dropped."
+  (let ((quoted (org-agents--rg-quote (propertize "Review" 'face 'bold))))
+    (should (equal quoted "Review"))
+    (should (null (text-properties-at 0 quoted)))))
 
-(defconst org-agents-test--diff-corpus
-  ;; (RELATIVE-NAME . CONTENTS) -- one hazard per file, so that a per-file
-  ;; superset assertion can say which hazard broke.  A single-file corpus
-  ;; could not: its candidate set is the whole corpus or nothing, and the
-  ;; superset relation would hold without distinguishing a prefilter that
-  ;; narrows from one that does nothing at all.
+(ert-deftest org-agents-test-rg-patterns-are-printable-ascii ()
+  "A non-ASCII literal is not pushed, and no pattern carries one.
+rg decodes as UTF-8; Emacs may decode an Org file as latin-1 through a
+coding cookie or `file-coding-system-alist'.  Measured: a latin-1 file
+holding `* Cafe\\301 Review' does not match the UTF-8 pattern `Cafe\\301'
+while it does match `Caf'.  No flag fixes that -- `--encoding' is global
+and a corpus is mixed -- so a non-ASCII literal is refused."
+  (let ((org-use-property-inheritance nil))
+    (dolist (conjunct '((heading "Caf\351")
+                        (heading "Caf\351" "Review")
+                        (property "CODE" "caf\351")
+                        (property "CAF\351")))
+      (dolist (pattern (org-agents--rg-patterns conjunct))
+        (should (equal pattern (encode-coding-string pattern 'us-ascii)))))
+    ;; Refused outright, not silently turned into something else.
+    (should (null (org-agents--rg-patterns '(heading "Caf\351"))))
+    ;; The name is refused as well, and with it the whole conjunct.
+    (should (null (org-agents--rg-patterns '(property "CAF\351"))))
+    ;; A non-ASCII VALUE downgrades to the existence pattern, which is
+    ;; wider and therefore sound.
+    (should (equal (org-agents--rg-patterns '(property "CODE" "caf\351"))
+                   '("^[ \\t]*:CODE\\+?:")))
+    ;; And a newline, a tab and the empty literal push nothing.
+    (should (null (org-agents--rg-patterns '(heading "a\nb"))))
+    (should (null (org-agents--rg-patterns '(heading "a\tb"))))
+    (should (null (org-agents--rg-patterns '(heading ""))))))
+
+(ert-deftest org-agents-test-rg-patterns-property ()
+  "The property patterns, spelled out, because each character was measured."
+  (let ((org-use-property-inheritance nil))
+    ;; `\+?' admits the accumulating spelling: an entry whose ONLY line is
+    ;; `:P+: v' answers `org-entry-get' with \"v\", so a pattern anchored
+    ;; on `:P:' misses the file -- the unsound direction.
+    (should (equal (org-agents--rg-patterns '(property "NEXT_REVIEW"))
+                   '("^[ \\t]*:NEXT_REVIEW\\+?:")))
+    ;; `^[ \\t]*' rather than `^': a drawer may be indented, and Org reads
+    ;; a tab-indented property line inside it.
+    (should (string-prefix-p "^[ \\t]*:" (car (org-agents--rg-patterns
+                                              '(property "P")))))
+    ;; Equality gets the value, bounded to the end of the line.
+    (should (equal (org-agents--rg-patterns '(property "STYLE" "habit"))
+                   '("^[ \\t]*:STYLE\\+?:[ \\t]+habit[ \\t]*$")))
+    ;; A value that is regexp syntax in rg's dialect is quoted for it.
+    (should (equal (org-agents--rg-patterns '(property "CODE" "a+b"))
+                   '("^[ \\t]*:CODE\\+?:[ \\t]+a\\+b[ \\t]*$")))
+    (should (equal (org-agents--rg-patterns '(property "CODE" "alpha(beta)"))
+                   '("^[ \\t]*:CODE\\+?:[ \\t]+alpha\\(beta\\)[ \\t]*$")))
+    ;; A name that is not a legal Org property key pushes nothing: an Org
+    ;; key is `\\S-+' with no colon in it.
+    (should (null (org-agents--rg-patterns '(property "A B"))))
+    (should (null (org-agents--rg-patterns '(property "A:B"))))
+    (should (null (org-agents--rg-patterns '(property ""))))))
+
+(ert-deftest org-agents-test-rg-patterns-planning ()
+  "One pattern per keyword, fixed by the head and independent of every bound.
+rg cannot compare dates, so the bounds stay residual and org-ql applies
+them.  Dropping a conjunct of org-ql's condition only widens: `there is a
+stamp in the period' implies `there is a stamp'."
+  (should (equal (org-agents--rg-patterns '(scheduled)) '("SCHEDULED:[ \\t]*<")))
+  (should (equal (org-agents--rg-patterns '(deadline)) '("DEADLINE:[ \\t]*<")))
+  (should (equal (org-agents--rg-patterns '(closed)) '("CLOSED:[ \\t]*\\[")))
+  ;; NOT anchored to the start of the line.  All three keywords may share
+  ;; one planning line in any order, so `^[ \\t]*DEADLINE:' would miss
+  ;; `CLOSED: [..] DEADLINE: <..>' -- an under-match.
+  (dolist (pattern (append (org-agents--rg-patterns '(scheduled))
+                           (org-agents--rg-patterns '(deadline))
+                           (org-agents--rg-patterns '(closed))))
+    (should-not (string-prefix-p "^" pattern)))
+  ;; The bracket is required by org-ql too (`org-ql--predicate-ts' cannot
+  ;; match without its own regexp matching), so it is free narrowing.
+  (should (string-suffix-p "<" (car (org-agents--rg-patterns '(scheduled))))))
+
+(ert-deftest org-agents-test-rg-patterns-heading ()
+  "One pattern per literal, and `.' with Unicode mode off.
+MEASURED, and the single most surprising result of the exercise: rg's
+default Unicode mode makes `.' match a CODEPOINT, so `^\\*+.*Review'
+cannot cross an invalid UTF-8 byte and misses a latin-1 file even though
+the literal is pure ASCII.  `[^\\n]*' does not fix it either; `(?-u:.)*'
+does."
+  (should (equal (org-agents--rg-patterns '(heading "Fix the bug"))
+                 '("^\\*+(?-u:.)*Fix the bug")))
+  ;; org-ql requires ALL literals in ONE heading, which implies that the
+  ;; file has a heading line for each of them.  Intersecting the
+  ;; per-literal file sets is therefore sound, and it is weaker than
+  ;; org-ql's condition -- the correct direction.
+  (should (equal (org-agents--rg-patterns '(heading "widget" "spec"))
+                 '("^\\*+(?-u:.)*widget" "^\\*+(?-u:.)*spec")))
+  ;; The escaper, again where it is load-bearing.
+  (should (equal (org-agents--rg-patterns '(heading "Ship it (finally)"))
+                 '("^\\*+(?-u:.)*Ship it \\(finally\\)")))
+  ;; No pattern may carry a Unicode-mode `.'.
+  (dolist (pattern (org-agents--rg-patterns '(heading "Review")))
+    (should-not (string-match-p "[^u):]\\*\\'" pattern))
+    (should (string-match-p "(\\?-u:\\.)\\*" pattern))))
+
+(ert-deftest org-agents-test-rg-args-pins-the-argument-vector ()
+  "The flags, in order, because five measured under-matches are missing flags.
+`--regexp' before the pattern so that a literal beginning with `-' -- a
+heading such as `* -- notes' -- cannot be read as a flag, and the root
+after `--' for the same reason."
+  (let ((args (org-agents--rg-args "PAT" "/corpus")))
+    (should (equal args '("--files-with-matches" "--null" "--ignore-case"
+                          "--text" "--crlf" "--no-ignore" "--hidden"
+                          "--follow" "--iglob" "*.org"
+                          "--regexp" "PAT" "--" "/corpus")))
+    ;; Each flag, named with the under-match it prevents, so that removing
+    ;; one fails here as well as in the soundness suite.
+    (dolist (flag '(;; org-ql's `heading' binds `case-fold-search' t in its
+                    ;; own body, and `org-entry-get' is case-insensitive
+                    ;; over property names in both directions.
+                    "--ignore-case"
+                    ;; An .org file holding a NUL is still an Org file.
+                    "--text"
+                    ;; Without it `$' cannot match before a CRLF, and the
+                    ;; value pattern misses every CRLF file.
+                    "--crlf"
+                    ;; `directory-files-recursively' honours no ignore
+                    ;; file and descends into dot-directories.
+                    "--no-ignore" "--hidden"
+                    ;; It lists a symlink to a file outside the tree, and
+                    ;; org-ql matches through it.
+                    "--follow"
+                    ;; `case-fold-search' is t, so its regexp matches
+                    ;; NOTES.ORG, which `--glob' would not.
+                    "--iglob"
+                    ;; A newline in a file name must not split one path.
+                    "--null"))
+      (should (member flag args)))
+    (should-not (member "--glob" args))))
+
+(defun org-agents-test--fake-rg (path &rest lines)
+  "Write an executable shell script at PATH whose body is LINES."
+  (with-temp-file path
+    (insert "#!/bin/sh\n")
+    (dolist (line lines) (insert line "\n")))
+  (set-file-modes path #o755)
+  path)
+
+(ert-deftest org-agents-test-rg-run-no-match-is-an-answer ()
+  "Exit 1 means ripgrep answered, and no file matches.  That is an ANSWER.
+Reporting it as a missing prefilter is the defect this backend exists to
+remove: the bridge it replaces returned nil for a failure and for a
+genuinely empty answer alike, so an agent matching nothing at all was
+reported as unconfigured."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg (expand-file-name "rg" dir) "exit 1")))
+    (unwind-protect
+        (let ((msgs (org-agents-test--messages
+                     (should (null (org-agents--rg-run "PAT" dir))))))
+          ;; A `listp' test tells the two apart exactly: `(listp nil)' is t
+          ;; and `(listp (quote unavailable))' is nil.
+          (should (listp (org-agents--rg-run "PAT" dir)))
+          (should-not (cl-find-if (lambda (m) (string-match-p "org-agents" m))
+                                  msgs)))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-rg-run-failure-is-not-an-answer ()
+  "Exit 2 discards whatever was printed, and says so once.
+MEASURED: with one unreadable file among two, rg prints the readable
+match, writes `Permission denied' to stderr, AND exits 2 -- so the
+printed answer is missing a file.  A partial answer is exactly the
+unsound direction."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg
+           (expand-file-name "rg" dir)
+           "printf '/some/real/file.org\\0'"
+           "echo 'rg: /x: Permission denied' >&2"
+           "exit 2")))
+    (unwind-protect
+        (let (result)
+          (let ((msgs (org-agents-test--messages
+                       (setq result (org-agents--rg-run "PAT" dir)))))
+            (should (eq result 'unavailable))
+            (should-not (listp result))
+            (should (cl-find-if (lambda (m)
+                                  (and (string-match-p "org-agents" m)
+                                       (string-match-p "Permission denied" m)))
+                                msgs))))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-rg-run-reports-a-signal-and-a-spawn-failure ()
+  "A non-integer status must fall to the failure branch, not slip past it.
+`call-process' answers with a STRING such as \"Killed: 9\" when the
+process dies on a signal, so the test has to be `(eq code 0)' /
+`(eq code 1)' and never `(> code 1)'."
+  (let ((dir (make-temp-file "org-agents-rg" t)))
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (&rest _) "Killed: 9")))
+            (should (eq 'unavailable (org-agents--rg-run "PAT" dir))))
+          ;; Failure to spawn at all is reported like any other failure
+          ;; rather than signalling out of an agent update.
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (&rest _) (signal 'file-missing '("no rg")))))
+            (let (result)
+              (let ((msgs (org-agents-test--messages
+                           (setq result (org-agents--rg-run "PAT" dir)))))
+                (should (eq result 'unavailable))
+                (should (cl-find-if (lambda (m) (string-match-p "org-agents" m))
+                                    msgs))))))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-rg-run-spawns-in-a-live-local-directory ()
+  "A deleted `default-directory' makes `call-process' signal; a remote one
+would run the binary on another host, against files that are not the
+corpus.  So the process is spawned from `temporary-file-directory'."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg (expand-file-name "rg" dir) "exit 1"))
+         (seen nil))
+    (unwind-protect
+        (cl-letf* ((real (symbol-function 'call-process))
+                   ((symbol-function 'call-process)
+                    (lambda (&rest args)
+                      (push default-directory seen)
+                      (apply real args))))
+          (let ((default-directory "/nonexistent-dir-xyz/"))
+            (should (listp (org-agents--rg-run "PAT" dir))))
+          (let ((default-directory "/ssh:host:/tmp/")
+                (file-name-handler-alist nil)
+                (tramp-mode nil))
+            (should (listp (org-agents--rg-run "PAT" dir))))
+          (should (equal seen (list temporary-file-directory
+                                    temporary-file-directory))))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-rg-run-reads-nul-separated-paths ()
+  "Paths arrive NUL-terminated, so a newline in a name cannot split one.
+MEASURED: split on \"\\n\" instead, and a file named `weird\\nname.org'
+arrives as the two fragments `weird' and `name.org', neither of which is
+a file -- and the real file is dropped from the candidate set."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg
+           (expand-file-name "rg" dir)
+           "printf '/c/weird\\nname.org\\0/c/b.org\\0'")))
+    (unwind-protect
+        (should (equal (org-agents--rg-run "PAT" dir)
+                       '("/c/weird\nname.org" "/c/b.org")))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-rg-files-intersects-and-short-circuits ()
+  "Several patterns are ANDed by INTERSECTING their file sets, never by
+concatenating them into one pattern: org-ql's `and' is order-free and
+per-line, and a single pattern demanding both on one line loses every
+file whose witnesses are on different lines.  A run that answers with
+nothing ends the walk: there is nothing left to intersect."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (calls 0)
+         (answers '(("/c/a.org" "/c/b.org") ("/c/b.org" "/c/x.org"))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-agents--rg-run)
+                   (lambda (&rest _)
+                     (prog1 (nth calls answers) (cl-incf calls)))))
+          (should (equal (org-agents--rg-files
+                          '((property "A") (property "B")) dir)
+                         '("/c/b.org")))
+          (should (= calls 2))
+          ;; An empty intersection stops immediately.
+          (setq calls 0 answers '(nil ("/c/b.org")))
+          (should (null (org-agents--rg-files
+                         '((property "A") (property "B")) dir)))
+          (should (= calls 1))
+          ;; One failed run poisons the whole prefilter: an intersection
+          ;; missing a term would be sound, but a partial answer from a
+          ;; broken tool is not a thing to build on.
+          (setq calls 0 answers '(("/c/a.org") unavailable))
+          (should (eq 'unavailable
+                      (org-agents--rg-files
+                       '((property "A") (property "B")) dir)))
+          ;; No conjunct offered a pattern: `t', which is not an answer and
+          ;; must not be read as the empty one.
+          (setq calls 0)
+          (should (eq t (org-agents--rg-files '((todo) (tags "x")) dir)))
+          (should (= calls 0)))
+      (delete-directory dir t))))
+
+;;; The soundness fixture
+
+;; One hazard per file, so that a superset failure names the hazard that
+;; broke it.  A single-file corpus could not: its candidate set is
+;; everything or nothing, and the superset relation would hold without
+;; distinguishing a prefilter that narrows from one that does nothing.
+
+(defconst org-agents-test--rg-corpus
   '(("prop.org" . "\
 * TODO Review the widget
 :PROPERTIES:
 :NEXT_REVIEW: [2024-01-15 Mon]
-:STYLE:      habit
+:STYLE: habit
 :END:
 ")
-    ;; The only NEXT_REVIEW here is on a DONE entry, so org-ql's residual
-    ;; `(todo)' rejects it while the pushed `(property ...)' keeps the
-    ;; file: a superset is allowed to be wider, and this is the proof that
-    ;; the residual really is applied on the Emacs side.
+    ;; The only NEXT_REVIEW here is on a DONE entry, so the residual
+    ;; `(todo)' rejects it while the pushed conjunct keeps its file:
+    ;; proof that the candidate set is allowed to be wider.
     ("prop-done.org" . "\
 * DONE Retired widget
 :PROPERTIES:
 :NEXT_REVIEW: [2024-01-15 Mon]
 :END:
 ")
-    ;; A leap day, a repeater on the same day, a deadline and a closing
-    ;; stamp: one file for the three planning rows.
+    ;; `:TOKENS+:' with no plain `:TOKENS:' line at all.  MEASURED:
+    ;; `org-entry-get' answers \"beta\" here and org-ql matches
+    ;; `(property \"TOKENS\")', so a pattern anchored on `:TOKENS:'
+    ;; misses the file.
+    ("prop-accum.org" . "\
+* TODO Accumulated only
+:PROPERTIES:
+:TOKENS+: beta
+:END:
+")
+    ;; The drawer spells the name in lower case.  MEASURED:
+    ;; `org-entry-get' is case-insensitive over property names in both
+    ;; directions.
+    ("prop-case.org" . "\
+* TODO Lower-case property name
+:PROPERTIES:
+:next_review: [2024-02-02 Fri]
+:END:
+")
+    ;; An indented drawer with a TAB-indented property line inside it.
+    ;; MEASURED: Org reads both.
+    ("prop-indent.org" . "\
+* TODO Indented drawer
+   :PROPERTIES:
+\t:NEXT_REVIEW: [2024-03-03 Sun]
+   :END:
+")
+    ;; A value carrying whitespace, which is what makes the downgrade to
+    ;; existence load-bearing rather than decorative.
+    ("prop-spaced-value.org" . "\
+* TODO Spaced value
+:PROPERTIES:
+:OWNER: Jane Doe
+:END:
+")
+    ;; Two values that are regexp syntax in rg's dialect.  `a+b' catches
+    ;; an implementation that does not quote at all; `alpha(beta)'
+    ;; catches one that quotes with Emacs `regexp-quote', which leaves
+    ;; `(' alone because Emacs spells a group `\\('.
+    ("value-regexp.org" . "\
+* TODO Plus value
+:PROPERTIES:
+:CODE: a+b
+:END:
+* TODO Paren value
+:PROPERTIES:
+:PAREN: alpha(beta)
+:END:
+")
+    ;; Two pushable conjuncts satisfied by one entry, so an intersection
+    ;; can be told apart from a union.
+    ("two-props.org" . "\
+* TODO Both conjuncts here
+:PROPERTIES:
+:NEXT_REVIEW: [2024-01-15 Mon]
+:STYLE: habit
+:END:
+")
+    ;; The literal sits behind a TODO keyword, a priority cookie and
+    ;; tags.  org-ql compares against the cleaned title `[#A] Review
+    ;; widget spec'; the pattern matches the raw line, which is wider.
+    ("head.org" . "\
+* TODO [#A] Review widget spec :work:urgent:
+* Heading with 50%_done in it
+")
+    ;; The heading differs in CASE from the query.
+    ("head-case.org" . "\
+* review the gadget
+")
+    ;; Parentheses in a heading literal: pushed by the splitter, and
+    ;; regexp syntax to rg though not to Emacs.
+    ("head-paren.org" . "\
+* TODO Review (draft) of plans
+")
+    ;; Regexp metacharacters the splitter refuses to push at all.
+    ("head-regexp.org" . "\
+* Rev.*iew of plans
+")
+    ;; The three planning keywords, a leap day, and a repeater.
     ("plan.org" . "\
 * TODO Leap review
 SCHEDULED: <2024-02-29 Thu>
@@ -3137,613 +3206,768 @@ DEADLINE: <2024-06-30 Sun>
 * DONE Shipped
 CLOSED: [2024-03-01 Fri]
 ")
-    ;; A keyword, a priority cookie and tags: org-ql matches over the
-    ;; cleaned title \"[#A] Review widget spec\", the database ILIKEs the
-    ;; raw headline \"TODO [#A] Review widget spec :work:urgent:\".  The
-    ;; second heading carries the LIKE metacharacters `%' and `_', which
-    ;; the CLI must escape and which are not regexp metacharacters, so
-    ;; `org-agents--literal-strings-p' allows them through.
-    ("head.org" . "\
-* TODO [#A] Review widget spec :work:urgent:
-* Review 50%_done
+    ;; An indented planning line, which `org-adapt-indentation' writes.
+    ("plan-indent.org" . "\
+* TODO Indented planning
+   SCHEDULED: <2024-04-04 Thu>
 ")
-    ;; Regexp metacharacters, which the splitter refuses to push.
-    ("head-regexp.org" . "\
-* Rev.*iew of plans
+    ;; All three keywords on ONE line, in an order that puts DEADLINE
+    ;; second.  An anchored planning pattern misses this file.
+    ("plan-shared-line.org" . "\
+* DONE Shared planning line
+CLOSED: [2024-05-05 Sun] DEADLINE: <2024-05-01 Wed> SCHEDULED: <2024-04-30 Tue>
 ")
-    ;; `#+FILETAGS:' only: org-ql inherits the tag onto both entries,
-    ;; while the store writes no entry_tags row at all.
-    ("filetags.org" . "\
-#+FILETAGS: :ftag:
-
-* Tagged by the file
-* Also tagged by the file
+    ;; The pattern's text in ordinary body prose, in no drawer at all.
+    ;; MEASURED: Org reads it as a paragraph and org-ql does not match
+    ;; this file.  rg does.  That over-match must be harmless.
+    ("prose.org" . "\
+* Notes on the review protocol
+Every entry gets a
+:NEXT_REVIEW: [2024-01-15 Mon]
+line in its body text, or so the convention says.
 ")
-    ;; A property whose only source is a `#+PROPERTY:' line.  A canary:
-    ;; BOTH sides must answer \"no match\".  The `property' row IS pushed,
-    ;; so if org-ql ever begins answering `(property N)' out of file-level
-    ;; properties, the push-down becomes unsound the same day.
+    ;; A canary: BOTH sides must answer \"no match\".  If org-ql ever
+    ;; begins answering `(property N)' out of file-level properties, the
+    ;; pattern must learn `#+PROPERTY:' the same day.
     ("fileprop.org" . "\
 #+PROPERTY: FILEPROP fromfile
 
 * Sees FILEPROP only by inheritance
 ")
-    ;; An ancestor's CATEGORY: org-ql matches parent AND child, the store
-    ;; records the category against the parent only.
-    ("anccat.org" . "\
-* Parent with category
-:PROPERTIES:
-:CATEGORY: AncCat
-:END:
-** Child inherits the category
-")
-    ;; An active timestamp in the body text: org-ql's `ts' sees it,
-    ;; entry_stamps holds nothing for this entry.
-    ("bodyts.org" . "\
-* Mentions a date in prose
-Some prose mentioning <2024-02-29 Thu> inline.
-")
-    ;; `:TOKENS+:' accumulation: `org-entry-get' joins the two lines into
-    ;; \"alpha beta\", while the Haskell parser cannot read a `+' in a
-    ;; property name and degrades the WHOLE drawer to a body block -- so
-    ;; entry_properties gets no row, not even for the ordinary `:TOKENS:'
-    ;; line above it.
-    ("accum.org" . "\
-* TODO Accumulated tokens
-:PROPERTIES:
-:TOKENS: alpha
-:TOKENS+: beta
-:END:
-")
-    ;; Under a subdirectory, for the `(path \"sub/\")' scope conjunct.
-    ("sub/scoped.org" . "\
-* TODO Scoped review
-:PROPERTIES:
-:NEXT_REVIEW: [2024-01-15 Mon]
-:END:
-")
-    ;; A non-ASCII heading, which travels into the skeleton raw and
-    ;; reaches the CLI through `call-process': the coding system is
-    ;; answered with evidence rather than with a claim.
-    ("nonascii.org" . "\
-* TODO Révisér le café
-:PROPERTIES:
-:NEXT_REVIEW: [2024-01-15 Mon]
-:END:
+    ;; A CRLF file with a value to compare.  Without `--crlf', `$' cannot
+    ;; match before the carriage return and the value pattern misses it.
+    ("crlf.org" . "\
+* TODO Windows widget\r
+:PROPERTIES:\r
+:OWNER: Jane\r
+:END:\r
 ")
     ;; Matches nothing, so the prefilter can be shown to narrow at all.
     ("filler.org" . "\
 * Nothing to see here
-"))
-  "Fixture files for the differential suite: relative name . contents.")
+")
+    ("sub/scoped.org" . "\
+* TODO Scoped review
+:PROPERTIES:
+:NEXT_REVIEW: [2024-05-05 Sun]
+:END:
+")
+    ;; A subdirectory whose NAME is glob syntax.  MEASURED: rg
+    ;; `--glob 'sub{1}/**'' answers with no files at all for it, which is
+    ;; why the directory is made rg's ROOT and never a glob.
+    ("sub{1}/braced.org" . "\
+* TODO Braced directory review
+:PROPERTIES:
+:NEXT_REVIEW: [2024-06-06 Thu]
+:END:
+")
+    ;; `directory-files-recursively' lists a dot-file; rg skips one by
+    ;; default.
+    (".stealth.org" . "\
+* TODO Hidden file review
+:PROPERTIES:
+:NEXT_REVIEW: [2024-07-07 Sun]
+:END:
+")
+    ;; Named by a `.ignore' file, which rg honours everywhere.
+    ("ignored.org" . "\
+* TODO Ignored file review
+:PROPERTIES:
+:NEXT_REVIEW: [2024-08-08 Thu]
+:END:
+")
+    ;; Named by a `.gitignore', which rg honours inside a git repository
+    ;; -- and the author's corpus is one.  The fixture makes a bare
+    ;; `.git' directory so the rule applies here too.
+    ("gitignored.org" . "\
+* TODO Gitignored file review
+:PROPERTIES:
+:NEXT_REVIEW: [2024-09-09 Mon]
+:END:
+")
+    ;; An upper-case extension.  MEASURED: `case-fold-search' is t, so
+    ;; `directory-files-recursively' with \"\\\\.org\\\\'\" LISTS this
+    ;; file while rg's `--glob '*.org'' does not.
+    ("UPPER.ORG" . "\
+* TODO Upper-case extension review
+:PROPERTIES:
+:NEXT_REVIEW: [2024-10-10 Thu]
+:END:
+")
+    ;; A NUL byte in the body, BEFORE a later heading and drawer.
+    ;; MEASURED: without `--text' rg stops at the NUL and reports nothing
+    ;; for this file, while Org reads it and org-ql matches.
+    ("nul.org" . "\
+* TODO First entry
+Body with a NUL: \0 and more text.
+* TODO Review after the nul
+:PROPERTIES:
+:NEXT_REVIEW: [2024-12-12 Thu]
+:END:
+")
+    ;; Controls, not part of the base file set.
+    (".ignore" . "ignored.org\n")
+    (".gitignore" . "gitignored.org\n"))
+  "Fixture files for the soundness suite: relative name . contents.")
 
-(defun org-agents-test--org-cli (env &rest args)
-  "Run the differential `org' binary with ARGS; return (CODE . OUTPUT).
-Stdout and stderr come back together, because the CLI writes its PARSE
-ERROR lines to stdout and libpq's diagnostics to stderr, and the harness
-has to see both."
-  (with-temp-buffer
-    (let* ((default-directory temporary-file-directory)
-           (code (apply #'call-process (plist-get env :bin) nil t nil
-                        "--config"   (expand-file-name (plist-get env :config))
-                        "--keywords" (expand-file-name (plist-get env :keywords))
-                        args)))
-      (cons code (buffer-string)))))
+(defconst org-agents-test--rg-corpus-count 27
+  "How many `.org' files `org-agents-test--with-rg-corpus' reliably shows.
+Twenty-six from the manifest, plus the latin-1 file the macro builds.
+`link.org' is a twenty-eighth that is deliberately NOT counted: see the
+macro for the platform quirk that makes its presence in the base file set
+intermittent, and why that costs the suite nothing.
 
-(defun org-agents-test--db-preflight (env)
-  "Fail the test when ENV is set but unusable.
-The DSN check is the one that matters: every run of this section drops
-every data table in the database it is pointed at, so a DSN that is not
-obviously a scratch database is refused rather than emptied.
+The fixture asserts this, because a fixture that quietly stops being
+materialised makes every soundness assertion below hold vacuously -- the
+failure mode that made the database suite it replaces worthless.")
 
-The binary check reads the symbol table.  GHC Z-encodes a module name, so
-the symbol to look for is `OrgziDBziRender' and not `Org.DB.Render' --
-measured on this host as 33 occurrences in the cabal-built binary and 0
-in the one on PATH.  Where `nm' cannot be run at all the check is
-skipped: the store's own self-check in `org-agents-test--with-db-corpus'
-is the authoritative one, since it exercises the `file' field instead of
-guessing at it from a symbol name."
-  (unless (string-match-p "org_agents_test" (plist-get env :dsn))
-    (ert-fail (format "refusing DSN %S: this suite drops every data table \
-in it, so the scratch database's name must contain \"org_agents_test\""
-                      (plist-get env :dsn))))
-  (unless (file-executable-p (plist-get env :bin))
-    (ert-fail (format "%s is not executable" (plist-get env :bin))))
-  (dolist (file (list (plist-get env :config) (plist-get env :keywords)))
-    (unless (file-readable-p (expand-file-name file))
-      (ert-fail (format "%s is not readable" file))))
-  (with-temp-buffer
-    (when (eq 0 (ignore-errors
-                  (call-process "nm" nil t nil "-a" (plist-get env :bin))))
-      (goto-char (point-min))
-      (unless (re-search-forward "OrgziDBziRender" nil t)
-        (ert-fail
-         (format "%s predates the `file' JSON field (no OrgziDBziRender \
-symbol); rebuild with `cabal build org-jw'" (plist-get env :bin)))))))
+(defmacro org-agents-test--with-rg-corpus (&rest body)
+  "Materialise the soundness fixture corpus and run BODY.
+Binds `dir' (the corpus root), `outside' (the directory holding the
+symlink target), `paths' (the base file set, enumerated with
+`directory-files-recursively' rather than read out of the manifest, so
+that a fixture the manifest forgets is still covered) and `F' (a
+function from a relative name to its absolute path AS WRITTEN -- not a
+truename: the symlink fixture depends on org-ql being handed the base
+spelling).
 
-(defun org-agents-test--db-files (skeleton)
-  "Candidate file truenames for SKELETON, through the real CLI."
-  (mapcar #'file-truename (org-db-cli-query-files skeleton)))
+`org-directory' is the corpus, so no test can reach the developer's own;
+`org-agenda-files' is nil, so a scope cannot leak into one; property
+inheritance is off and the element cache is nil, as in
+`org-agents-test--with-corpus'; the ID location table is a fresh one, so
+nothing writes a temporary corpus into the developer's
+`org-id-locations-file'; and `org-agents-prefilter' is `auto', so a
+developer's own customization cannot decide what these tests exercise.
 
-(defun org-agents-test--live-files (query paths)
-  "Truenames of the files org-ql actually matches for QUERY over PATHS.
-`delq' first: a match carrying no marker answers nil, and a nil among the
-file names would fail a later comparison over a nil rather than a file."
-  (delete-dups
-   (mapcar #'file-truename
-           (delq nil (org-ql-select paths query :action '(buffer-file-name))))))
-
-(defun org-agents-test--all-paths (files)
-  "Every fixture path in FILES, as `org-agents-test--with-db-corpus' binds it."
-  (mapcar #'cdr files))
-
-(defun org-agents-test--should-be-superset (query skeleton paths)
-  "Assert SKELETON's candidate set covers every file org-ql matches for QUERY.
-Never `equal': the contract is a superset, and two of the fixtures below
-depend on the prefilter being legitimately wider than org-ql.  Both sides
-are asserted non-empty, so a fixture that quietly stopped matching cannot
-make the relation hold for want of anything to relate."
-  (let ((live (org-agents-test--live-files query paths))
-        (cands (org-agents-test--db-files skeleton)))
-    (should live)
-    (should cands)
-    (dolist (f live)
-      (should (member f cands)))))
-
-(defmacro org-agents-test--with-db-corpus (&rest body)
-  "Store the differential fixture corpus into the scratch DB and run BODY.
-Binds `env' (the plist `org-agents-test--db-env' answers with), `dir'
-(the corpus root) and `files' (an alist of relative name . absolute
-TRUENAME).  Truenames, because `files.path' in the database is
-`canonicalizePath'-ed: on macOS a corpus under /var/folders/... is stored
-as /private/var/folders/..., and `equal' on those two spellings of one
-file is nil.  The production code compares by truename for the same
-reason, and a test must not be laxer than what it tests.
-
-The environment is checked before anything is created, so a skipped run
-leaves no temporary directory behind."
+`skip-unless' guards on the executable: a ripgrep backend cannot be
+tested end to end without ripgrep.  The pattern and exit-status tests
+above do NOT go through this macro and never skip."
   (declare (indent 0))
-  `(let ((env (org-agents-test--db-env)))
-     (skip-unless env)
-     (org-agents-test--db-preflight env)
-     (let* ((dir (make-temp-file "org-agents-diff" t))
+  `(let ((org-agents-prefilter 'auto))
+     (skip-unless (executable-find org-agents-rg-executable))
+     (let* ((dir (make-temp-file "org-agents-rg-corpus" t))
+            (outside (make-temp-file "org-agents-rg-outside" t))
             (org-directory dir)
-            (org-db-cli-executable (plist-get env :bin))
-            (org-db-cli-config-file (plist-get env :config))
-            (org-db-cli-db-url (plist-get env :dsn))
-            (org-db-cli-files-directory dir)
+            (org-agenda-files nil)
             (org-use-property-inheritance nil)
             (org-element-use-cache nil)
-            ;; The fixtures carry no `:ID:' and nothing here renders, but
-            ;; the bindings cost nothing and keep a future test in this
-            ;; section from writing a temporary corpus into the
-            ;; developer's own `org-id-locations-file'.
             (org-id-track-globally nil)
             (org-id-locations (make-hash-table :test #'equal))
             (org-id-files nil)
             (org-id-locations-file (expand-file-name ".org-id-locations" dir))
-            files)
+            (F (lambda (name) (expand-file-name name dir)))
+            paths)
        (unwind-protect
            (progn
-             ;; 1. Materialise the corpus, subdirectories included.
-             (dolist (spec org-agents-test--diff-corpus)
-               (let ((path (expand-file-name (car spec) dir)))
-                 (make-directory (file-name-directory path) t)
-                 (with-temp-file path (insert (cdr spec)))
-                 (push (cons (car spec) (file-truename path)) files)))
-             ;; 2. The one fixture whose content depends on the clock.
-             (let ((path (expand-file-name "today.org" dir)))
-               (with-temp-file path
-                 (insert (format "* TODO Due today\nSCHEDULED: <%s>\n"
-                                 (format-time-string "%Y-%m-%d %a"))))
-               (push (cons "today.org" (file-truename path)) files))
-             (setq files (nreverse files))
-             ;; 3. Reset the scratch database.  `unstore' is DROP TABLE IF
-             ;;    EXISTS ... CASCADE throughout, so it is safe on a
-             ;;    virgin database and leaves a crashed run's leftovers
-             ;;    behind either way; `init' must follow it, because `db
-             ;;    store' calls `requireEmbeddingDimensions' and fails
-             ;;    without the row `init' writes.  The dimension count is
-             ;;    arbitrary: `--no-embed' means no vector is ever stored.
-             (dolist (cmd '(("db" "--db-url" :dsn "unstore")
-                            ("db" "--db-url" :dsn "init" "--dimensions" "1536")))
-               (let* ((args (mapcar (lambda (a)
-                                      (if (keywordp a) (plist-get env a) a))
-                                    cmd))
-                      (res (apply #'org-agents-test--org-cli env args)))
-                 (unless (eq 0 (car res))
-                   ;; The substituted arguments, not the template: this is
-                   ;; the message someone whose scratch database is not
-                   ;; reachable has to work from.
-                   (ert-fail (format "`org %s' exited %s: %s"
-                                     (string-join args " ")
-                                     (car res) (cdr res))))))
-             ;; 4. Store every fixture in one invocation -- the files are
-             ;;    the CLI's global positional arguments, `db store' has
-             ;;    none of its own -- and then assert the store took them
-             ;;    all.  A file the Haskell parser rejects is dropped with
-             ;;    a PARSE ERROR line on stdout and the run still exits 0,
-             ;;    which would make a later superset failure look like a
-             ;;    splitter bug rather than a missing file.
-             (let* ((paths (mapcar #'cdr files))
-                    (res (apply #'org-agents-test--org-cli env
-                                (append (list "db" "--db-url" (plist-get env :dsn)
-                                              "store" "--no-embed")
-                                        paths))))
-               (unless (eq 0 (car res))
-                 (ert-fail (format "db store exited %s: %s" (car res) (cdr res))))
-               (should-not (string-match-p "PARSE ERROR" (cdr res)))
-               (should-not (string-match-p "^Error: " (cdr res)))
-               ;; Quoted, because the CLI's own message contains `(' and
-               ;; `)' and would otherwise be read as a group matching
-               ;; "files" rather than the literal "file(s)".
-               (should (string-match-p
-                        (regexp-quote (format "Stored: %d file(s) processed"
-                                              (length paths)))
-                        (cdr res))))
-             ;; 5. The store worked, so a skeleton every corpus answers
-             ;;    must come back with files.  This, not the symbol-table
-             ;;    check, is what proves the binary carries the `file'
-             ;;    field: without it `org-db-cli-query-files' finds no
-             ;;    file key, answers nil, and every superset assertion
-             ;;    below would hold vacuously.
-             (unless (org-agents-test--db-files "(property \"NEXT_REVIEW\")")
-               (ert-fail "the CLI answered no files for a skeleton three \
-fixtures match: either the binary predates the `file' JSON field, or the \
-store did not reach this database"))
+             (dolist (entry org-agents-test--rg-corpus)
+               (let ((file (expand-file-name (car entry) dir)))
+                 (make-directory (file-name-directory file) t)
+                 (let ((coding-system-for-write 'binary))
+                   (write-region (encode-coding-string (cdr entry) 'utf-8)
+                                 nil file nil 'quiet))))
+             ;; Three fixture parts that cannot be written as manifest text.
+             ;;
+             ;; A bare `.git', so rg applies the `.gitignore' above.
+             (make-directory (expand-file-name ".git" dir) t)
+             ;; A latin-1 heading with an ASCII literal AFTER the invalid
+             ;; UTF-8 byte, and an ASCII property name.
+             (let ((coding-system-for-write 'latin-1-unix))
+               (with-temp-file (expand-file-name "latin1.org" dir)
+                 (insert "* TODO Caf\351 Review of the widget\n"
+                         ":PROPERTIES:\n:NEXT_REVIEW: [2024-01-15 Mon]\n"
+                         ":END:\n")))
+             ;; A symlink whose target lives OUTSIDE the corpus, so the
+             ;; truename intersection cannot rescue it.  MEASURED:
+             ;; `directory-files-recursively' lists the link and org-ql
+             ;; matches through it, while rg does not follow a symlink
+             ;; found by traversal without `--follow'.
+             (let ((target (expand-file-name "real.org" outside)))
+               (with-temp-file target
+                 (insert "* TODO Symlinked review\n:PROPERTIES:\n"
+                         ":NEXT_REVIEW: [2024-11-11 Mon]\n:END:\n"))
+               (make-symbolic-link target (expand-file-name "link.org" dir)))
+             (setq paths (directory-files-recursively dir "\\.org\\'"))
+             ;; The fixture is not silently inert.  Every `.org' file the
+             ;; manifest names, and the latin-1 one built just above, has
+             ;; to be in the base file set by name and not merely by
+             ;; count.
+             (dolist (name (cons "latin1.org"
+                                 (mapcar #'car org-agents-test--rg-corpus)))
+               (when (string-match-p "\\.org\\'" name) ; folds, so UPPER.ORG counts
+                 (should (member (expand-file-name name dir) paths))))
+             ;; `link.org' is the one fixture file NOT asserted here.
+             ;; MEASURED on this platform: `file-name-all-completions'
+             ;; intermittently reports a symlink-to-a-file with a
+             ;; trailing slash, which makes
+             ;; `directory-files-recursively' take it for a directory it
+             ;; must not follow and drop it -- so whether org-ql is even
+             ;; handed it is not this package's to decide.  What IS this
+             ;; package's is that ripgrep answers with it whenever org-ql
+             ;; could match in it, and that is asserted against the
+             ;; CANDIDATE set, where there is no such flakiness, by
+             ;; `org-agents-test-rg-covers-the-files-it-skips-by-default'.
+             (should (<= org-agents-test--rg-corpus-count
+                         (length paths)
+                         (1+ org-agents-test--rg-corpus-count)))
+             (ignore F)
              ,@body)
          (dolist (buf (buffer-list))
            (when-let* ((f (buffer-file-name buf)))
-             (when (string-prefix-p (file-name-as-directory dir) f)
+             (when (or (string-prefix-p (file-name-as-directory dir) f)
+                       (string-prefix-p (file-name-as-directory outside) f))
                (with-current-buffer buf (set-buffer-modified-p nil))
                (kill-buffer buf))))
-         (delete-directory dir t)))))
+         (delete-directory dir t)
+         (delete-directory outside t)))))
 
-;;; Positive rows: one test per row of `org-agents--pushdown-fns'.
+(defun org-agents-test--live-files (query paths)
+  "Truenames of the files org-ql actually matches for QUERY over PATHS.
+It names org-ql and nothing else, which is what keeps the left-hand side
+of every soundness assertion independent of the prefilter."
+  (delete-dups
+   (mapcar #'file-truename
+           (delq nil (org-ql-select paths query
+                       :action '(buffer-file-name))))))
 
-(ert-deftest org-agents-test-diff-property-existence ()
-  "Row `property', existence form."
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (todo) (property "NEXT_REVIEW"))))
-      (should (equal (org-agents--skeleton q) "(property \"NEXT_REVIEW\")"))
-      (org-agents-test--should-be-superset
-       q "(property \"NEXT_REVIEW\")" (org-agents-test--all-paths files))
-      (let ((cands (org-agents-test--db-files "(property \"NEXT_REVIEW\")")))
-        ;; The prefilter narrows, rather than merely being correct.
-        (should-not (member (cdr (assoc "filler.org" files)) cands))
-        ;; And is allowed to be wider: org-ql's residual `(todo)' rejects
-        ;; the DONE entry, while the pushed conjunct keeps its file.
-        (should (member (cdr (assoc "prop-done.org" files)) cands))))))
+(defun org-agents-test--should-cover (query paths root)
+  "Assert the prefilter's candidates cover every file org-ql matches for QUERY.
+Never `equal': the contract is a SUPERSET, and several fixtures depend on
+the candidate set being legitimately wider.  Both sides are asserted
+non-empty, so a fixture that quietly stopped matching cannot make the
+relation hold for want of anything to relate.  Returns the candidate
+truenames, so a caller can add its own narrowing assertion without
+running ripgrep twice."
+  (let* ((live (org-agents-test--live-files query paths))
+         (conjuncts (org-agents--prefilter-conjuncts query))
+         (answer (org-agents--rg-files conjuncts root)))
+    (should live)
+    (should conjuncts)
+    (should (listp answer))
+    (should answer)
+    (let ((cands (mapcar #'file-truename answer)))
+      (dolist (file live)
+        (should (member file cands)))
+      cands)))
 
-(ert-deftest org-agents-test-diff-property-equality ()
-  "Row `property', single-token equality form."
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (property "STYLE" "habit") (todo))))
-      (should (equal (org-agents--skeleton q) "(property \"STYLE\" \"habit\")"))
-      (org-agents-test--should-be-superset
-       q "(property \"STYLE\" \"habit\")" (org-agents-test--all-paths files))
-      ;; A value the corpus does not hold narrows to nothing at all.
-      (should (null (org-agents-test--db-files
-                     "(property \"STYLE\" \"nosuchvalue\")"))))))
+(ert-deftest org-agents-test-rg-covers-property-existence ()
+  "The baseline, with the residual `(todo)' left for org-ql."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover
+                  '(and (todo) (property "NEXT_REVIEW")) paths dir)))
+      ;; It narrows.
+      (should-not (member (file-truename (funcall F "filler.org")) cands))
+      (should-not (member (file-truename (funcall F "plan.org")) cands))
+      (should-not (member (file-truename (funcall F "head-regexp.org")) cands))
+      ;; And it is allowed to be wider: the residual `(todo)' rejects the
+      ;; DONE entry on the Emacs side, and the file is a candidate anyway.
+      (should (member (file-truename (funcall F "prop-done.org")) cands)))))
 
-(ert-deftest org-agents-test-diff-property-ts-existence ()
-  "Row `property-ts' pushes the existence of the property and no more.
-The database has no reading of a timestamp inside a property value, so
-the date bounds stay residual and org-ql alone applies them."
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (todo) (property-ts "NEXT_REVIEW" :to "2030-01-01"))))
-      (should (equal (org-agents--skeleton q) "(property \"NEXT_REVIEW\")"))
-      (org-agents-test--should-be-superset
-       q "(property \"NEXT_REVIEW\")" (org-agents-test--all-paths files)))))
+(ert-deftest org-agents-test-rg-covers-an-accumulated-property-name ()
+  "`:TOKENS+:' with no plain `:TOKENS:' line: the `\\+?' regression.
+This is the org-jw parser defect that the database suite recorded as an
+EXPECTED FAILURE turning into an ordinary passing test, and it is one of
+the two reasons the backend swap is a correctness improvement."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(property "TOKENS")
+                                                paths dir)))
+      (should (equal cands
+                     (list (file-truename (funcall F "prop-accum.org"))))))))
 
-(ert-deftest org-agents-test-diff-scheduled-leap-day ()
-  "Row `scheduled', with an absolute date that only exists in a leap year."
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (scheduled :on "2024-02-29") (todo))))
-      (should (equal (org-agents--skeleton q) "(scheduled :on \"2024-02-29\")"))
-      (org-agents-test--should-be-superset
-       q "(scheduled :on \"2024-02-29\")" (org-agents-test--all-paths files))
-      ;; A repeater's base date is what both sides bound, so the file is
-      ;; kept for the plain entry and the repeating one alike.
-      (should (member (cdr (assoc "plan.org" files))
-                      (org-agents-test--db-files
-                       "(scheduled :on \"2024-02-29\")"))))))
+(ert-deftest org-agents-test-rg-covers-a-lower-case-property-name ()
+  "`--ignore-case': the drawer spells `:next_review:', the query `\"P\"'."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(property "NEXT_REVIEW")
+                                                paths dir)))
+      (should (member (file-truename (funcall F "prop-case.org")) cands)))))
 
-(ert-deftest org-agents-test-diff-deadline-range ()
-  "Row `deadline', with both bounds."
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (deadline :from "2024-01-01" :to "2024-12-31") (todo))))
-      (should (equal (org-agents--skeleton q)
-                     "(deadline :from \"2024-01-01\" :to \"2024-12-31\")"))
-      (org-agents-test--should-be-superset
-       q "(deadline :from \"2024-01-01\" :to \"2024-12-31\")"
-       (org-agents-test--all-paths files))
-      ;; A range the corpus has no deadline in narrows to nothing.
-      (should (null (org-agents-test--db-files
-                     "(deadline :from \"1990-01-01\" :to \"1990-12-31\")"))))))
+(ert-deftest org-agents-test-rg-covers-an-indented-property-line ()
+  "`^[ \\t]*': the drawer is space-indented and its property line tabbed."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(property "NEXT_REVIEW")
+                                                paths dir)))
+      (should (member (file-truename (funcall F "prop-indent.org")) cands)))))
 
-(ert-deftest org-agents-test-diff-closed ()
-  "Row `closed'."
-  (org-agents-test--with-db-corpus
-    (let ((q '(closed :on "2024-03-01")))
-      (should (equal (org-agents--skeleton q) "(closed :on \"2024-03-01\")"))
-      (org-agents-test--should-be-superset
-       q "(closed :on \"2024-03-01\")" (org-agents-test--all-paths files)))))
+(ert-deftest org-agents-test-rg-covers-a-property-value ()
+  "Equality pushes the value, and a value the corpus lacks answers EMPTY.
+An empty answer is an answer: no error, no fallback, and an agent that
+renders nothing."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(property "STYLE" "habit")
+                                                paths dir)))
+      (should (member (file-truename (funcall F "prop.org")) cands))
+      (should (member (file-truename (funcall F "two-props.org")) cands))
+      (should (= 2 (length cands))))
+    ;; A CRLF file, which the value pattern reaches only with `--crlf'.
+    (let ((cands (org-agents-test--should-cover '(property "OWNER" "Jane")
+                                                paths dir)))
+      (should (member (file-truename (funcall F "crlf.org")) cands)))
+    ;; No file holds it: an empty list, and `listp' says it is an answer.
+    (let ((answer (org-agents--rg-files '((property "STYLE" "nosuchvalue"))
+                                        dir)))
+      (should (listp answer))
+      (should (null answer)))))
 
-(ert-deftest org-agents-test-diff-heading-literal ()
-  "Row `heading': org-ql's AND over the cleaned title, the CLI's OR over
-the raw headline.  Cleaned is a substring of raw and AND implies OR, so
-the database's answer is a superset twice over."
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (heading "Review") (todo))))
-      (should (equal (org-agents--skeleton q) "(heading \"Review\")"))
-      (org-agents-test--should-be-superset
-       q "(heading \"Review\")" (org-agents-test--all-paths files)))
-    ;; Two literals: org-ql requires both of the cleaned title, the CLI
-    ;; either of the raw headline.
-    (let ((q '(heading "widget" "spec")))
-      (should (equal (org-agents--skeleton q) "(heading \"widget\" \"spec\")"))
-      (org-agents-test--should-be-superset
-       q "(heading \"widget\" \"spec\")" (org-agents-test--all-paths files)))
-    ;; The keyword and the tags live in the raw headline and not in
-    ;; org-ql's heading, so here the CLI over-matches -- the safe
-    ;; direction, and the reason this row may be pushed at all.
-    (should (member (cdr (assoc "head.org" files))
-                    (org-agents-test--db-files "(heading \"urgent\")")))
-    (should (null (org-agents-test--live-files
-                   '(heading "urgent") (org-agents-test--all-paths files))))))
+(ert-deftest org-agents-test-rg-covers-a-value-holding-regexp-syntax ()
+  "The escaper, where it was measured to matter.
+Unquoted, `a+b' matches nothing; quoted with Emacs `regexp-quote',
+`alpha(beta)' matches nothing, because Emacs leaves `(' alone and rg
+reads it as a group."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(property "CODE" "a+b")
+                                                paths dir)))
+      (should (equal cands
+                     (list (file-truename (funcall F "value-regexp.org"))))))
+    (let ((cands (org-agents-test--should-cover
+                  '(property "PAREN" "alpha(beta)") paths dir)))
+      (should (equal cands
+                     (list (file-truename (funcall F "value-regexp.org"))))))))
 
-(ert-deftest org-agents-test-diff-heading-like-metacharacters ()
-  "`%' and `_' are LIKE metacharacters, and the CLI must escape them.
-Neither is a regexp metacharacter, so `org-agents--literal-strings-p'
-deliberately lets them through to be pushed."
-  (org-agents-test--with-db-corpus
-    (let ((q '(heading "50%_done")))
-      (should (equal (org-agents--skeleton q) "(heading \"50%_done\")"))
-      (org-agents-test--should-be-superset
-       q "(heading \"50%_done\")" (org-agents-test--all-paths files))
-      ;; Unescaped, `%' and `_' would match every heading in the corpus;
-      ;; escaped, only the one that spells them out.
-      (should (equal (org-agents-test--db-files "(heading \"50%_done\")")
-                     (list (cdr (assoc "head.org" files))))))))
+(ert-deftest org-agents-test-rg-downgrades-a-value-it-cannot-see-on-one-line ()
+  "`org-entry-get' joins `:P:' and `:P+:' with a separator, so an
+assembled value is spelled on NO line of the file and a line-oriented
+matcher cannot find it.  Equality therefore falls back to existence,
+which is wider and so sound.
 
-(ert-deftest org-agents-test-diff-heading-non-ascii ()
-  "A non-ASCII literal survives the trip out through `call-process'.
-The heading goes into the skeleton raw and reaches the CLI as process
-arguments, so the coding system is answered here with evidence."
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (heading "Révisér") (todo))))
-      (should (equal (org-agents--skeleton q) "(heading \"Révisér\")"))
-      (org-agents-test--should-be-superset
-       q "(heading \"Révisér\")" (org-agents-test--all-paths files))
-      (should (equal (org-agents-test--db-files "(heading \"café\")")
-                     (list (cdr (assoc "nonascii.org" files))))))))
+The separator rule generalizes the whitespace rule rather than replacing
+it: with the default separator the two coincide, but MEASURED with
+`org-property-separators' bound to `((\"P\") . \"/\")', `:P: al' plus
+`:P+: pha' answers \"al/pha\" -- a value holding no whitespace that no
+single line spells.  The whitespace test alone would push it."
+  (let ((org-use-property-inheritance nil))
+    ;; The default separator is a space, so a value with whitespace in it
+    ;; may have come from two lines.
+    (should (equal (org-agents--prefilter-conjuncts '(property "OWNER" "Jane Doe"))
+                   '((property "OWNER"))))
+    ;; The emitter is handed what the splitter decided, so the pattern
+    ;; that reaches ripgrep names no value at all.
+    (should (equal (org-agents--rg-patterns
+                    (car (org-agents--prefilter-conjuncts
+                          '(property "OWNER" "Jane Doe"))))
+                   '("^[ \\t]*:OWNER\\+?:")))
+    ;; A custom separator that is not whitespace: the whitespace test
+    ;; passes and the value must still not be pushed.
+    (let ((org-property-separators '((("P") . "/"))))
+      (should (equal (org-agents--prefilter-conjuncts '(property "P" "al/pha"))
+                     '((property "P"))))
+      ;; A value that does not hold the separator came from one line.
+      (should (equal (org-agents--prefilter-conjuncts '(property "P" "alpha"))
+                     '((property "P" "alpha")))))
+    ;; An empty separator makes the argument unavailable for any value.
+    (let ((org-property-separators '((("P") . ""))))
+      (should (equal (org-agents--prefilter-conjuncts '(property "P" "alpha"))
+                     '((property "P")))))
+    ;; An empty value is spelled `:P:' with nothing after the colon, which
+    ;; the value pattern cannot match because it demands `[ \\t]+'.
+    (should (equal (org-agents--prefilter-conjuncts '(property "P" ""))
+                   '((property "P"))))))
 
-(ert-deftest org-agents-test-diff-scope-conjunct ()
-  "The scope conjunct narrows to a subdirectory, and stays a superset."
-  (org-agents-test--with-db-corpus
-    (let* ((q '(and (property "NEXT_REVIEW") (todo)))
-           (skel (org-agents--skeleton q (org-agents--scope-conjunct "sub"))))
-      (should (equal skel "(and (property \"NEXT_REVIEW\") (path \"sub/\"))"))
-      (let ((cands (org-agents-test--db-files skel)))
-        (should (member (cdr (assoc "sub/scoped.org" files)) cands))
-        (should-not (member (cdr (assoc "prop.org" files)) cands))
-        ;; Every file it kept really is under the subdirectory.
-        (dolist (f cands)
-          (should (string-match-p "/sub/" f)))))))
+(ert-deftest org-agents-test-rg-covers-the-planning-keywords ()
+  "Stamp existence only, and each keyword its own pattern.
+rg cannot compare dates, so every bound stays residual -- including the
+repeater in the fixture, which org-ql may match on an occurrence the
+written stamp does not name."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover
+                  '(and (scheduled :on "2024-02-29") (todo)) paths dir)))
+      (should (member (file-truename (funcall F "plan.org")) cands))
+      (should-not (member (file-truename (funcall F "prop.org")) cands))
+      (should-not (member (file-truename (funcall F "filler.org")) cands)))
+    (dolist (query '((scheduled)
+                     (scheduled :from "2024-01-01")
+                     (deadline auto)
+                     (deadline 7)
+                     (scheduled :to today :to "2026-01-01")
+                     (closed :on today :from -3)))
+      (should (org-agents--prefilter-conjuncts query)))
+    ;; A DEADLINE query must not be answered by a SCHEDULED pattern.
+    (let ((cands (org-agents-test--should-cover
+                  '(deadline :from "2024-01-01" :to "2024-12-31") paths dir)))
+      (should (member (file-truename (funcall F "plan.org")) cands))
+      (should-not (member (file-truename (funcall F "plan-indent.org")) cands)))
+    (let ((cands (org-agents-test--should-cover '(closed :on "2024-03-01")
+                                                paths dir)))
+      (should (member (file-truename (funcall F "plan.org")) cands))
+      (should-not (member (file-truename (funcall F "plan-indent.org"))
+                          cands)))))
 
-;;; Negative rows: the guards, and the divergence each one answers to.
-;;
-;; Two layers.  The first is pure -- `org-agents--skeleton' must not push
-;; the conjunct -- and is what a unit test can say.  The second is the
-;; differential half that makes the first load-bearing: it runs the naive
-;; skeleton the guard suppressed and shows the file it would have dropped.
-;; Without that half these tests would pass even where the database
-;; happened to agree, and the guard's justification would rot unnoticed.
+(ert-deftest org-agents-test-rg-covers-an-indented-planning-line ()
+  "`org-adapt-indentation' indents a planning line by default."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(scheduled) paths dir)))
+      (should (member (file-truename (funcall F "plan-indent.org")) cands)))))
 
-(ert-deftest org-agents-test-diff-guard-tags-not-pushed ()
-  "`#+FILETAGS:' is inherited by org-ql and invisible to the store."
-  (org-agents-test--with-db-corpus
-    (should (null (org-agents--skeleton '(tags "ftag"))))
-    (let ((live (org-agents-test--live-files
-                 '(tags "ftag") (org-agents-test--all-paths files))))
-      (should (member (cdr (assoc "filetags.org" files)) live))
-      ;; What a `tags' push would have answered: nothing, dropping a file
-      ;; org-ql matches twice over.
-      (should (null (org-agents-test--db-files "(tags \"ftag\")"))))))
+(ert-deftest org-agents-test-rg-covers-a-shared-planning-line ()
+  "All three keywords may share ONE line, in any order.
+`^[ \\t]*DEADLINE:' would miss `CLOSED: [..] DEADLINE: <..>', which is
+why the planning patterns are deliberately NOT anchored."
+  (org-agents-test--with-rg-corpus
+    (dolist (query '((deadline :to "2024-12-31") (closed) (scheduled)))
+      (let ((cands (org-agents-test--should-cover query paths dir)))
+        (should (member (file-truename (funcall F "plan-shared-line.org"))
+                        cands))))))
 
-(ert-deftest org-agents-test-diff-guard-category-not-pushed ()
-  "An ancestor's `:CATEGORY:' reaches the child in org-ql, not in the store."
-  (org-agents-test--with-db-corpus
-    (should (null (org-agents--skeleton '(category "AncCat"))))
-    (let ((live (org-agents-test--live-files
-                 '(category "AncCat") (org-agents-test--all-paths files)))
-          (cands (org-agents-test--db-files "(category \"AncCat\")")))
-      (should (member (cdr (assoc "anccat.org" files)) live))
-      ;; The FILE survives, because its parent entry carries the row --
-      ;; so a per-file prefilter would be a superset here by accident.
-      ;; The row stays unpushed for the entry-level reason instead: the
-      ;; child has no category row of its own, and a future entry-level
-      ;; prefilter would drop it.
-      (should (member (cdr (assoc "anccat.org" files)) cands)))))
+(ert-deftest org-agents-test-rg-covers-a-heading-literal ()
+  "The cleaned title org-ql compares against is a substring of the raw line.
+`org-get-heading' with `no-tags' and `no-todo' returns the title, or the
+priority cookie joined to it by exactly one space -- and every substring
+spanning that junction holds the `]' that `org-agents--literal-strings-p'
+already refuses."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover
+                  '(and (heading "Review widget") (todo)) paths dir)))
+      (should (member (file-truename (funcall F "head.org")) cands)))
+    ;; Two literals: org-ql wants both in ONE heading, which implies a
+    ;; heading line for each, so intersecting the per-literal sets is
+    ;; sound and narrows harder than testing only the first.
+    (let ((cands (org-agents-test--should-cover '(heading "widget" "spec")
+                                                paths dir)))
+      (should (equal cands (list (file-truename (funcall F "head.org"))))))
+    ;; `%' and `_' are not regexp syntax and must survive quoting intact.
+    (let ((cands (org-agents-test--should-cover '(heading "50%_done")
+                                                paths dir)))
+      (should (member (file-truename (funcall F "head.org")) cands)))))
 
-(ert-deftest org-agents-test-diff-guard-ts-not-pushed ()
-  "A body-text timestamp is a match for org-ql and no entry_stamps row."
-  (org-agents-test--with-db-corpus
-    (should (null (org-agents--skeleton '(ts :on "2024-02-29"))))
-    (let ((live (org-agents-test--live-files
-                 '(ts :on "2024-02-29") (org-agents-test--all-paths files))))
-      (should (member (cdr (assoc "bodyts.org" files)) live))
-      (should-not (member (cdr (assoc "bodyts.org" files))
-                          (org-agents-test--db-files
-                           "(ts :on \"2024-02-29\")"))))))
+(ert-deftest org-agents-test-rg-covers-a-heading-differing-in-case ()
+  "org-ql's `heading' binds `case-fold-search' t inside its own body, so
+there is no configuration under which it is case-sensitive."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(heading "Review") paths dir)))
+      (should (member (file-truename (funcall F "head-case.org")) cands)))))
 
-(ert-deftest org-agents-test-diff-guard-invalid-date-not-pushed ()
-  "An impossible date is MJD 0 in the database and a normal bound in org-ql.
-`resolveMjd' answers a date `parseTimeM' cannot read with 0, which is
-1858-11-17, so the query bounds by that and answers with nothing --
-emptying the candidate set rather than narrowing it."
-  (org-agents-test--with-db-corpus
-    (should (null (org-agents--skeleton '(scheduled :to "2026-02-30"))))
-    (should (null (org-agents--skeleton '(deadline :on "2026-13-45"))))
-    ;; org-ql reads the typo as if it were a real bound ...
-    (should (org-agents-test--live-files
-             '(scheduled :to "2026-02-30") (org-agents-test--all-paths files)))
-    ;; ... while the CLI bounds by 1858-11-17 and answers with nothing.
-    (should (null (org-agents-test--db-files
-                   "(scheduled :to \"2026-02-30\")")))))
+(ert-deftest org-agents-test-rg-covers-a-heading-holding-regexp-syntax ()
+  "`(' is not in `org-agents--literal-regexp', so the splitter pushes it."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(heading "Review (draft)")
+                                                paths dir)))
+      (should (equal cands
+                     (list (file-truename (funcall F "head-paren.org"))))))))
 
-(ert-deftest org-agents-test-diff-guard-heading-regexp-not-pushed ()
-  "A regexp is not a LIKE pattern, so the conjunct stays residual."
-  (org-agents-test--with-db-corpus
-    (should (null (org-agents--skeleton '(heading "Rev.*iew"))))
-    (should (member (cdr (assoc "head-regexp.org" files))
-                    (org-agents-test--live-files
-                     '(heading "Rev.*iew")
-                     (org-agents-test--all-paths files))))
-    ;; ILIKE has no `.' or `*' metacharacter, so the naive push finds the
-    ;; literal text and nothing else -- and the corpus holds none.
-    (should (null (org-agents-test--db-files "(heading \"Rev.*iew\")")))))
+(ert-deftest org-agents-test-rg-covers-a-heading-in-a-non-utf-8-file ()
+  "The test nobody would think to write, and it fails on a real corpus.
+The witness is latin-1 encoded and the ASCII literal sits AFTER an
+invalid UTF-8 byte on the same line.  MEASURED: rg's default Unicode
+mode makes `.' match a codepoint, so `^\\*+.*Review' cannot cross the
+byte and misses the file.  `(?-u:.)*' is the fix that was measured to
+work; `[^\\n]*' is not."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(heading "Review") paths dir)))
+      (should (member (file-truename (funcall F "latin1.org")) cands)))))
 
-(ert-deftest org-agents-test-diff-guard-file-property-canary ()
-  "A `#+PROPERTY:'-only value is invisible to BOTH sides.
-The `property' row IS pushed, so if org-ql ever begins answering
+(ert-deftest org-agents-test-rg-covers-the-files-it-skips-by-default ()
+  "One test for the six traversal hazards, because they share one cause --
+rg's default filters -- and one fix, the argument vector.  Each is a file
+`directory-files-recursively' lists and org-ql matches."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(property "NEXT_REVIEW")
+                                                paths dir)))
+      (dolist (name '(".stealth.org" "ignored.org" "gitignored.org"
+                      "UPPER.ORG" "link.org" "nul.org"))
+        (should (member (file-truename (funcall F name)) cands))))))
+
+(ert-deftest org-agents-test-rg-over-matches-body-prose-harmlessly ()
+  "An over-match is a cost, never a fault.
+`prose.org' holds the text `:NEXT_REVIEW: [..]' in a paragraph, in no
+drawer, so `org-entry-get' never sees it and org-ql does not match the
+file.  rg does.  The candidate set may hold it; the rendered result may
+not, because org-ql alone decides what matches."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover '(property "NEXT_REVIEW")
+                                                paths dir))
+          (live (org-agents-test--live-files '(property "NEXT_REVIEW") paths)))
+      (should (member (file-truename (funcall F "prose.org")) cands))
+      (should-not (member (file-truename (funcall F "prose.org")) live)))))
+
+(ert-deftest org-agents-test-rg-file-level-property-canary ()
+  "A tripwire, and labelled as one: no mutation makes it fail today.
+`(property \"FILEPROP\")' is pushed, org-ql matches nothing for it -- the
+value is reachable only through `#+PROPERTY:' and inheritance -- and the
+candidate set is empty.  It fails the day org-ql starts answering
 `(property N)' out of file-level properties or `org-global-properties',
-the push-down becomes unsound the same day.  This is the tripwire."
-  (org-agents-test--with-db-corpus
-    (should (equal (org-agents--skeleton '(property "FILEPROP"))
-                   "(property \"FILEPROP\")"))
-    (should (null (org-agents-test--live-files
-                   '(property "FILEPROP") (org-agents-test--all-paths files))))
-    (should (null (org-agents-test--db-files "(property \"FILEPROP\")")))
-    ;; And the value really is reachable by inheritance, so the fixture is
-    ;; not silently inert.
-    (with-current-buffer (find-file-noselect
-                          (cdr (assoc "fileprop.org" files)))
+because then the live set becomes non-empty while the candidates stay
+empty."
+  (org-agents-test--with-rg-corpus
+    ;; The fixture is not silently inert.
+    (with-current-buffer (find-file-noselect (funcall F "fileprop.org"))
       (goto-char (point-min))
       (re-search-forward "^\\* ")
-      (should (equal (org-entry-get nil "FILEPROP" t) "fromfile")))))
+      (should (equal "fromfile" (org-entry-get nil "FILEPROP" t)))
+      (should (null (org-entry-get nil "FILEPROP"))))
+    (should (org-agents--prefilter-conjuncts '(property "FILEPROP")))
+    (should (null (org-agents-test--live-files '(property "FILEPROP") paths)))
+    (should (null (org-agents--rg-files
+                   (org-agents--prefilter-conjuncts '(property "FILEPROP"))
+                   dir)))))
 
-(ert-deftest org-agents-test-diff-guard-special-property-not-pushed ()
-  "A special property is entry structure, not an entry_properties row."
-  (org-agents-test--with-db-corpus
-    (should (null (org-agents--skeleton '(property "CATEGORY" "AncCat"))))
-    (should (null (org-agents--skeleton '(property-ts "DEADLINE" :to today))))
-    ;; The evidence for the guard: the store writes CATEGORY into
-    ;; entry_categories and never into entry_properties, so the naive push
-    ;; answers with nothing at all.
-    (should (null (org-agents-test--db-files
-                   "(property \"CATEGORY\" \"AncCat\")")))
-    ;; While a plain drawer property of the same corpus does answer, so
-    ;; the emptiness above is the special name and not an empty database.
-    (should (org-agents-test--db-files "(property \"NEXT_REVIEW\")"))))
+(ert-deftest org-agents-test-rg-intersects-two-conjuncts ()
+  "The candidate set is the INTERSECTION, not the union and not one pattern.
+Concatenating the conjuncts into one pattern is what an implementer
+trying to avoid a second rg run would write, and it is the mutation that
+violates soundness: MEASURED live=2, cand=0, both witnesses lost."
+  (org-agents-test--with-rg-corpus
+    (let ((cands (org-agents-test--should-cover
+                  '(and (property "NEXT_REVIEW") (property "STYLE"))
+                  paths dir)))
+      (should (member (file-truename (funcall F "prop.org")) cands))
+      (should (member (file-truename (funcall F "two-props.org")) cands))
+      ;; `prop-case.org' satisfies the first conjunct only.
+      (should-not (member (file-truename (funcall F "prop-case.org"))
+                          cands)))))
 
-(ert-deftest org-agents-test-diff-guard-todo-not-pushed ()
-  "Keyword classification is a store-time flag, so `todo' cannot push.
-A bare `(todo)' would in fact be a superset -- \"has a keyword\" covers
-\"has a not-done keyword\" -- so the DONE fixture alone does not condemn
-the row.  What condemns it is that the classification depends on the
-`--keywords' DOT file supplied at STORE time, which nothing in
-`org-db-cli.el' controls and which a corpus may well have been stored
-without.  Demonstrated by storing one extra file without it."
-  (org-agents-test--with-db-corpus
-    (should (null (org-agents--skeleton '(todo))))
-    (should (null (org-agents--skeleton '(todo "TODO"))))
-    (should (null (org-agents--skeleton '(done))))
-    (let* ((path (expand-file-name "nokw.org" dir))
-           (true (progn (with-temp-file path
-                          (insert "* TODO Stored without keywords\n"))
-                        (file-truename path))))
-      ;; Stored with NO --keywords, as a forgetful cron job would.
-      (with-temp-buffer
-        (let* ((default-directory temporary-file-directory)
-               (code (call-process
-                      (plist-get env :bin) nil t nil
-                      "--config" (expand-file-name (plist-get env :config))
-                      "db" "--db-url" (plist-get env :dsn)
-                      "store" "--no-embed" true)))
-          (unless (eq 0 code)
-            (ert-fail (format "store without --keywords exited %s: %s"
-                              code (buffer-string))))))
-      ;; org-ql matches it; the naive keyword push does not, because
-      ;; keyword_value is NULL and the title is the whole raw line.
-      (should (member true (org-agents-test--live-files '(todo "TODO")
-                                                        (list true))))
-      (should (null (org-agents-test--db-files "(todo \"TODO\")")))
-      ;; The `heading' row is unaffected by the flag: `headline' is the
-      ;; raw line whether the keywords were supplied or not.
-      (should (member true (org-agents-test--db-files
-                            "(heading \"Stored without keywords\")"))))))
+(ert-deftest org-agents-test-rg-residual-conjuncts-push-nothing ()
+  "Nothing outside the vocabulary is pushed, and each query still finds
+its witness through org-ql -- so the guard costs breadth, not answers."
+  (org-agents-test--with-rg-corpus
+    (dolist (query '((todo) (todo "TODO") (done) (tags "work")
+                     (category "AnyCat") (ts :on "2024-02-29")
+                     (heading "Rev.*iew") (property "CATEGORY" "work")
+                     (property-ts "DEADLINE" :to today)
+                     (parent (property "NEXT_REVIEW"))
+                     (or (property "NEXT_REVIEW") (todo))
+                     (not (property "NEXT_REVIEW"))))
+      (should (null (org-agents--prefilter-conjuncts query))))
+    ;; And the residual queries really do match, so the rows above are
+    ;; refusing something that exists.
+    (dolist (query '((todo) (heading "Rev.*iew") (ts :on "2024-02-29")))
+      (should (org-agents-test--live-files query paths)))))
 
-;;; The two places where the superset property does NOT hold.
-;;
-;; Both are real, both reproducible, and neither can be papered over by
-;; choosing a gentler fixture.  They are written as expected failures so
-;; that the suite stays green while the defect stays visible, and convert
-;; to ordinary passing tests the day either is fixed.
+(ert-deftest org-agents-test-rg-scope-files-narrows-a-directory-scope ()
+  "A directory scope is searched by making the directory rg's ROOT.
+MEASURED: `--glob 'sub{1}/**'' answers with NO files at all for a
+directory that really holds a match, because `{' and `}' are glob
+syntax.  A silently empty candidate set is the one failure this package
+cannot afford, so the scope never becomes a glob -- and with the
+directory as the root, the `(path \"dir/\")' conjunct the CLI needed has
+no remaining purpose."
+  (org-agents-test--with-rg-corpus
+    (dolist (scope '("sub" "sub{1}"))
+      (let* ((agent (list :scope scope :query '(property "NEXT_REVIEW")))
+             (files (org-agents--scope-files agent))
+             (base (org-agents--scope-base-files scope))
+             (live (org-agents-test--live-files '(property "NEXT_REVIEW")
+                                               base)))
+        (should live)
+        (should files)
+        (dolist (file live)
+          (should (member file (mapcar #'file-truename files))))
+        (should-not (member (funcall F "prop.org") files))))))
 
-(ert-deftest org-agents-test-diff-accumulated-property-breaks-superset ()
-  "KNOWN DEFECT: `:NAME+:' makes the org-jw parser drop the whole drawer.
-`FlatParse.Combinators.identifier' accepts alphanumerics, `_' and space,
-and no `+', so `:TOKENS+: beta' cannot be read as a property line;
-`parseProperties' then fails for the drawer, which degrades to a plain
-body block.  entry_properties gets no row at all -- not for `TOKENS+',
-and not for the perfectly ordinary `:TOKENS: alpha' line above it.
+(ert-deftest org-agents-test-rg-scope-files-refuses-a-missing-directory ()
+  "A mistyped scope is named as one, before any subprocess runs.
+rg's exit status for a missing path is the same 2 it uses for a broken
+pattern, so reporting a mistyped scope as a prefilter failure would name
+the wrong fault."
+  (org-agents-test--with-rg-corpus
+    (cl-letf (((symbol-function 'org-agents--rg-run)
+               (lambda (&rest _) (error "must not run"))))
+      (let ((err (should-error
+                  (org-agents--scope-files
+                   (list :scope "no-such-subdir"
+                         :query '(property "NEXT_REVIEW")))
+                  :type 'user-error)))
+        (should (string-match-p "no-such-subdir"
+                                (error-message-string err)))))))
 
-So the pushed `(property \"TOKENS\")' answers with no file while org-ql
-matches on the joined value, and the prefilter drops a true match.  The
-fix belongs in org-jw, in `identifier' and in the accumulation semantics
-`Store.hs' would then need.  Recorded here rather than hidden: the
-existing unit test asserting the equality-to-existence downgrade is not
-wrong, it is only not sufficient."
-  :expected-result :failed
-  (org-agents-test--with-db-corpus
-    (let ((q '(and (level 1) (property "TOKENS" "alpha beta"))))
-      (should (equal (org-agents--skeleton q) "(property \"TOKENS\")"))
-      (org-agents-test--should-be-superset
-       q "(property \"TOKENS\")" (org-agents-test--all-paths files)))))
+;;; When the prefilter is consulted, and what happens when it cannot answer
 
-(ert-deftest org-agents-test-diff-today-is-a-superset-in-both-branches ()
-  "`today' is a superset whatever the clock says, because it is resolved here.
-The database resolves a relative date against `utctDay <$> getCurrentTime'
-and org-ql against `(ts-now)', so a relative value pushed verbatim named a
-different day to each engine and dropped entries org-ql matched.  The
-splitter now resolves it to an absolute local date, so both engines read
-the same calendar day and the relation holds at every hour -- including the
-hours when the local and UTC days differ, which is what this test would
-have failed at before.
+(ert-deftest org-agents-test-prefilter-not-consulted-for-named-files ()
+  "A scope that NAMES its files is scanned live, with no subprocess.
+MEASURED: an `agenda'-scope update over eight named files costs 0.018 s
+while a single rg run costs 0.10-0.45 s, so prefiltering a named file
+list makes the common case 5-25 times slower to reach the same answer.
+The spawn is made DETECTABLE rather than assumed away -- a `call-process'
+that records the breach in a flag, because the backend catches errors by
+design and would swallow a signalling stub."
+  (org-agents-test--with-corpus
+    (let ((breached nil)
+          (query '(and (todo) (property "NEXT_REVIEW"))))
+      ;; The query really does push, so the absence of a spawn is the
+      ;; scope rule declining and not an empty conjunct list.
+      (should (org-agents--prefilter-conjuncts query))
+      (cl-letf (((symbol-function 'call-process)
+                 (lambda (&rest _) (setq breached t) 1)))
+        (let ((org-agenda-files (list a b)))
+          (should (equal (list a b)
+                         (org-agents--scope-files
+                          (list :scope 'agenda :query query)))))
+        (should (equal (list a b)
+                       (org-agents--scope-files
+                        (list :scope (list a b) :query query))))
+        (should-not breached)))))
 
-Deterministic and meaningful in both branches: the branch is reported so a
-run in the disagreeing window is visible in the log, but the assertion is
-the same superset relation either way."
-  (org-agents-test--with-db-corpus
-    (let* ((q '(and (scheduled :on today) (todo)))
-           (local (format-time-string "%F"))
-           (utc (format-time-string "%F" nil t))
-           (today-file (cdr (assoc "today.org" files)))
-           (skeleton (org-agents--skeleton q)))
-      (message "org-agents-test: local=%s utc=%s (%s)" local utc
-               (if (equal local utc) "same day" "DIFFERENT days"))
-      ;; The pushed conjunct names the LOCAL day, whichever day UTC is on.
-      (should (equal skeleton (format "(scheduled :on \"%s\")" local)))
-      ;; The fixture is scheduled on the local day, so org-ql matches it ...
-      (should (member today-file (org-agents-test--live-files
-                                  q (org-agents-test--all-paths files))))
-      ;; ... and the prefilter keeps it, in both branches.
-      (should (member today-file (org-agents-test--db-files skeleton)))
-      (org-agents-test--should-be-superset
-       q skeleton (org-agents-test--all-paths files))
-      ;; And it still narrows: a file matching nothing is not a candidate.
-      (should-not (member (cdr (assoc "filler.org" files))
-                          (org-agents-test--db-files skeleton)))
-      ;; What the old behaviour would have answered, kept as the record of
-      ;; why this is resolved locally: pushing `today' verbatim leaves the
-      ;; database to pick the day, and in the disagreeing window that is not
-      ;; the day org-ql used.
-      (when (not (equal local utc))
-        (should-not (member today-file
-                            (org-agents-test--db-files
-                             "(scheduled :on today)")))))))
+(ert-deftest org-agents-test-prefilter-consulted-for-a-corpus-scope ()
+  "The other half of the rule: an unbounded scope IS narrowed.
+Without this, the test above could be satisfied by never prefiltering at
+all."
+  (org-agents-test--with-rg-corpus
+    (let* ((agent (list :scope 'active :query '(property "TOKENS")))
+           (files (org-agents--scope-files agent)))
+      (should (equal files (list (funcall F "prop-accum.org")))))))
+
+(ert-deftest org-agents-test-prefilter-nil-never-spawns ()
+  "Nil is an explicit request for live evaluation, and it is honoured.
+No process for any scope, and a corpus scope resolves to its whole base
+file set rather than to the old refusal, which would make the opt-out
+unusable."
+  (org-agents-test--with-rg-corpus
+    (let ((org-agents-prefilter nil)
+          (breached nil))
+      (cl-letf (((symbol-function 'call-process)
+                 (lambda (&rest _) (setq breached t) 1)))
+        (let* ((agent (list :scope 'all :query '(property "NEXT_REVIEW")))
+               (files (org-agents--scope-files agent)))
+          ;; The whole base set, not a narrowed one: `filler.org' holds
+          ;; no `:NEXT_REVIEW:' line and is in the answer all the same.
+          (should (member (funcall F "filler.org") files))
+          (should (<= org-agents-test--rg-corpus-count
+                      (length files)
+                      (1+ org-agents-test--rg-corpus-count))))
+        (should-not breached)))))
+
+(ert-deftest org-agents-test-prefilter-auto-falls-back-with-one-message ()
+  "Absent ripgrep, `auto' scans live and SAYS SO, once, naming the count.
+45.98 seconds and 885 MB of RSS over 3,640 buffers is a shocking thing to
+happen without explanation, and a message naming 3,634 files explains
+it.  Silence is what this replaces; an error is what `require' is for."
+  (org-agents-test--with-rg-corpus
+    (let ((org-agents-rg-executable "no-such-program-xyzzy")
+          (agent (list :scope 'all :query '(property "NEXT_REVIEW"))))
+      (let* (files
+             (msgs (org-agents-test--messages
+                    (setq files (org-agents--scope-files agent))))
+             (ours (cl-remove-if-not
+                    (lambda (m) (string-prefix-p "org-agents: " m)) msgs)))
+        (should (member (funcall F "filler.org") files))
+        (should (<= org-agents-test--rg-corpus-count (length files)
+                    (1+ org-agents-test--rg-corpus-count)))
+        (should (= 1 (length ours)))
+        (should (string-match-p "not narrowed" (car ours)))
+        (should (string-match-p "ripgrep not found" (car ours)))
+        ;; The count is in the message, which is the whole point of it.
+        (should (string-match-p
+                 (format "scanning %d files live" (length files))
+                 (car ours)))))
+    ;; A query with nothing to push takes the same path, with its own
+    ;; reason named.
+    (let* ((agent (list :scope 'all :query '(todo)))
+           files
+           (msgs (org-agents-test--messages
+                  (setq files (org-agents--scope-files agent)))))
+      (should (member (funcall F "filler.org") files))
+      (should (cl-find-if (lambda (m)
+                            (string-match-p "no pushable conjunct" m))
+                          msgs)))))
+
+(ert-deftest org-agents-test-prefilter-auto-falls-back-when-rg-fails ()
+  "Exit 2 is a failure, so `auto' abandons the prefilter for the whole agent.
+Using the runs that succeeded would be sound -- an intersection missing a
+term is wider -- but a partial answer from a broken tool is not a thing
+to build on, and the fallback is correct and merely slower."
+  (org-agents-test--with-rg-corpus
+    (let* ((fake (org-agents-test--fake-rg
+                  (expand-file-name "fake-rg" outside)
+                  "echo 'rg: broken' >&2" "exit 2"))
+           (org-agents-rg-executable fake)
+           (agent (list :scope 'all :query '(property "NEXT_REVIEW")))
+           files
+           (msgs (org-agents-test--messages
+                  (setq files (org-agents--scope-files agent)))))
+      (should (member (funcall F "filler.org") files))
+      (should (<= org-agents-test--rg-corpus-count (length files)
+                  (1+ org-agents-test--rg-corpus-count)))
+      (should (cl-find-if (lambda (m) (string-match-p "ripgrep failed" m))
+                          msgs)))))
+
+(ert-deftest org-agents-test-prefilter-require-refuses-instead ()
+  "`require' keeps the behaviour of the releases that had a database.
+A `user-error' rather than a bare `error', because
+`org-agents-update-buffer' catches the former per agent and one
+misconfigured agent must not abort a whole buffer's run."
+  (org-agents-test--with-rg-corpus
+    (let ((org-agents-prefilter 'require)
+          (org-agents-rg-executable "no-such-program-xyzzy"))
+      (cl-letf (((symbol-function 'org-agents--scope-base-files)
+                 (lambda (&rest _) (error "must not walk the corpus"))))
+        (let ((err (should-error
+                    (org-agents--scope-files
+                     (list :scope 'all :query '(property "NEXT_REVIEW")))
+                    :type 'user-error)))
+          (should (string-match-p "all" (error-message-string err)))
+          (should (string-match-p "ripgrep not found"
+                                  (error-message-string err))))
+        ;; And for a query with nothing to push, naming that reason.
+        (let ((err (should-error
+                    (org-agents--scope-files
+                     (list :scope 'all :query '(todo)))
+                    :type 'user-error)))
+          (should (string-match-p "no pushable conjunct"
+                                  (error-message-string err))))))))
+
+(ert-deftest org-agents-test-prefilter-empty-answer-renders-zero-matches ()
+  "An empty answer completes the update and renders nothing.
+No error, and no message reporting a missing prefilter: this is the
+defect the backend swap fixes, and it deserves its own named test."
+  (org-agents-test--with-rg-corpus
+    (let* ((agent-file (expand-file-name "agent.org" dir))
+           text)
+      (with-temp-file agent-file
+        (insert "* Review agent\n:PROPERTIES:\n"
+                ":AGENT_QUERY: (property \"NOSUCHPROPERTY\")\n"
+                ":AGENT_SCOPE: all\n:END:\n"))
+      (with-current-buffer (find-file-noselect agent-file)
+        (goto-char (point-min))
+        (let ((msgs (org-agents-test--messages (org-agents-update))))
+          (should-not (cl-find-if (lambda (m) (string-match-p "prefilter" m))
+                                  msgs))
+          (should-not (cl-find-if (lambda (m) (string-match-p "not narrowed" m))
+                                  msgs)))
+        (setq text (buffer-string)))
+      (should (string-match-p ":AGENT_MATCHED: 0 \\[" text)))))
+
+(ert-deftest org-agents-test-mode-save-spawns-no-prefilter ()
+  "A save spawns no subprocess, and the manual command still does.
+The scope rule already prevents it for every scope a save updates -- an
+`agenda' agent names its files -- but the binding is kept as a belt, so
+that \"a save spawns no ripgrep\" is a property of this function rather
+than a consequence of a rule stated elsewhere.
+
+Note the change of REASON from the test this replaces: with a local rg
+measured at 0.13 s over 3,634 files there is no network to block on, so
+the rule is about pointless work rather than about a save that hangs."
+  (org-agents-test--with-corpus
+    (let* ((sentinel (expand-file-name "rg-was-called" dir))
+           (fake (org-agents-test--fake-rg
+                  (expand-file-name "fake-rg" dir)
+                  (concat "touch " (shell-quote-argument sentinel))
+                  "exit 1"))
+           (org-agents-rg-executable fake)
+           (org-agents-prefilter 'auto)
+           (query "(and (todo) (property \"NEXT_REVIEW\"))")
+           (org-agenda-files (list a b)))
+      ;; The harness works: reaching the backend really does spawn it.
+      (should (listp (org-agents--rg-run "PAT" dir)))
+      (should (file-exists-p sentinel))
+      (delete-file sentinel)
+      (with-temp-file agent-file
+        (insert "* Review agent\n:PROPERTIES:\n"
+                ":AGENT_QUERY: " query "\n"
+                ":AGENT_SCOPE: agenda\n:END:\n"))
+      (with-current-buffer (find-file-noselect agent-file)
+        (org-agents-mode 1)
+        (set-buffer-modified-p t)
+        (save-buffer)
+        ;; The update really ran, so the sentinel's absence is the save
+        ;; path declining and not the save path doing nothing.
+        (should (string-match-p "Fix widget"
+                                (org-agents-test--file-text agent-file)))
+        (should-not (file-exists-p sentinel))
+        ;; The same agent under a corpus scope, updated by hand, DOES
+        ;; reach the backend: binding the prefilter away inside
+        ;; `org-agents--scope-files' rather than on the save path would
+        ;; take it from the manual commands too.
+        (goto-char (point-min))
+        (org-entry-put nil "AGENT_SCOPE" "all")
+        (org-agents-update-buffer)
+        (should (file-exists-p sentinel))))))
 
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here
