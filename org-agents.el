@@ -197,14 +197,31 @@ interactively offers to persist its hash here."
   '((headline . heading) (re . regexp) (p . priority))
   "CLI grammar spellings that are not valid org-ql, with replacements.")
 
+(defconst org-agents--special-accessors
+  (mapcar #'cdr org-agents--specials)
+  "The forms a bare $SPECIAL expands to.
+A closed set of read-only readers of the entry at point, so a query is
+no less safe for holding one.")
+
 (defun org-agents--structurally-safe-p (form)
   "Non-nil if FORM consists solely of known predicates and combinators.
 A predicate head vouches for its own name only: org-ql evaluates a
 predicate's arguments as Lisp too, so every argument must answer for
-itself or `(tags (shell-command \"x\"))' would pass unremarked."
+itself or `(tags (shell-command \"x\"))' would pass unremarked.  An
+argument that is a list with no symbol to call is the data it looks
+like, which is how org-ql's own `(src :regexps (\"defun\"))' is
+written."
   (cond
    ((not (consp form)) t)                  ; literals as arguments
    ((not (proper-list-p form)) nil)        ; dotted: fail closed
+   ;; What a bare $SPECIAL expands to.
+   ((member form org-agents--special-accessors) t)
+   ;; Quoted data is returned, never evaluated, whatever it holds.
+   ((eq (car form) 'quote) t)
+   ;; No symbol in the car, so nothing here can be called: every
+   ;; element, the first included, stands for itself.
+   ((not (symbolp (car form)))
+    (cl-every #'org-agents--structurally-safe-p form))
    ((or (memq (car form) org-agents--boolean-heads)
         (memq (car form) org-agents--nested-query-heads)
         (org-agents--known-predicate-p (car form)))
@@ -218,17 +235,22 @@ itself or `(tags (shell-command \"x\"))' would pass unremarked."
                           (org-agents--leftover-ref (cdr form))))))
 
 (defun org-agents--check-cli-spelling (form)
-  "Signal `user-error' if FORM uses a CLI-only predicate spelling anywhere.
-Every head position is checked, not only those under a combinator: a
-CLI spelling is just as wrong inside a predicate argument, where
-`(property \"K\" (headline \"x\"))' would otherwise reach org-ql as a
-call to a function that does not exist."
-  (when (consp form)
+  "Signal `user-error' if FORM uses a CLI-only predicate spelling.
+Only query positions are examined -- combinators, nested queries, and
+the arguments of known predicates, the same descent
+`org-agents--structurally-safe-p' makes -- because those are the
+positions where the user meant to write a query.  `(property \"K\"
+ (headline \"x\"))' is caught there, while in residual Lisp `p' or `re'
+is an ordinary variable or datum, and diagnosing it would answer a
+question the user was never asked."
+  (when (and (consp form) (proper-list-p form))
     (when-let* ((fix (alist-get (car form) org-agents--cli-only-heads)))
       (user-error "org-agents: `%s' is CLI-only syntax; use `%s'"
                   (car form) fix))
-    (org-agents--check-cli-spelling (car form))
-    (org-agents--check-cli-spelling (cdr form))))
+    (when (or (memq (car form) org-agents--boolean-heads)
+              (memq (car form) org-agents--nested-query-heads)
+              (org-agents--known-predicate-p (car form)))
+      (mapc #'org-agents--check-cli-spelling (cdr form)))))
 
 (defun org-agents--check-spelling (form)
   "Signal `user-error' if FORM cannot be evaluated as written.

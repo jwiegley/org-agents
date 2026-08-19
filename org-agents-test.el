@@ -146,11 +146,53 @@
     (should-not (org-agents--gate '(and (todo) . foo)))))
 
 (ert-deftest org-agents-test-gate-cli-spelling-in-argument ()
-  "A CLI-only spelling is caught wherever it sits, not just at a query head."
+  "A CLI-only spelling is caught in a predicate argument, but not in Lisp."
   (should-error (org-agents--gate '(property "K" (headline "x")))
                 :type 'user-error)
-  (should-error (org-agents--gate '(string-match "x" (re "y")))
-                :type 'user-error))
+  (should-error (org-agents--gate '(property "K" (re "y")))
+                :type 'user-error)
+  ;; Residual Lisp is code, not a query: `p' is a variable here, and
+  ;; diagnosing it would answer a question the user was never asked.
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive t))
+    (should-not (org-agents--gate '(and (todo) (let ((p 1)) (> p 0)))))))
+
+(ert-deftest org-agents-test-gate-allows-list-valued-arg ()
+  "A list-valued argument is data, as org-ql's own `src' spelling needs."
+  (cl-letf (((symbol-function 'yes-or-no-p)
+             (lambda (&rest _) (error "must not prompt"))))
+    (should (org-agents--gate '(src :lang "elisp" :regexps ("defun"))))
+    (should (org-agents--gate '(src :regexps ("a" "b"))))
+    (should (org-agents--gate
+             '(and (todo) (src :lang "elisp" :regexps ("defun")))))
+    ;; org-ql's normalizer accepts an already-quoted list here too.
+    (should (org-agents--gate '(src :regexps '("defun"))))
+    ;; Everything that was safe before stays safe.
+    (should (org-agents--gate '(ts :from -7 :to today)))
+    (should (org-agents--gate '(tags "urgent" "a")))
+    (should (org-agents--gate '(scheduled :to today)))
+    (should (org-agents--gate '(parent (and (property "KEY") (todo)))))))
+
+(ert-deftest org-agents-test-gate-refuses-call-in-list-element ()
+  "A call hiding inside a data list is still a call."
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive t))
+    (should-not (org-agents--gate '(and (todo) (tags ((shell-command "x"))))))
+    (should-not (org-agents--gate '((shell-command "x"))))
+    ;; A keyword's value is evaluated like any other argument.
+    (should-not (org-agents--gate '(ts :from (shell-command "x"))))
+    (should-not (org-agents--gate '(lambda (x) (shell-command "x"))))))
+
+(ert-deftest org-agents-test-gate-allows-bare-special ()
+  "A bare special expands to a read-only accessor, so it needs no approval."
+  (let ((noninteractive t))
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "must not prompt"))))
+      (should (org-agents--gate (org-agents--expand '(and (todo) $TODO))))
+      (should (org-agents--gate (org-agents--expand '$TAGS)))
+      (should (org-agents--gate (org-agents--expand '$ITEM))))))
 
 (ert-deftest org-agents-test-skeleton-property-exists ()
   (should (equal (org-agents--skeleton '(and (todo) (property "NEXT_REVIEW")))
