@@ -1,0 +1,190 @@
+#+title: org-agents: init.org snippet
+#+startup: showall
+
+Two =use-package= blocks, written in the style of the surrounding Org
+extensions in =~/org/init.org=, plus a first agent to try them on.
+
+*Where they go.* Under =*** org-ql= (line 11513 today), immediately after
+=**** org-ql-semantic= (which ends at line 11592), as two more level-four
+siblings. That is the right neighbourhood on both counts: =org-agents=
+requires =org-ql= and =org-ql-ext= (its =property-ts= predicate is the one the
+examples below lean on), and =org-db-cli= talks to the very same PostgreSQL
+database =org-ql-semantic= does, by the very same =lookup-password= mechanism.
+
+* Paste-ready blocks
+
+**** org-db-cli
+
+The bridge to =org db= from my =org-jw= project. =org-agents= uses it for one
+thing only: asking the database which /files/ can possibly hold a match, so
+that a whole-corpus agent need not open the whole corpus. Every match is
+still decided by org-ql in Emacs, so the database can never change an
+answer — only the number of buffers it took to reach it.
+
+#+begin_src emacs-lisp
+(use-package org-db-cli
+  :after org
+  :custom
+  (org-db-cli-executable "org")
+  ;; Until the `file' field lands in the Nix build, the patched CLI is the
+  ;; one built in the worktree (`executable-find' does expand the tilde):
+  ;; (org-db-cli-executable
+  ;;  "~/src/org-jw/.worktrees/org-db-query-file-json/dist-newstyle/build/aarch64-osx/ghc-9.10.3/org-jw-0.0.1/x/org/build/org/org")
+  (org-db-cli-config-file "~/org/org.yaml")
+  ;; A relative `file' field resolves against `org-directory' when this is
+  ;; nil, which is what the files table holds for anything under ~/org.
+  ;; Set it only if the database was synced from somewhere else.
+  ;; (org-db-cli-files-directory "~/org/")
+  :config
+  ;; `setq' in `:config', not `:custom': a `:custom' form is evaluated as
+  ;; init.org loads, and this one reaches auth-source.  The block is
+  ;; deferred, so the lookup happens when org-agents first requires the
+  ;; feature.  Same database, same mechanism as `org-ql-semantic-db-url'.
+  (setq org-db-cli-db-url
+        (format "postgresql://johnw:%s@postgres.vulcan.lan:5432/org"
+                (lookup-password "postgres.vulcan.lan" "johnw" 5432))))
+#+end_src
+
+**** org-agents
+
+Agents in the sense of Eastgate Tinderbox: an ordinary Org entry carrying an
+org-ql query in =:AGENT_QUERY:=, which on update populates itself with links
+to every entry that matches — as child alias headings, as a plain list, or
+as a table. Queries are org-ql S-expressions with a =$PROP= layer on top, so
+=$NEXT_REVIEW= reads as the property name, the value, or a number, according
+to the position it appears in.
+
+#+begin_src emacs-lisp
+(use-package org-agents
+  :after (org-ql-ext)
+  :commands (org-agents-update
+             org-agents-update-buffer
+             org-agents-update-all
+             org-agents-preview)
+  ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
+  ;; `org-update-all-dblocks', so it has to be autoloaded as well.
+  :autoload (org-dblock-write:org-agents)
+  :bind
+  (("M-s a" . org-agents-preview)
+   :map
+   org-mode-map
+   ("C-c C-x Q" . org-agents-update)
+   :map
+   my-ctrl-c-n-map
+   ("u" . org-agents-update-buffer)
+   ("U" . org-agents-update-all))
+  :custom
+  ;; The other two options are best left at their defaults:
+  ;; `org-agents-exclude' — (not (property "AGENT_MATCH")) — is what keeps
+  ;; agents from consuming each other's aliases, and
+  ;; `org-agents-safe-queries' grows by answering "remember this approval
+  ;; permanently?" at the prompt, which writes to `custom-file'
+  ;; (settings.el).  Only a query holding Lisp outside the org-ql
+  ;; vocabulary ever prompts; every example below is structurally safe and
+  ;; runs unremarked.
+  ;;
+  ;; Where `org-agents-update-all' looks: files (each scanned for
+  ;; `:AGENT_QUERY:') or directories, or the symbol `agenda'.
+  (org-agents-files (list (org-file "agents.org")
+                          org-constants-todo-path)))
+#+end_src
+
+* Key bindings, and what each was checked against
+
+| Binding       | Command                   | Checked                                                                                                                                          |
+|---------------+---------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------|
+| =M-s a=         | =org-agents-preview=        | No =M-s a= in init.org: the =M-s= family there is =O d f F D n M-g g G H i r l L k u e o s=, plus =M-s s= for =org-ql-semantic-search=. Unbound in Emacs too. |
+| =C-c C-x Q=     | =org-agents-update=         | No =C-c C-x Q= in init.org (the uppercase letters taken there are =B C D E L M N O P R S T U V W X Y=), and Org 9.8.7 binds no plain =Q= under =C-c C-x= — its own uppercase keys are =A D E G I L M P R U=, and =C-c C-x q= (lowercase) is =org-clock-cancel=. |
+| =C-c n u=       | =org-agents-update-buffer=  | =my-ctrl-c-n-map= holds =/ A B C-s F H I M N R S T W a b d f g i j m n p q r s t w x= — no =u=.                                                          |
+| =C-c n U=       | =org-agents-update-all=     | Same map, no =U=.                                                                                                                                  |
+
+=M-s a= sits deliberately beside =M-s s=: semantic search and agent preview are
+the two ways of asking "what would match?" before committing anything to a
+drawer. Preview is =org-ql-search= over the expanded, gated query with the
+agent exclusion appended, so what it shows is what an agent would render.
+
+No binding is needed for the dynamic block: Org's own =C-c C-x x= offers
+=org-agents= as a block type once the package has loaded, and =C-c C-x C-u=
+updates the block at point.
+
+* First agent
+
+Put this in =~/org/agents.org= (which the =:custom= above registers), then
+update it with =C-c C-x Q=. It uses the default =children= view and the default
+=agenda= scope, so it searches the nine files in =org-agenda-files= and needs
+nothing from the database:
+
+#+begin_example
+* Reviews that have come due
+:PROPERTIES:
+:AGENT_QUERY:  (and (todo) (property-ts $NEXT_REVIEW :to today))
+:AGENT_FORMAT: NEXT_REVIEW
+:AGENT_SORT:   date
+:AGENT_LIMIT:  25
+:END:
+#+end_example
+
+After the update the entry has grown one child per match, and a status line
+of its own:
+
+#+begin_example
+* Reviews that have come due
+:PROPERTIES:
+:AGENT_QUERY:   (and (todo) (property-ts $NEXT_REVIEW :to today))
+:AGENT_FORMAT:  NEXT_REVIEW
+:AGENT_SORT:    date
+:AGENT_LIMIT:   25
+:AGENT_MATCHED: 3 [2026-08-19 Wed 09:14]
+:END:
+** [[id:1F2E3D4C-...][Review: Renew the domain]]  [2026-08-14 Fri]
+:PROPERTIES:
+:AGENT_MATCH: t
+:END:
+#+end_example
+
+Those aliases are ephemeral: every update reaps the ones that hold nothing
+but their drawer. Write anything under an alias and it is yours — no update
+deletes it, and if its match is gone it is retitled =(stale)= instead.
+
+The whole property vocabulary implemented today: =AGENT_QUERY= (required),
+=AGENT_VIEW= (=children= default, =list=, =table=), =AGENT_SCOPE= (=agenda= default,
+=active=, =all=, a directory, or a list of files), =AGENT_SORT=, =AGENT_LIMIT=,
+=AGENT_COLUMNS= (table), =AGENT_FORMAT= (=children= and =list=). =AGENT_MATCH= and
+=AGENT_MATCHED= are written by the package, not by hand.
+
+* A standalone dynamic block
+
+A block with its own =:query= needs no agent entry around it at all, and can
+go in any Org file. This one is a table; =C-c C-x C-u= on it renders it:
+
+#+begin_example
+#+BEGIN: org-agents :query (and (property "NEXT_REVIEW") (todo "TODO")) :view table :columns "ITEM_BY_ID NEXT_REVIEW LAST_REVIEW" :sort (ts-column 2) :limit 20
+#+END:
+#+end_example
+
+=ITEM_BY_ID= is the link column, wherever in =:columns= it is named; every
+other name is read as a property on the matched heading. =(ts-column 2)=
+orders the rendered rows by the second column read as timestamps, and is
+table-only — a =children= or =list= view says so rather than sorting nothing.
+Written inside an agent entry instead, a block's parameters override that
+entry's =AGENT_*= properties name by name, so one agent can carry several
+views of itself.
+
+* Prerequisite: the patched =org= CLI
+
+The prefilter needs the =file= field that =db query --format json= only emits
+after the one-field org-jw patch (=Org.DB.Render.entryRowJson=); the =org= on
+PATH today has =--format json= but no =file=. Two consequences worth knowing:
+
+- Without the patch, =agenda=-scoped agents work exactly as shown above: the
+  bridge returns no candidates and evaluation falls back to the scope's own
+  files, live. Corpus scopes (=active=, =all=, a bare directory) refuse to run
+  rather than open thousands of buffers, with an error naming which half is
+  missing.
+- An /unpatched/ CLI still counts as available, so each such agent pays one
+  wasted round trip. To avoid even that until the patch is installed, leave
+  =org-db-cli-config-file= at =nil= (commented out) — =org-db-cli-available-p=
+  then reports the bridge as unconfigured and it is never called.
+
+Once the patch is in the Nix build, nothing changes but the speed: same
+query, same answer, fewer buffers opened to reach it.
