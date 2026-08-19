@@ -43,6 +43,20 @@
   (should (equal (org-agents--expand '(string-match "Review:" $ITEM))
                  '(string-match "Review:" (org-get-heading t t t t)))))
 
+(ert-deftest org-agents-test-expand-boolean-special-todo ()
+  "A bare special in boolean position tests the entry, not a property row."
+  (should (equal (org-agents--expand '(and (todo) $TODO))
+                 '(and (todo) (org-get-todo-state))))
+  ;; A special names the entry itself, so inheritance does not apply.
+  (should (equal (org-agents--expand '(and (todo) $TODO*))
+                 '(and (todo) (org-get-todo-state)))))
+
+(ert-deftest org-agents-test-expand-boolean-special-tags ()
+  (should (equal (org-agents--expand '$TAGS) '(org-get-tags)))
+  (should (equal (org-agents--expand '$ITEM) '(org-get-heading t t t t)))
+  ;; A non-special bare ref is still a property test.
+  (should (equal (org-agents--expand '$URL) '(property "URL"))))
+
 (ert-deftest org-agents-test-expand-passthrough ()
   (should (equal (org-agents--expand '(and (todo "TODO") (tags "urgent")))
                  '(and (todo "TODO") (tags "urgent")))))

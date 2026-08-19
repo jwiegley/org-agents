@@ -145,10 +145,16 @@ With NUMERIC non-nil, coerce a property's string value to a number."
   (cond
    ;; Bare $ref in boolean position.
    ((org-agents--ref-p form)
-    (let ((ref (org-agents--ref-p form)))
-      (if (cdr ref)                         ; inherited: residual accessor
-          `(org-entry-get nil ,(car ref) t)
-        `(property ,(car ref)))))
+    (let* ((ref (org-agents--ref-p form))
+           (special (assoc (car ref) org-agents--specials)))
+      (cond
+       ;; A special names the entry itself, which has no property row of
+       ;; that name: (property "TODO") is a valid query that never
+       ;; matches.  Test the accessor instead, and ignore any star,
+       ;; since there is nothing to inherit.
+       (special (cdr special))
+       ((cdr ref) `(org-entry-get nil ,(car ref) t))
+       (t `(property ,(car ref))))))
    ((not (consp form)) form)
    ;; Boolean combinators: recurse into every clause.
    ((memq (car form) org-agents--boolean-heads)
