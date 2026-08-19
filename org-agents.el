@@ -179,8 +179,10 @@
 ;;     block to write that block, or use `org-update-all-dblocks' to write
 ;;     every block in the buffer.
 ;;
-;; Both are covered by tests in the differential section of
-;; org-agents-test.el, which record them rather than hide them.
+;; Each is covered by a test in org-agents-test.el rather than only
+;; described here: the first two in the differential section, where the
+;; `:NAME+:' one is an expected failure that records the org-jw parser
+;; defect behind it, and the third beside the other update commands.
 ;;
 ;; See docs/superpowers/specs/2026-08-18-org-agents-design.md for the
 ;; full design, including the evaluation gate, the push-down table with
@@ -576,21 +578,43 @@ A form whose arguments are not all `:from'/`:to'/`:on' naming a date this
 package can resolve pushes nothing at all, since a bound the database
 would read differently is worse than no bound.  A form with no arguments
 asks whether the stamp is there, which needs no date and is pushed as it
-stands."
+stands.
+
+Two shapes are refused for that same reason, because the two engines do
+not read them alike:
+
+A key given twice.  `plist-get' answers with the FIRST value, while the
+CLI's `parseDateFilter' folds left and keeps the LAST -- so
+`(scheduled :to today :to \"2026-01-01\")' bounds by today in org-ql and
+by 2026-01-01 in the database, and the prefilter drops entries org-ql
+matches without saying anything.
+
+`:on' beside `:from' or `:to'.  `org-ql--from-to-on' lets `:on' overwrite
+both ends and ignores the bound, while `compileDateConds' emits
+`day = on' AND the bound -- so the database can answer with nothing where
+org-ql matches.
+
+Neither is a bound read wrongly; each is a bound read DIFFERENTLY, which
+is the one thing a superset argument cannot cover."
   (if (null (cdr form))
       form
     (let ((plist (cdr form))
           (resolved nil)
+          (seen nil)
           (ok t))
       (while (and ok plist)
         (let* ((key (car plist))
                (date (and (memq key '(:from :to :on))
+                          (not (memq key seen))
                           (org-agents--absolute-date (cadr plist)))))
           (if date
-              (setq resolved (nconc resolved (list key date)))
+              (progn (push key seen)
+                     (setq resolved (nconc resolved (list key date))))
             (setq ok nil))
           (setq plist (cddr plist))))
-      (and ok (cons (car form) resolved)))))
+      (and ok
+           (not (and (memq :on seen) (or (memq :from seen) (memq :to seen))))
+           (cons (car form) resolved)))))
 
 ;; Each classifier returns the CLI conjunct to push for a form, or nil
 ;; to leave it residual.  Every row states why its conjunct is a
@@ -742,6 +766,34 @@ alongside another; a table's sort form is neither, and handing it to
 org-ql would raise an error over a view that is not org-ql's business."
   (and sort (cl-subsetp (ensure-list sort) org-agents--element-sorts) sort))
 
+(defun org-agents--sort-ok-p (sort)
+  "Non-nil when SORT names an ordering some view can actually apply.
+Either a method org-ql sorts elements by, or one of the row-sort forms a
+table orders its rendered rows with.  Nothing else orders anything.
+
+A row sort must name its column with a number, which is checked here
+because it is wrong whatever the table turns out to hold.  WHICH number
+is `org-agents--sort-column''s to answer, since only it knows how many
+columns there are."
+  (or (null sort)
+      (and (memq (car-safe sort) org-agents--row-sorts)
+           (integerp (cadr sort))
+           (null (cddr sort)))
+      (and (org-agents--element-sort sort) t)))
+
+(defun org-agents--read-sort (sort)
+  "Return SORT, having checked that something can order by it.
+A misspelling was the last agent property left to fail quietly: neither
+`org-agents--element-sort' nor `org-agents--check-row-sort' answers for a
+sort that is simply not a sort, so `:AGENT_SORT: dtae' rendered unsorted
+and said nothing -- which reads exactly like a sort that had no effect
+because the matches were already in that order."
+  (unless (org-agents--sort-ok-p sort)
+    (user-error
+     "org-agents: cannot sort by `%S'; expected %s, a list of those, or (column N)/(ts-column N)"
+     sort (mapconcat #'symbol-name org-agents--element-sorts ", ")))
+  sort)
+
 (defun org-agents--check-row-sort (agent)
   "Signal a `user-error' when AGENT sorts rows in a view that has none.
 The `org-agents--row-sorts' forms order the rendered rows of a table,
@@ -823,7 +875,8 @@ whose query matched nothing."
             :view (org-agents--read-view (org-agents--entry-get "AGENT_VIEW"))
             :scope (org-agents--read-scope (org-agents--entry-get "AGENT_SCOPE"))
             :sort (when-let* ((s (org-agents--entry-get "AGENT_SORT")))
-                    (org-agents--read-sexp ":AGENT_SORT:" s))
+                    (org-agents--read-sort
+                     (org-agents--read-sexp ":AGENT_SORT:" s)))
             :limit (org-agents--read-limit (org-agents--entry-get "AGENT_LIMIT"))
             :columns (org-agents--entry-get "AGENT_COLUMNS")
             :format (org-agents--entry-get "AGENT_FORMAT")
@@ -1344,10 +1397,12 @@ list.  `:limit \"5\"' is the same mistake the other way round -- it
 reaches `take' as a wrong type, where the writer catches it and reports a
 render that failed rather than the parameter that is wrong.
 
-`:scope' and `:sort' answer for themselves further along, and are not
-repeated here: `org-agents--scope-base-files' names a scope it cannot
-resolve, and `org-agents--check-row-sort' a row sort in a view that has
-no rows to order."
+`:scope' answers for itself further along and is not repeated here:
+`org-agents--scope-base-files' names a scope it cannot resolve.  `:sort'
+is checked here, because what answers for it further along answers only
+for part of it -- `org-agents--check-row-sort' catches a row sort in a
+view that has no rows, and nothing at all catches a sort that is not a
+sort."
   (pcase key
     (:view
      (unless (memq value org-agents--known-views)
@@ -1358,6 +1413,9 @@ no rows to order."
      (unless (or (null value) (natnump value))
        (user-error "org-agents: a block's `:limit' must be a count, not %S"
                    value)))
+    (:sort
+     (unless (org-agents--sort-ok-p value)
+       (user-error "org-agents: a block's `:sort' cannot order by %S" value)))
     ((or :columns :format)
      (unless (or (null value) (stringp value))
        (user-error "org-agents: a block's `%s' must be a string, not %S"

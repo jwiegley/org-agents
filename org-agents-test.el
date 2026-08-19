@@ -422,6 +422,44 @@ database -- both sides of this comparison are org-ql."
             (kill-buffer buf))))
       (delete-directory dir t))))
 
+(ert-deftest org-agents-test-skeleton-refuses-a-date-filter-read-two-ways ()
+  "A date plist the two engines read differently pushes nothing at all.
+Not a bound read wrongly -- a bound read DIFFERENTLY, which is the one
+thing a superset argument cannot cover, and which shows up as a rendered
+count that is simply too small with no error anywhere.
+
+A repeated key: `plist-get' answers with the FIRST value, while the CLI's
+`parseDateFilter' folds left and keeps the LAST.  `:on' beside a bound:
+`org-ql--from-to-on' lets `:on' overwrite both ends and drops the bound,
+while `compileDateConds' emits `day = on' AND the bound, so the database
+can answer with nothing where org-ql matches."
+  ;; The premise, pinned on the Emacs side so the asymmetry is on record.
+  (should (eq 'today (plist-get '(:to today :to "2026-01-01") :to)))
+  ;; A key given twice, relative or absolute, in any of the three keys.
+  (dolist (q '((scheduled :to today :to "2026-01-01")
+               (scheduled :from "2026-01-01" :from "2026-06-01")
+               (deadline :on today :on "2026-01-01")
+               (closed :to 7 :to 1)
+               (scheduled :from "2026-01-01" :to "2026-06-01" :to "2026-12-31")))
+    (should (null (org-agents--skeleton q))))
+  ;; `:on' fixes both ends, so a bound beside it answers the same question
+  ;; twice -- in whichever order they are written.
+  (dolist (q '((scheduled :on "2026-08-19" :to "2026-08-10")
+               (scheduled :on today :from "2026-01-01")
+               (deadline :from "2026-01-01" :on today)
+               (closed :on today :from 1 :to 7)))
+    (should (null (org-agents--skeleton q))))
+  ;; Each key at most once, and no `:on' beside a bound, still pushes.
+  (should (org-agents--skeleton '(scheduled :from "2026-01-01" :to "2026-12-31")))
+  (should (org-agents--skeleton '(scheduled :on today)))
+  (should (org-agents--skeleton '(deadline :to 7)))
+  (should (org-agents--skeleton '(closed :from -7 :to 7)))
+  ;; And it is the conjunct that drops out, not the query: another pushable
+  ;; conjunct beside it still narrows.
+  (should (equal (org-agents--skeleton
+                  '(and (property "URL") (scheduled :to today :to "2026-01-01")))
+                 "(property \"URL\")")))
+
 (ert-deftest org-agents-test-skeleton-property-equality-respects-inheritance ()
   (let ((org-use-property-inheritance '("OVERLAY")))
     ;; A name that cannot inherit pushes as before.
@@ -917,7 +955,11 @@ which for an agent is the file the agent itself lives in."
                       (org-agents--collect (plist-put agent :limit 1))))))))
 
 (ert-deftest org-agents-test-element-sort ()
-  "org-ql sorts elements; a table view sorts rendered rows of strings."
+  "org-ql sorts elements; a table view sorts rendered rows of strings.
+This is the accessor that decides which of the two a sort is, so it
+answers nil for a row sort and for a non-sort alike.  Telling those two
+apart is `org-agents--sort-ok-p', and refusing the second is
+`org-agents--read-sort'."
   (should (eq 'date (org-agents--element-sort 'date)))
   ;; `reverse' means nothing on its own, so a list of methods passes too.
   (should (equal '(date reverse) (org-agents--element-sort '(date reverse))))
@@ -926,17 +968,45 @@ which for an agent is the file the agent itself lives in."
   (should (null (org-agents--element-sort '(column 2))))
   (should (null (org-agents--element-sort 'bogus))))
 
+(ert-deftest org-agents-test-read-sort-refuses-what-cannot-order ()
+  "A sort that is not a sort is diagnosed, not quietly ignored.
+It was the last agent property left to fail silently: neither
+`org-agents--element-sort' nor `org-agents--check-row-sort' answers for a
+misspelling, so `:AGENT_SORT: dtae' updated cleanly, rendered unsorted and
+wrote `:AGENT_MATCHED:' -- indistinguishable from a sort whose matches
+happened to be in that order already."
+  ;; Everything some view can order by passes through unchanged.
+  (dolist (sort '(nil date todo priority (date reverse) (priority todo)
+                  (column 2) (ts-column 1)))
+    (should (equal sort (org-agents--read-sort sort))))
+  (dolist (sort '(dtae bogus "date" (dtae) (date bogus) 7
+                  ;; A row sort has to name its column with a number, which
+                  ;; is wrong whatever the table turns out to hold.  WHICH
+                  ;; number is `org-agents--sort-column''s to answer.
+                  (column) (column "2") (ts-column) (column 1 2)))
+    (let ((err (should-error (org-agents--read-sort sort) :type 'user-error)))
+      (should (string-match-p "cannot sort by" (error-message-string err)))))
+  ;; Read from the property, which is where it actually arrives.
+  (org-agents-test--in-agent
+    (org-entry-put nil "AGENT_SORT" "dtae")
+    (let ((err (should-error (org-agents--read-agent) :type 'user-error)))
+      (should (string-match-p "cannot sort by" (error-message-string err))))
+    (org-entry-put nil "AGENT_SORT" "date")
+    (should (eq 'date (plist-get (org-agents--read-agent) :sort)))))
+
 (ert-deftest org-agents-test-collect-passes-only-element-sorters ()
-  "A sort org-ql does not know would raise an error out of `org-ql-select'."
+  "A sort org-ql does not know would raise an error out of `org-ql-select'.
+So a row sort, which org-ql has no reading of, is withheld from it and
+ordered by the table renderer instead.  A sort that is no sort at all no
+longer reaches here: `org-agents--read-sort' refuses it where the property
+is read -- see `org-agents-test-read-sort-refuses-what-cannot-order'."
   (org-agents-test--in-agent
     (let ((agent (org-agents--read-agent)))
       (should (= 1 (length (org-agents--collect (plist-put agent :sort 'date)))))
       (should (= 1 (length (org-agents--collect
                             (plist-put agent :sort '(date reverse))))))
       (should (= 1 (length (org-agents--collect
-                            (plist-put agent :sort '(ts-column 2))))))
-      (should (= 1 (length (org-agents--collect
-                            (plist-put agent :sort 'bogus))))))))
+                            (plist-put agent :sort '(ts-column 2)))))))))
 
 ;;;; Links
 
