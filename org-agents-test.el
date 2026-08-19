@@ -1067,6 +1067,99 @@ would put it back."
         (should (equal (buffer-string) before))
         (should (null org-agents--last-count))))))
 
+(ert-deftest org-agents-test-dblock-quit-restores-content ()
+  "C-g is not an error, and would otherwise leave the block empty.
+`quit' is no subtype of `error', so a handler for one does not catch the
+other, and `org-map-dblocks' catches only errors either -- nothing would
+put the body back.  The interrupt still interrupts: the body goes back
+first, and the quit is signaled again."
+  (org-agents-test--with-dblock-agent "list" ""
+    (org-dblock-update)
+    (let ((before (buffer-string)))
+      (cl-letf (((symbol-function 'org-agents--collect)
+                 (lambda (&rest _) (signal 'quit nil))))
+        (let ((interrupted nil))
+          (condition-case nil (org-dblock-update) (quit (setq interrupted t)))
+          (should interrupted))
+        (should (equal (buffer-string) before))
+        (should (null org-agents--last-count))))))
+
+(ert-deftest org-agents-test-dblock-indented-restore-round-trips ()
+  "An indented block that fails a render is left byte-exactly as it was.
+`org-update-dblock' indents every body line once the writer returns, so
+a body put back with the indentation it was found with would gain
+another, once per failed render.  A quit is the other way round: the
+writer never returns, nothing indents anything, and the body has to go
+back exactly as it was found."
+  (org-agents-test--with-dblock-agent "list" ""
+    ;; An indented block, as one written under a list item would be.
+    (insert "  ")
+    (forward-line 1)
+    (insert "  ")
+    (forward-line -1)
+    ;; `org-update-dblock' indents in the selected window's buffer, which
+    ;; in batch is not this one unless it is put there.
+    (set-window-buffer (selected-window) (current-buffer))
+    (org-dblock-update)
+    (let ((before (buffer-string)))
+      (should (string-match-p "^  - \\[\\[id:" before))
+      (cl-letf (((symbol-function 'org-agents--collect)
+                 (lambda (&rest _) (error "boom"))))
+        (org-dblock-update)
+        (should (equal (buffer-string) before))
+        ;; Twice, because drift accumulates: one failure could pass by
+        ;; luck where two cannot.
+        (org-dblock-update)
+        (should (equal (buffer-string) before)))
+      (cl-letf (((symbol-function 'org-agents--collect)
+                 (lambda (&rest _) (signal 'quit nil))))
+        (condition-case nil (org-dblock-update) (quit nil))
+        (should (equal (buffer-string) before))))))
+
+(ert-deftest org-agents-test-dblock-inline-nil-clears-a-property ()
+  "An inline nil overrides the entry's property; an absent one inherits.
+`plist-member', not `plist-get': a block that writes `:limit nil' asks
+for no limit, which is not what a block saying nothing about one asks."
+  (org-agents-test--with-dblock-agent "list" ":AGENT_LIMIT: 1\n"
+    (write-region "* TODO Second item\n:PROPERTIES:\n:NEXT_REVIEW: [2020-02-02 Sun]\n:END:\n"
+                  nil a t 'quiet)
+    ;; Inherited: the agent's limit of one.
+    (org-dblock-update)
+    (should (= 1 org-agents--last-count))
+    ;; Cleared: the block asks for no limit at all.
+    (end-of-line)
+    (insert " :limit nil")
+    (beginning-of-line)
+    (org-dblock-update)
+    (should (= 2 org-agents--last-count))))
+
+(ert-deftest org-agents-test-dblock-table-without-links-builds-none ()
+  "A table with no link column builds no link, and registers no ID.
+`org-agents--link-to' registers the id location of every match it links
+so the link resolves without a rescan; built for a column that is not
+there, it would write the corpus into `org-id-locations' on behalf of
+links nothing holds."
+  (org-agents-test--with-dblock-agent "table" ":AGENT_COLUMNS: NEXT_REVIEW\n"
+    (org-dblock-update)
+    (should (string-match-p "| *NEXT_REVIEW *|" (buffer-string)))
+    (should (string-match-p "2020-01-01" (buffer-string)))
+    (should (= 0 (hash-table-count org-id-locations)))))
+
+(ert-deftest org-agents-test-row-sort-needs-a-table ()
+  "A row sort names table rows, and a list or the children view has none.
+org-ql refuses the form as well, so left alone the sort would order
+nothing at all, and say nothing about it."
+  (org-agents-test--with-dblock-agent "list" ":AGENT_SORT: (ts-column 2)\n"
+    (org-dblock-update)
+    ;; The block reports the misconfiguration and keeps the body it had.
+    (should (null org-agents--last-count))
+    (should (equal "\n" (org-agents-test--dblock-body))))
+  (org-agents-test--in-agent
+    (org-entry-put nil "AGENT_SORT" "(column 1)")
+    (goto-char (point-min))
+    (let ((agent (org-agents--read-agent)))
+      (should-error (org-agents--render-children agent nil) :type 'user-error))))
+
 (ert-deftest org-agents-test-dblock-no-matches-counts-none ()
   "A render that matched nothing empties the block and counts none.
 Zero is not nil: a nil count is how a failed render is recognized, and a

@@ -507,12 +507,30 @@ Any other bare value names a directory, relative to `org-directory'.")
 The `org-agents--row-sorts' forms sort rendered rows of strings
 instead, so the renderer -- not org-ql -- answers for those.")
 
+(defconst org-agents--row-sorts '(column ts-column)
+  "The `:AGENT_SORT:' heads that order rendered table rows.
+Their argument is a column number, 1-indexed over `:AGENT_COLUMNS:'.
+org-ql answers for the methods in `org-agents--element-sorts' instead,
+which order matched elements, before any of them is rendered.")
+
 (defun org-agents--element-sort (sort)
   "Return SORT if org-ql can sort elements by it, else nil.
 One method or a list of them, since `reverse' is only meaningful
 alongside another; a table's sort form is neither, and handing it to
 org-ql would raise an error over a view that is not org-ql's business."
   (and sort (cl-subsetp (ensure-list sort) org-agents--element-sorts) sort))
+
+(defun org-agents--check-row-sort (agent)
+  "Signal a `user-error' when AGENT sorts rows in a view that has none.
+The `org-agents--row-sorts' forms order the rendered rows of a table,
+and a list or a set of child headings has no rows to order.  org-ql
+refuses the form as well, so an unremarked mismatch would order nothing
+at all -- exactly what an agent whose sort simply had no effect looks
+like."
+  (when (and (memq (car-safe (plist-get agent :sort)) org-agents--row-sorts)
+             (not (eq (plist-get agent :view) 'table)))
+    (user-error "org-agents: %S sorts table rows, but the view is `%s'"
+                (plist-get agent :sort) (plist-get agent :view))))
 
 (defun org-agents--entry-get (property)
   "Return PROPERTY of the entry at point, or nil when it has no value.
@@ -863,6 +881,7 @@ the agent's own buffer, where an edit would move it."
         (kept nil))
     (unless (and (markerp marker) (marker-buffer marker))
       (user-error "org-agents: agent has no live marker to render under"))
+    (org-agents--check-row-sort agent)
     (let ((rendered                     ; (TARGET TEXT SUFFIX) per match
            (mapcar (lambda (element)
                      (let ((text (org-agents--link-to element)))
@@ -925,12 +944,6 @@ the agent's own buffer, where an edit would move it."
 ;; therefore computed before anything is written, and a render that
 ;; fails puts that body back rather than leaving the block empty.
 
-(defconst org-agents--row-sorts '(column ts-column)
-  "The `:AGENT_SORT:' heads that order rendered table rows.
-Their argument is a column number, 1-indexed over `:AGENT_COLUMNS:'.
-org-ql answers for the methods in `org-agents--element-sorts' instead,
-which order matched elements, before any of them is rendered.")
-
 (defvar org-agents--last-count nil
   "How many rows or items the most recent dblock render wrote.
 Nil until a render succeeds: `org-agents-update' writes
@@ -961,14 +974,18 @@ cells are empty, as `org-agents--format-suffix' answers nothing for such
 a match either.  The marker is what says so: `org-with-point-at' leaves
 point where it stands for a marker naming no buffer, and would answer
 with the properties of whatever entry the block itself sits in."
-  (let ((link (org-agents--link-to element))
-        (marker (org-agents--live-marker element)))
+  (let ((marker (org-agents--live-marker element)))
     (mapcar (lambda (column)
               (org-agents--table-cell
-               (cond ((equal column "ITEM_BY_ID") link)
-                     ((null marker) "")
-                     (t (org-with-point-at marker
-                          (org-entry-get nil column))))))
+               (cond
+                ;; Built here rather than ahead of the columns, because
+                ;; building one registers the match's id location: a
+                ;; table that names no link column would otherwise
+                ;; record every match for links nobody holds.
+                ((equal column "ITEM_BY_ID") (org-agents--link-to element))
+                ((null marker) "")
+                (t (org-with-point-at marker
+                     (org-entry-get nil column))))))
             columns)))
 
 (defun org-agents--sort-column (sort columns)
@@ -1080,12 +1097,36 @@ and says so rather than emptying itself over it."
     (when query (setq agent (plist-put agent :query query)))
     ;; A block's parameters override the entry's properties name by name,
     ;; so one agent may carry several blocks, each its own view of it.
+    ;; Written by `plist-member', because a parameter written nil clears
+    ;; the property -- `:limit nil' asks for no limit, which is not what
+    ;; a block saying nothing about a limit asks for.
     (dolist (key '(:view :scope :sort :limit :columns :format))
-      (when-let* ((value (plist-get params key)))
-        (setq agent (plist-put agent key value))))
+      (when (plist-member params key)
+        (setq agent (plist-put agent key (plist-get params key)))))
     (unless (plist-get agent :query)
       (user-error "org-agents: block has no :query and no enclosing agent"))
+    (org-agents--check-row-sort agent)
     agent))
+
+(defun org-agents--dblock-saved-body (params dedent)
+  "The body `org-prepare-dblock' saved in PARAMS, ready to be put back.
+The saved text ends in a newline that the line Org opened for the writer
+now supplies, so that one comes off.
+
+With DEDENT the block's own indentation comes off as well:
+`org-update-dblock' indents every body line once the writer returns, and
+a body put back carrying the indentation it was found with would gain it
+twice over -- once more on every failed render.  Without DEDENT, which
+is the quit the writer signals again rather than returning from, nothing
+will indent anything, and the text goes back exactly as it was found."
+  (let ((content (or (plist-get params :content) ""))
+        (column (plist-get params :indentation-column)))
+    (string-remove-suffix
+     "\n"
+     (if (and dedent (integerp column) (> column 0))
+         (replace-regexp-in-string
+          (format "^[ \t]\\{1,%d\\}" column) "" content)
+       content))))
 
 ;;;###autoload
 (defun org-dblock-write:org-agents (params)
@@ -1097,9 +1138,12 @@ renders without one.
 Everything is computed before anything is written.  `org-prepare-dblock'
 has already deleted the body this render replaces, so a failure part way
 through the work would leave the block empty: instead the failure is
-reported and that body goes back as it was."
+reported and that body goes back as it was.  A quit is caught for that
+same reason and signaled again once the body is back, so C-g still
+interrupts the update it interrupted."
   (setq org-agents--last-count nil)
   (let* ((restored nil)
+         (interrupted nil)
          (body
           (condition-case err
               (let* ((agent (org-agents--dblock-agent params))
@@ -1124,19 +1168,27 @@ reported and that body goes back as it was."
                 (setq org-agents--last-count
                       (if table (length rows) (length matches)))
                 text)
-            (error
-             (setq restored t)
-             (message "org-agents: dblock update failed: %s"
-                      (error-message-string err))
-             ;; `org-prepare-dblock' opened the line whose newline ends
-             ;; the body, and the saved body carries one of its own.
-             (string-remove-suffix "\n" (or (plist-get params :content) ""))))))
+            ;; `quit' is no subtype of `error', so a handler for one does
+            ;; not catch the other -- and C-g part way through a query
+            ;; over a corpus is the interruption users actually cause.
+            ;; Named here, it puts the body back like any other failure,
+            ;; and is signaled again below rather than swallowed.
+            ((error quit)
+             (setq restored t
+                   interrupted (eq (car err) 'quit))
+             (unless interrupted
+               (message "org-agents: dblock update failed: %s"
+                        (error-message-string err)))
+             (org-agents--dblock-saved-body params (not interrupted))))))
     (unless (string-empty-p body)
       (save-excursion (insert body))
       ;; Only a table this render built is aligned: a body put back is
       ;; the text that was there, and goes back exactly as it was.
       (when (and (not restored) (string-prefix-p "|" body))
-        (org-table-align)))))
+        (org-table-align)))
+    ;; The interrupt still interrupts, but not before the body it
+    ;; interrupted is back in the block.
+    (when interrupted (signal 'quit nil))))
 
 (provide 'org-agents)
 ;;; org-agents.el ends here
