@@ -5,7 +5,7 @@
 ;; Author: John Wiegley <johnw@gnu.org>
 ;; Created: 18 Aug 2026
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (org-ql "0.8"))
+;; Package-Requires: ((emacs "29.1") (org-ql "0.8") (ts "0.2"))
 ;; Keywords: org agent query outlines
 ;; X-URL: https://github.com/jwiegley/dot-emacs
 
@@ -158,15 +158,15 @@
 ;;
 ;; Known limitations:
 ;;
-;;   - A relative date -- `today', or an integer offset from it -- is
-;;     resolved against the UTC day by the database and the local day by
-;;     org-ql.  Where those name different days, which is the local evening
-;;     west of UTC and the local morning east of it, such a bound is NOT
-;;     pushed: the conjunct stays residual and org-ql applies it alone, so
-;;     a date-only agent over a corpus scope may report that it needs a
-;;     prefilter at those hours, and one with another pushable conjunct
-;;     simply narrows less.  Slower, never wrong.  An absolute
-;;     `"YYYY-MM-DD"' is a calendar date to both sides and always pushes.
+;;   - A relative date in a planning bound -- `today', or an integer day
+;;     offset -- is resolved to an absolute local date when the query is
+;;     pushed, rather than sent for the database to resolve.  The database
+;;     would resolve it against the UTC day and org-ql against the local
+;;     one, so naming the day is what keeps the two from disagreeing.  A
+;;     skeleton therefore always carries a `"YYYY-MM-DD"', whatever the
+;;     agent wrote.  One consequence worth knowing: the day is fixed when
+;;     the query is built, so an update running across local midnight uses
+;;     the day it started on.
 ;;   - An entry whose only value for a property comes from `:NAME+:'
 ;;     accumulation has no property rows in the database at all, so a
 ;;     `property' conjunct over such a name may drop it from the
@@ -194,6 +194,9 @@
 (require 'org-id)
 (require 'org-ql)
 (require 'org-ql-search)                ; `org-agents-preview' delegates to it
+;; `org-agents--absolute-date' resolves a relative date with the same
+;; `ts-adjust' org-ql resolves one with, so the two cannot drift apart.
+(require 'ts)
 (require 'org-ql-ext)
 (require 'org-db-cli)
 
@@ -537,41 +540,57 @@ Only a date that survives the round trip is read alike by both sides."
                    (encode-time
                     (parse-time-string (concat v " 00:00:00"))))))))
 
-(defun org-agents--relative-dates-agree-p (&optional time)
-  "Non-nil when the local day and the UTC day are the same day at TIME.
-TIME defaults to now, and stands for the moment a query would run.
+(defun org-agents--absolute-date (value)
+  "VALUE as an absolute local `YYYY-MM-DD' string, or nil if it is no date.
+`today' and an integer day offset are resolved HERE, in local time, rather
+than pushed for the database to resolve for itself.  That is what keeps
+the two engines from disagreeing: the database resolves a relative value
+against `utctDay <$> getCurrentTime', the UTC day, while org-ql resolves
+it against `(ts-now)', the local one -- so a relative value pushed
+verbatim names a different day to each of them, and for part of every day
+the prefilter would drop entries org-ql matches.  Naming the day removes
+that disagreement rather than working around it.
 
-A relative date -- `today', or an integer offset from it -- is resolved
-against a reference day that the two engines do not share.  The database
-uses `utctDay <$> getCurrentTime', the UTC day; org-ql uses `(ts-now)',
-the local one.  Where those name different days, a pushed relative bound
-selects by a different day than org-ql will, and the direction of the
-error follows the sign of the local offset: west of UTC the database's day
-runs ahead, so `:from' and `:on' exclude an entry org-ql matches, and east
-of UTC it runs behind and `:to' does.
+The substitution is exact, not approximate.  org-ql gives an absolute
+string precisely the treatment it gives `today': `:from' and `:on' floored
+to 00:00:00 and `:to' ceilinged to 23:59:59 of that local day
+\(`org-ql--from-to-on'), and the database compares whole-day MJD integers,
+so both sides select by the same calendar day.
 
-Rather than reason keyword by keyword and zone by zone, nothing relative
-is pushed at all unless the two days coincide -- which is most of the day
-everywhere and all of it under UTC.  When they do not, the conjunct stays
-residual: the prefilter simply stops narrowing by date, which is slower
-and never wrong.  An absolute \"YYYY-MM-DD\" is a calendar date to both
-sides and is unaffected."
-  (equal (format-time-string "%F" time)
-         (format-time-string "%F" time t)))
-
-(defun org-agents--date-arg-ok-p (plist)
-  "Non-nil when PLIST holds only :from/:to/:on with CLI-safe values.
-A relative value is CLI-safe only while the local and UTC days coincide;
-`org-agents--relative-dates-agree-p' records why."
-  (cl-loop for (k v) on plist by #'cddr
-           always (and (memq k '(:from :to :on))
-                       (or (org-agents--date-string-p v)
-                           (and (or (integerp v) (eq v 'today))
-                                (org-agents--relative-dates-agree-p))))))
+The offset is computed with `ts-adjust', which is what org-ql uses itself,
+so the arithmetic is identical by construction rather than by
+reimplementation.  Seconds arithmetic would not do: on the day before a
+daylight-saving change `(time-add now 86400)' lands on a different
+calendar day than `ts-adjust' does, and the prefilter would be a day out
+exactly when the query crosses the change."
+  (cond
+   ((eq value 'today) (ts-format "%Y-%m-%d" (ts-now)))
+   ((integerp value) (ts-format "%Y-%m-%d" (ts-adjust 'day value (ts-now))))
+   ;; Already absolute: kept as written, so its calendar-validity round
+   ;; trip still answers for it.
+   ((org-agents--date-string-p value) value)))
 
 (defun org-agents--push-planning (form)
-  "Push planning FORM unchanged, provided its date arguments are CLI-safe."
-  (and (org-agents--date-arg-ok-p (cdr form)) form))
+  "Push planning FORM with every date argument resolved to a local date.
+A form whose arguments are not all `:from'/`:to'/`:on' naming a date this
+package can resolve pushes nothing at all, since a bound the database
+would read differently is worse than no bound.  A form with no arguments
+asks whether the stamp is there, which needs no date and is pushed as it
+stands."
+  (if (null (cdr form))
+      form
+    (let ((plist (cdr form))
+          (resolved nil)
+          (ok t))
+      (while (and ok plist)
+        (let* ((key (car plist))
+               (date (and (memq key '(:from :to :on))
+                          (org-agents--absolute-date (cadr plist)))))
+          (if date
+              (setq resolved (nconc resolved (list key date)))
+            (setq ok nil))
+          (setq plist (cddr plist))))
+      (and ok (cons (car form) resolved)))))
 
 ;; Each classifier returns the CLI conjunct to push for a form, or nil
 ;; to leave it residual.  Every row states why its conjunct is a
@@ -619,7 +638,9 @@ A relative value is CLI-safe only while the local and UTC days coincide;
               `(property ,name))
              (_ nil))))
    ;; Planning stamps are stored for exactly these three keywords, and
-   ;; both sides bound the raw stamp, so the bounds select alike.
+   ;; both sides bound the raw stamp, so the bounds select alike -- once
+   ;; every bound names a calendar day rather than a relative one, which
+   ;; is what `org-agents--absolute-date' is for.
    (cons 'scheduled #'org-agents--push-planning)
    (cons 'deadline #'org-agents--push-planning)
    (cons 'closed #'org-agents--push-planning)

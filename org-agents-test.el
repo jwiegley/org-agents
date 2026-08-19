@@ -280,88 +280,134 @@ leftover-reference check names them."
   (should (null (org-agents--skeleton '(heading "Rev.*iew")))))
 
 (ert-deftest org-agents-test-skeleton-planning ()
-  ;; A relative bound is pushed only while the local and UTC days coincide,
-  ;; so these two assertions are made with that pinned rather than left to
-  ;; the hour the suite happens to run at.
-  (cl-letf (((symbol-function 'org-agents--relative-dates-agree-p)
-             (lambda (&rest _) t)))
+  ;; Relative bounds are resolved to absolute local dates at push time, so
+  ;; the expectations are computed the same way rather than hardcoded --
+  ;; hardcoded, they would rot tomorrow.
+  (let ((today (ts-format "%Y-%m-%d" (ts-now)))
+        (in-7 (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))
     (should (equal (org-agents--skeleton '(and (scheduled :to 7) (tags "x")))
-                   "(scheduled :to 7)"))
+                   (format "(scheduled :to \"%s\")" in-7)))
     (should (equal (org-agents--skeleton '(deadline :from today :to "2026-12-31"))
-                   "(deadline :from today :to \"2026-12-31\")")))
-  ;; An absolute bound needs no such agreement.
+                   (format "(deadline :from \"%s\" :to \"2026-12-31\")" today))))
+  ;; An absolute bound is kept exactly as written.
   (should (equal (org-agents--skeleton '(scheduled :to "2026-12-31"))
-                 "(scheduled :to \"2026-12-31\")")))
+                 "(scheduled :to \"2026-12-31\")"))
+  ;; A bare planning form asks whether the stamp is there at all, which
+  ;; needs no date and is pushed as it stands.
+  (should (equal (org-agents--skeleton '(scheduled)) "(scheduled)")))
 
-(ert-deftest org-agents-test-relative-dates-agree-p ()
-  "The predicate answers whether the local and UTC days coincide.
-Swept over a whole day of instants rather than asserted at one, because
-the answer depends on the host's own zone: under UTC the two days always
-coincide, and anywhere else there are hours where they do and hours where
-they do not."
-  ;; It is exactly the comparison it claims to be, at every hour.
-  (let ((base (encode-time 0 0 0 19 8 2026 t))
-        (agree 0)
-        (differ 0))
-    (dotimes (h 24)
-      (let ((time (time-add base (* h 3600))))
-        (should (eq (and (org-agents--relative-dates-agree-p time) t)
-                    (equal (format-time-string "%F" time)
-                           (format-time-string "%F" time t))))
-        (if (org-agents--relative-dates-agree-p time)
-            (cl-incf agree)
-          (cl-incf differ))))
-    (should (= 24 (+ agree differ)))
-    (if (zerop (car (current-time-zone base)))
-        ;; A UTC host: the days can never disagree, so nothing is ever
-        ;; refused for this reason.
-        (should (= 24 agree))
-      ;; Any other zone: both outcomes occur within one day, which is why
-      ;; the guard cannot be settled once at load time.
-      (should (> agree 0))
-      (should (> differ 0)))))
+(ert-deftest org-agents-test-absolute-date ()
+  "A relative date resolves to a local calendar date, exactly as org-ql does.
+The arithmetic is `ts-adjust', which is what org-ql uses itself, and not
+seconds: on the day before a daylight-saving change `(time-add now 86400)'
+lands on a different calendar day, and the prefilter would be a day out
+exactly when the query crosses the change."
+  (should (equal (org-agents--absolute-date 'today)
+                 (ts-format "%Y-%m-%d" (ts-now))))
+  (dolist (n '(0 1 7 -1 -7 30 -365))
+    (should (equal (org-agents--absolute-date n)
+                   (ts-format "%Y-%m-%d" (ts-adjust 'day n (ts-now))))))
+  ;; Every answer is a date this package would accept as absolute, so the
+  ;; calendar-validity round trip still holds for what is pushed.
+  (dolist (v '(today 0 1 -1 400))
+    (should (org-agents--date-string-p (org-agents--absolute-date v))))
+  ;; An absolute date is kept as written; anything else is not a date.
+  (should (equal "2026-12-31" (org-agents--absolute-date "2026-12-31")))
+  (dolist (v '("2026-02-30" "2026-13-45" "tomorrow" "" nil 1.5 (7)))
+    (should (null (org-agents--absolute-date v)))))
 
-(ert-deftest org-agents-test-skeleton-relative-date-pushed-only-when-days-agree ()
-  "A relative bound is pushed only while both engines mean the same day.
-The database resolves `today' and an integer offset against the UTC day
-and org-ql against the local one, so where those differ a pushed relative
-bound selects by a different day than org-ql does -- and drops files
-org-ql matches, which is an under-match in the one property the whole
-push-down table exists to guarantee.  Pushing nothing instead leaves the
-conjunct residual: the prefilter stops narrowing by date, which is slower
-and never wrong."
-  (let ((relative '((scheduled :to today) (scheduled :from today)
-                    (scheduled :on today) (deadline :to 7) (deadline :from -7)
-                    (closed :on today) (closed :to -1)
-                    (scheduled :from today :to 7)))
-        (absolute '((scheduled :to "2026-12-31") (deadline :on "2024-02-29")
-                    (closed :from "2024-01-01" :to "2024-12-31"))))
-    ;; Days agree: every relative form pushes, unchanged.
-    (cl-letf (((symbol-function 'org-agents--relative-dates-agree-p)
-               (lambda (&rest _) t)))
-      (dolist (q relative)
-        (should (equal (org-agents--skeleton q) (prin1-to-string q))))
-      (dolist (q absolute)
-        (should (equal (org-agents--skeleton q) (prin1-to-string q)))))
-    ;; Days differ: every relative form pushes nothing at all ...
-    (cl-letf (((symbol-function 'org-agents--relative-dates-agree-p) #'ignore))
-      (dolist (q relative)
-        (should (null (org-agents--skeleton q))))
-      ;; ... while an absolute date is a calendar date to both sides and is
-      ;; unaffected, so the push-down does not collapse wholesale.
-      (dolist (q absolute)
-        (should (equal (org-agents--skeleton q) (prin1-to-string q))))
-      ;; A mixed plist is only as pushable as its weakest value.
-      (should (null (org-agents--skeleton
-                     '(deadline :from today :to "2026-12-31"))))
-      ;; Another conjunct still pushes; only the date drops out.
-      (should (equal (org-agents--skeleton
-                      '(and (property "URL") (scheduled :to today) (todo)))
-                     "(property \"URL\")"))
-      ;; `property-ts' pushes existence only and discards its dates, so it
-      ;; is not touched by the guard.
-      (should (equal (org-agents--skeleton '(property-ts "NEXT_REVIEW" :to today))
-                     "(property \"NEXT_REVIEW\")")))))
+(ert-deftest org-agents-test-skeleton-relative-dates-become-absolute ()
+  "Every relative bound leaves the splitter as an absolute local date.
+The database resolves a relative value against the UTC day and org-ql
+against the local one, so a relative value pushed verbatim would name a
+different day to each engine and the prefilter would drop entries org-ql
+matches -- an under-match in the one property the whole push-down table
+exists to guarantee.  Naming the day removes the disagreement."
+  (let ((today (ts-format "%Y-%m-%d" (ts-now))))
+    (dolist (case (list
+                   (cons '(scheduled :to today)
+                         (format "(scheduled :to \"%s\")" today))
+                   (cons '(scheduled :from today)
+                         (format "(scheduled :from \"%s\")" today))
+                   (cons '(scheduled :on today)
+                         (format "(scheduled :on \"%s\")" today))
+                   (cons '(closed :on today)
+                         (format "(closed :on \"%s\")" today))
+                   (cons '(deadline :to 0)
+                         (format "(deadline :to \"%s\")" today))
+                   (cons '(deadline :to 7)
+                         (format "(deadline :to \"%s\")"
+                                 (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))
+                   (cons '(deadline :from -7)
+                         (format "(deadline :from \"%s\")"
+                                 (ts-format "%Y-%m-%d" (ts-adjust 'day -7 (ts-now)))))
+                   (cons '(scheduled :from today :to 7)
+                         (format "(scheduled :from \"%s\" :to \"%s\")" today
+                                 (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))))
+      (should (equal (org-agents--skeleton (car case)) (cdr case))))
+    ;; No `today' and no bare integer survives into any skeleton.
+    (dolist (q '((scheduled :to today) (deadline :from -7 :to 7)
+                 (closed :on today)
+                 (and (property "URL") (scheduled :to today) (todo))))
+      (let ((skel (org-agents--skeleton q)))
+        (should skel)
+        (should-not (string-match-p "today" skel))
+        (should-not (string-match-p ":to [-0-9]" skel))
+        (should-not (string-match-p ":from [-0-9]" skel))))
+    ;; A value that is no date at all still pushes nothing, so the guard
+    ;; that rejects a calendar-invalid date is not weakened by any of this.
+    (dolist (q '((scheduled :to "2026-02-30") (deadline :on "2026-13-45")
+                 (scheduled :to today :from "2026-02-30")
+                 (scheduled :before today) (closed :to 1.5)))
+      (should (null (org-agents--skeleton q))))
+    ;; `property-ts' pushes existence only and discards its dates, so it is
+    ;; untouched by any of this.
+    (should (equal (org-agents--skeleton '(property-ts "NEXT_REVIEW" :to today))
+                   "(property \"NEXT_REVIEW\")"))))
+
+(ert-deftest org-agents-test-absolute-date-selects-what-the-relative-one-did ()
+  "org-ql answers a normalized bound exactly as it answered the relative one.
+This is the soundness argument for resolving the date here, and it is
+checked against org-ql itself rather than asserted: `org-ql--from-to-on'
+floors `:from'/`:on' to 00:00:00 and ceilings `:to' to 23:59:59 of the
+named local day, which is the same treatment it gives `today', so
+substituting the day cannot change which entries match.  Needs no
+database -- both sides of this comparison are org-ql."
+  (let ((dir (make-temp-file "org-agents-dates" t))
+        (org-element-use-cache nil))
+    (unwind-protect
+        (let ((file (expand-file-name "dates.org" dir)))
+          ;; An entry on each of several days around today, so a bound that
+          ;; moved by even one day would select a different set.
+          (with-temp-file file
+            (dolist (n '(-8 -7 -1 0 1 7 8))
+              (insert (format "* TODO Day %+d\nSCHEDULED: <%s>\n" n
+                              (ts-format "%Y-%m-%d %a"
+                                         (ts-adjust 'day n (ts-now)))))))
+          (dolist (pair '((:to today) (:from today) (:on today)
+                          (:to 7) (:from -7) (:on 1) (:on -1)
+                          (:from -7 :to 7)))
+            (let* ((relative (cons 'scheduled pair))
+                   ;; The absolute form the splitter would push, read back
+                   ;; from the skeleton so this tests what really ships.
+                   (skeleton (org-agents--skeleton relative))
+                   (absolute (car (read-from-string skeleton)))
+                   (titles (lambda (q)
+                             (sort (org-ql-select (list file) q
+                                     :action '(org-get-heading t t t t))
+                                   #'string<))))
+              (should skeleton)
+              (should-not (equal relative absolute))
+              ;; The two select the same entries, and something at that.
+              (should (funcall titles relative))
+              (should (equal (funcall titles relative)
+                             (funcall titles absolute))))))
+      (dolist (buf (buffer-list))
+        (when-let* ((f (buffer-file-name buf)))
+          (when (string-prefix-p (file-name-as-directory dir) f)
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf))))
+      (delete-directory dir t))))
 
 (ert-deftest org-agents-test-skeleton-property-equality-respects-inheritance ()
   (let ((org-use-property-inheritance '("OVERLAY")))
@@ -386,20 +432,17 @@ and never wrong."
   (should (null (org-agents--skeleton '(descendants (todo))))))
 
 (ert-deftest org-agents-test-skeleton-multiple-conjuncts-and-scope ()
-  (cl-letf (((symbol-function 'org-agents--relative-dates-agree-p)
-             (lambda (&rest _) t)))
-    (should (equal (org-agents--skeleton
-                    '(and (property "URL") (scheduled :to 7) (todo))
-                    '(path "positron/"))
-                   "(and (property \"URL\") (scheduled :to 7) (path \"positron/\"))"))))
+  (should (equal (org-agents--skeleton
+                  '(and (property "URL") (scheduled :to 7) (todo))
+                  '(path "positron/"))
+                 (format "(and (property \"URL\") (scheduled :to \"%s\") (path \"positron/\"))"
+                         (ts-format "%Y-%m-%d" (ts-adjust 'day 7 (ts-now)))))))
 
 (ert-deftest org-agents-test-skeleton-no-ts-structs ()
   "Serialization must come from the pre-normalization sexp, and stay readable."
-  (cl-letf (((symbol-function 'org-agents--relative-dates-agree-p)
-             (lambda (&rest _) t)))
-    (let ((s (org-agents--skeleton '(and (scheduled :to 7) (property "X")))))
-      (should-not (string-match-p "#s(" s))
-      (should-not (string-match-p "#(" s)))))
+  (let ((s (org-agents--skeleton '(and (scheduled :to 7) (property "X")))))
+    (should-not (string-match-p "#s(" s))
+    (should-not (string-match-p "#(" s))))
 
 (ert-deftest org-agents-test-skeleton-strips-text-properties ()
   "A literal lifted from a buffer carries properties the CLI cannot read."
@@ -3042,37 +3085,44 @@ wrong, it is only not sufficient."
       (org-agents-test--should-be-superset
        q "(property \"TOKENS\")" (org-agents-test--all-paths files)))))
 
-(ert-deftest org-agents-test-diff-today-guard-keeps-the-superset ()
-  "The relative-date guard is what keeps `today' a superset, and it holds.
-The database resolves `today' against `utctDay <$> getCurrentTime' and
-org-ql against `(ts-now)', so on the hours those name different days a
-pushed `:on today' selects by a different day than org-ql does.  This is
-the differential half of
-`org-agents-test-skeleton-relative-date-pushed-only-when-days-agree':
-whichever branch the clock is in, the prefilter must never be missing a
-file org-ql matches.
+(ert-deftest org-agents-test-diff-today-is-a-superset-in-both-branches ()
+  "`today' is a superset whatever the clock says, because it is resolved here.
+The database resolves a relative date against `utctDay <$> getCurrentTime'
+and org-ql against `(ts-now)', so a relative value pushed verbatim named a
+different day to each engine and dropped entries org-ql matched.  The
+splitter now resolves it to an absolute local date, so both engines read
+the same calendar day and the relation holds at every hour -- including the
+hours when the local and UTC days differ, which is what this test would
+have failed at before.
 
-Deterministic in both branches.  Where the days agree the conjunct is
-pushed and asserted to be a superset over the whole corpus.  Where they
-differ nothing is pushed at all -- so there is no candidate set to be
-wrong, and the naive skeleton the guard suppressed is run anyway to show
-the file it would have dropped."
+Deterministic and meaningful in both branches: the branch is reported so a
+run in the disagreeing window is visible in the log, but the assertion is
+the same superset relation either way."
   (org-agents-test--with-db-corpus
     (let* ((q '(and (scheduled :on today) (todo)))
+           (local (format-time-string "%F"))
+           (utc (format-time-string "%F" nil t))
            (today-file (cdr (assoc "today.org" files)))
-           (live (org-agents-test--live-files
-                  q (org-agents-test--all-paths files))))
-      ;; The fixture is scheduled on the LOCAL day, so org-ql matches it.
-      (should (member today-file live))
-      (if (org-agents--relative-dates-agree-p)
-          (progn
-            (should (equal (org-agents--skeleton q) "(scheduled :on today)"))
-            (org-agents-test--should-be-superset
-             q "(scheduled :on today)" (org-agents-test--all-paths files)))
-        ;; The guard refused it, so no date narrowing happens at all ...
-        (should (null (org-agents--skeleton q)))
-        ;; ... and this is what pushing it anyway would have answered: the
-        ;; file org-ql matches, missing from the candidates.
+           (skeleton (org-agents--skeleton q)))
+      (message "org-agents-test: local=%s utc=%s (%s)" local utc
+               (if (equal local utc) "same day" "DIFFERENT days"))
+      ;; The pushed conjunct names the LOCAL day, whichever day UTC is on.
+      (should (equal skeleton (format "(scheduled :on \"%s\")" local)))
+      ;; The fixture is scheduled on the local day, so org-ql matches it ...
+      (should (member today-file (org-agents-test--live-files
+                                  q (org-agents-test--all-paths files))))
+      ;; ... and the prefilter keeps it, in both branches.
+      (should (member today-file (org-agents-test--db-files skeleton)))
+      (org-agents-test--should-be-superset
+       q skeleton (org-agents-test--all-paths files))
+      ;; And it still narrows: a file matching nothing is not a candidate.
+      (should-not (member (cdr (assoc "filler.org" files))
+                          (org-agents-test--db-files skeleton)))
+      ;; What the old behaviour would have answered, kept as the record of
+      ;; why this is resolved locally: pushing `today' verbatim leaves the
+      ;; database to pick the day, and in the disagreeing window that is not
+      ;; the day org-ql used.
+      (when (not (equal local utc))
         (should-not (member today-file
                             (org-agents-test--db-files
                              "(scheduled :on today)")))))))
