@@ -1956,6 +1956,91 @@ it turns out to name fewer than N files.
 ]
 #+end_src
 
+* TODO [#B] Gate the database prefilter on how much it can save
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-gate-prefilter-by-cost-1h3
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 12:31]
+:MODIFIED: [2026-08-19 Wed 12:32]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Gate the database prefilter on how much it can save, not on whether it is configured.
+
+## Steps to Reproduce
+
+1. Configure the bridge: set `org-db-cli-config-file`, `org-db-cli-db-url` and
+   an `org-db-cli-executable` that `executable-find` resolves.
+2. Write an agent with `:AGENT_SCOPE: agenda` — a bounded scope naming 8 files
+   here — and a pushable conjunct, e.g.
+   `:AGENT_QUERY: (and (todo) (property "NEXT_REVIEW"))`.
+3. Run `M-x org-agents-update` on it.
+
+Observed: `org db query` is spawned and the query round-trips to PostgreSQL, in
+order to narrow a file set the scope already enumerates. Point
+`org-db-cli-executable` at a script that `touch`es a sentinel to see it happen;
+point `org-db-cli-db-url` at an unroutable host to watch Emacs block with no
+bound. Expected: no subprocess, because the scope names its files.
+
+`org-agents-mode` already binds `org-db-cli-db-url` to nil for the save path, so
+reproduce this through the *manual* command rather than a save.
+
+## Problem
+
+`org-agents--scope-files` (org-agents.el:966-995) consults the bridge whenever
+the query has a pushable conjunct, with no test on the scope and no test on how
+many files the scope names:
+
+```elisp
+(candidates (and skeleton (org-db-cli-available-p) (org-db-cli-query-files skeleton)))
+```
+
+`org-db-cli--run` (org-db-cli.el:67-101) is a synchronous `call-process` with no
+timeout. So for an `agenda`-scope agent naming 8 files, org-agents pays a
+subprocess spawn plus a round trip to a possibly-remote PostgreSQL in order to
+narrow *8 files* — and if the host is unreachable, Emacs blocks until TCP gives
+up, with no bound.
+
+Measured 2026-08-19: a live agenda-scope update over those 8 files (2.4 MB,
+`todo.org` alone 1.3 MB / 373 matches) costs **0.018s** when the dirtied buffer
+is re-scanned and the rest are org-ql cache hits. Narrowing that is not worth a
+network round trip on its best day.
+
+`org-agents-mode` already binds the bridge away for the save path specifically,
+because a save must never block on a network. That fixes the acute case and
+leaves the general one.
+
+## Proposal
+
+Consult the prefilter only when it can plausibly pay for itself:
+
+- always for a scope in `org-agents--corpus-scopes` or a directory (they have no
+  bound, and this is the case the prefilter exists for);
+- for a named-file scope, only when the file count exceeds a defcustom threshold
+  (some tens of files — the crossover is where a spawn plus a round trip beats
+  opening that many buffers; measure before fixing the default);
+- never when the base file set is already in memory as up-to-date buffers, since
+  org-ql will take cache hits on all of them.
+
+Independently: give `org-db-cli--run` a timeout so no code path can block Emacs
+without bound. `call-process` has no timeout argument, so this means either an
+asynchronous process with a timer, or a `timeout(1)`-style wrapper. The former
+is the honest fix and is a larger change; the latter is one prefix argument and
+covers the realistic failure.
+
+## Acceptance Criteria
+
+- An agenda-scope agent with a pushable conjunct spawns no subprocess (a test
+  asserts it, the way the save-path test does).
+- A corpus-scope agent still uses the prefilter.
+- No org-agents code path can block Emacs indefinitely on an unreachable
+  database host; a test covers the timeout with a deliberately hanging stub.
+
 * TODO [#B] org-jw changes the prefilter depends on    :upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
@@ -3173,4 +3258,82 @@ both numbers become cheap to get.
   }
 ]
 #+end_src
+
+* TODO [#B] Add a ripgrep prefilter backend so corpus scopes need no database
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-rg-prefilter-backend-wlc
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 12:31]
+:MODIFIED: [2026-08-19 Wed 12:32]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+Add a ripgrep prefilter backend so corpus scopes need no database.
+
+Measured on 2026-08-19 against the real corpus (~/org, 3,634 non-archive .org
+files, 33 MB). Full log: prefilter-alternatives.md in the SDD workspace.
+
+## Why
+
+The database is only a candidate-file narrower — evaluation is org-ql and always
+was. But today it is the *only* narrower, so the three unbounded scopes
+(`active`, `all`, a directory) hard-error without a reachable PostgreSQL. Live
+evaluation is not a real fallback: no prefilter at all costs 45.98s, 885 MB peak
+RSS, and 3,640 open buffers for one query.
+
+ripgrep does the same narrowing from the live files:
+
+| path | files opened | wall clock | result |
+|---|---|---|---|
+| no prefilter | 3,634 | 45.98s | 764 matches |
+| rg prefilter + org-ql | 309 | 3.90s (rg 0.13s) | 764 matches |
+
+Same 764 matches from 309 files as from 3,634 — an empirical superset check on
+real data, which the database path has never had (its 20 differential tests
+still cannot run for want of a reachable DB).
+
+## Two correctness advantages over the DB, not just setup
+
+1. No staleness window. README §"The database prefilter" concedes a file that
+,   *newly* satisfies a pushed conjunct since the last `org db sync` is missed
+   until the next sync — a false negative. rg reads live bytes.
+2. No second parser to diverge. Honest-limitation #2 (`:PROP+:` continuation
+   line makes org-jw discard the whole drawer) cannot arise when the prefilter
+   matches the same bytes org-ql reads.
+
+## Shape of the work
+
+`org-agents--pushdown-fns` is already backend-agnostic — it emits abstract
+superset-safe conjuncts, and only the closing `prin1-to-string` in
+`org-agents--skeleton` is CLI-specific. So:
+
+- Change `--skeleton` to return the conjunct sexp; let each backend serialize.
+  The CLI bridge keeps its `prin1`.
+- New backend emits one rg pattern per conjunct, intersecting per-conjunct file
+  sets for `and` and unioning for `or`:
+  `(property NAME)` → `^[ \t]*:NAME:`;
+  `(property NAME VAL)` → same plus `regexp-quote`d value;
+  `(scheduled/deadline/closed …)` → stamp existence only;
+  `(heading "lit")` → `^\*+ .*lit`; `(path DIR)` → rg `--glob`.
+- A defcustom choosing the backend, defaulting to rg when `rg` is on PATH.
+
+rg cannot compare dates, so planning conjuncts push as bare stamp existence.
+Measurement retires that worry: `SCHEDULED:` occurs in 186 of 3,633 files and
+`DEADLINE:` in 46 — 95–99% narrowing from existence alone.
+
+## Acceptance Criteria
+
+- A corpus-scope agent updates with no `org db` configured at all.
+- A test asserts the rg-narrowed candidate set is a superset of the files
+  org-ql's own answer came from, over a fixture corpus (the check the DB path
+  cannot run).
+- README's prefilter section documents both backends and the staleness
+  difference between them.
+#+end_example
 
