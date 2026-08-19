@@ -800,7 +800,8 @@ which for an agent is the file the agent itself lives in."
         (should (string-match-p "\\`\\[\\[id:11111111-" link))
         (should (string-match-p "\\[Fix widget\\]\\]\\'" link)))))
   ;; Fallback: entry without ID gets a file link with a heading search.
-  (let ((dir (make-temp-file "org-agents-noid" t)))
+  (let ((dir (make-temp-file "org-agents-noid" t))
+        (org-element-use-cache nil))
     (unwind-protect
         (let ((f (expand-file-name "x.org" dir)))
           (with-temp-file f (insert "* TODO A [tricky] title\n"))
@@ -809,6 +810,14 @@ which for an agent is the file the agent itself lives in."
                  (link (org-agents--link-to (car matches))))
             (should (string-match-p "\\`\\[\\[file:" link))
             (should (string-match-p "::\\*" link))))
+      ;; `org-ql-select' left a buffer visiting a file about to be
+      ;; deleted, which would otherwise survive into every later test and
+      ;; into the developer's own session.
+      (dolist (buf (buffer-list))
+        (when-let* ((bf (buffer-file-name buf)))
+          (when (string-prefix-p (file-name-as-directory dir) bf)
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf))))
       (delete-directory dir t))))
 
 (ert-deftest org-agents-test-link-escapes-brackets ()
@@ -927,6 +936,37 @@ worse than text saying there is none."
         (should (= 1 (cl-count-if
                       (lambda (l) (string-match-p "Fix widget" l))
                       (split-string (buffer-string) "\n"))))))))
+
+(ert-deftest org-agents-test-children-regenerates-a-retitled-pristine-alias ()
+  "Retitling an alias does not pin it; only writing under one does.
+`org-agents--child-pristine-p' reads what is under the heading rather
+than the heading itself, and an alias holding nothing but its own drawer
+is this package's to rewrite.  So an edited title comes back as the
+render builds it -- and exactly once, not the edited heading and a fresh
+alias beside it."
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent)))
+      (org-agents--render-children agent (org-agents--collect agent))
+      (let ((rendered (org-agents-test--alias-line "Fix widget")))
+        ;; Retitle the alias, leaving its body the drawer it already was.
+        ;; The link goes with the title, so the alias no longer names any
+        ;; target either -- and is still reaped, because pristine is
+        ;; answered before a target is looked for at all.
+        (goto-char (point-min))
+        (search-forward "Fix widget")
+        (org-back-to-heading t)
+        (org-edit-headline "my own words about it")
+        (should (null (org-agents--alias-target (org-get-heading t t t nil))))
+        (goto-char (point-min))
+        (should (= 1 (org-agents--render-children
+                      agent (org-agents--collect agent))))
+        (let ((lines (split-string (buffer-string) "\n")))
+          (should-not (cl-find-if (lambda (l) (string-match-p "my own words" l))
+                                  lines))
+          (should (= 1 (cl-count-if (lambda (l) (string-match-p "Fix widget" l))
+                                    lines))))
+        ;; And what came back is the alias the first render wrote.
+        (should (equal rendered (org-agents-test--alias-line "Fix widget")))))))
 
 (ert-deftest org-agents-test-children-stale-marker ()
   (org-agents-test--with-corpus
