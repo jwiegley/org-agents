@@ -4140,9 +4140,12 @@ the wrong fault."
 
 (ert-deftest org-agents-test-prefilter-not-consulted-for-named-files ()
   "A scope that NAMES its files is scanned live, with no subprocess.
-MEASURED: an `agenda'-scope update over eight named files costs 0.018 s
-while a single rg run costs 0.10-0.45 s, so prefiltering a named file
-list makes the common case 5-25 times slower to reach the same answer.
+MEASURED: an `agenda'-scope update over the eight largest files of the
+author's corpus -- 8.9 MB, 373 matches -- costs 0.03 to 0.05 s once the
+buffers are visited and spawns nothing, while a single rg run over that
+corpus costs 0.10 to 0.45 s.  So prefiltering a scope that names its
+files is pure overhead: several times the cost of the whole update, to
+reach the same answer.
 The spawn is made DETECTABLE rather than assumed away -- a `call-process'
 that records the breach in a flag, because the backend catches errors by
 design and would swallow a signalling stub."
@@ -4194,9 +4197,10 @@ unusable."
 
 (ert-deftest org-agents-test-prefilter-auto-falls-back-with-one-message ()
   "Absent ripgrep, `auto' scans live and SAYS SO, once, naming the count.
-45.98 seconds and 885 MB of RSS over 3,640 buffers is a shocking thing to
-happen without explanation, and a message naming 3,634 files explains
-it.  Silence is what this replaces; an error is what `require' is for."
+On the author's corpus that walk is 3,634 files and a query that had not
+finished after nine minutes -- a shocking thing to happen without
+explanation, and a message naming the file count explains it.  Silence
+is what this replaces; an error is what `require' is for."
   (org-agents-test--with-rg-corpus-unguarded
     (let ((org-agents-rg-executable "no-such-program-xyzzy")
           (agent (list :scope 'all :query '(property "NEXT_REVIEW"))))
@@ -4247,7 +4251,9 @@ to build on, and the fallback is correct and merely slower."
                           msgs)))))
 
 (ert-deftest org-agents-test-prefilter-require-refuses-instead ()
-  "`require' keeps the behaviour of the releases that had a database.
+  "`require' turns an unnarrowable unbounded scope into an error.
+For someone who would rather be told that an agent cannot be answered
+affordably than wait for a live walk of the whole corpus.
 A `user-error' rather than a bare `error', because
 `org-agents-update-buffer' catches the former per agent and one
 misconfigured agent must not abort a whole buffer's run."
@@ -4318,9 +4324,10 @@ The scope rule already prevents it for every scope a save updates -- an
 that \"a save spawns no ripgrep\" is a property of this function rather
 than a consequence of a rule stated elsewhere.
 
-Note the change of REASON from the test this replaces: with a local rg
-measured at 0.13 s over 3,634 files there is no network to block on, so
-the rule is about pointless work rather than about a save that hangs."
+Note the REASON: the prefilter is a local subprocess that cannot pay for
+itself over a named file list -- 0.10 to 0.45 s of ripgrep against an
+update measured at 0.03 to 0.05 s -- so the rule is about pointless work
+on a keystroke, not about a save that might hang."
   (org-agents-test--with-corpus
     (let* ((sentinel (expand-file-name "rg-was-called" dir))
            (fake (org-agents-test--fake-rg

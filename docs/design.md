@@ -1,12 +1,26 @@
 # Org Agents: Tinderbox-Style Persistent Queries for Org-mode
 
-> **Superseded in part, 2026-08-19.** The database prefilter (§"The Database
-> Prefilter") and `org-db-cli.el` were removed; ripgrep is the only prefilter,
-> and it is documented in README.md §"The ripgrep prefilter" and in the
-> Commentary and Prefilter sections of `org-agents.el`. Everything else here
-> describes the shipped design. The soundness requirement this document states
-> is unchanged by the removal — only the counterparty it is discharged against
-> is different.
+> **Superseded in part, 2026-08-19.** The database prefilter and
+> `org-db-cli.el` were removed; ripgrep is the only prefilter, and it is
+> documented in README.md §"The ripgrep prefilter" and in the Commentary and
+> Prefilter sections of `org-agents.el`. The soundness requirement this
+> document states is unchanged by the removal — only the counterparty it is
+> discharged against is different.
+>
+> Database, bridge and org-jw content appears **throughout**, not only in
+> §"The Database Prefilter": treat every mention of `org db`, `org-db-cli`,
+> a DSN, a content hash or org-jw as historical wherever it occurs, §Purpose,
+> §Background, §The Agent Entry, §Scope of Version 1, §Verification,
+> §Alternatives Considered and §Resolved Decisions included. Two specifics
+> that will mislead a reader who trusts this document: the **push-down table**
+> in §"The Database Prefilter" is the DATABASE's table, and its per-row
+> justifications are facts about SQL operators that no longer run — it also
+> states the superseded whitespace rule for a property value, which
+> `org-agents--property-value-pushable-p` says outright is the wrong test, and
+> it describes a `(path "dir/")` scope conjunct that does not exist. The
+> shipped push-down table is `org-agents--pushdown-fns`, restated for a reader
+> in README.md §"The ripgrep prefilter". Read this document for the evaluation
+> gate, the agent entry and the renderers.
 
 **Status:** Revision 3 — reconciled with the implementation (ten tasks and twelve review rounds of 2026-08-18); reshaped in revision 2 by the seven-pass review (see `2026-08-18-org-agents-design-review.md`)
 **Date:** 2026-08-18

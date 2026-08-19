@@ -1,10 +1,15 @@
 # org-agents Implementation Plan
 
-> **Historical, 2026-08-18.** Task 1 (the org-jw `file` field), Task 2
-> (`org-db-cli.el`) and Task 10's differential suite describe work that was
-> removed on 2026-08-19, when ripgrep replaced the database prefilter. Tasks
-> 3-9 describe shipped code. Nothing here is current guidance; it is kept to
-> answer "why is it like this?".
+> **Historical, 2026-08-18.** Nothing here is current guidance; it is kept to
+> answer "why is it like this?". Removed on 2026-08-19, when ripgrep replaced
+> the database prefilter: Task 1 (the org-jw `file` field), Task 2
+> (`org-db-cli.el`), the `(require 'org-db-cli)` in Task 3, **Task 5's
+> skeleton serializer** — the shipped splitter returns a list of abstract
+> conjuncts, emits no `prin1-to-string`'d CLI sexp and has no `path`
+> conjunct, so every interface Task 5 specifies for `org-agents--skeleton`
+> and `org-agents--scope-conjunct` is wrong — **Task 6's CLI call**
+> (`org-db-cli-available-p`, `org-db-cli-query-files`), and Task 10's
+> differential suite. The rest of Tasks 3-9 describes shipped code.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -16,8 +16,8 @@ candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
 One file makes up the package, `org-agents.el` (~2,700 lines), and one
-tests it, `org-agents-test.el` — 193 ERT tests, all of which run in a
-plain `make test` with no external service. The 26 that exercise the
+tests it, `org-agents-test.el` — 199 ERT tests, all of which run in a
+plain `make test` with no external service. The 25 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
 
@@ -162,6 +162,8 @@ refused by name rather than rendered wrongly.
 | `org-agents-files` | `'("~/org/agents.org")` | where `org-agents-update-all` looks: files, directories, or the symbol `agenda` |
 | `org-agents-exclude` | `(not (property "AGENT_MATCH"))` | conjunct appended to every agent query and every preview, so agents do not consume each other's aliases |
 | `org-agents-safe-queries` | `nil` | SHA-1 hashes of queries approved to run without prompting |
+| `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
+| `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
 
 `org-agents-safe-queries` is persisted through `customize-save-variable`,
 which writes to `custom-file` or, without one, to `user-init-file`. Where
@@ -247,7 +249,8 @@ holds an agent, and each of their saves then pays for the scan that finds none.
   exactly as they do with it, and an unbounded scope is scanned live with
   one message saying so. The argument vector was verified against 15.2.0
   and no other version; 13 is a round, safely old floor, named because the
-  prefilter passes `--crlf`.
+  prefilter passes `--crlf`. Point `org-agents-rg-executable` at the binary
+  where a bare `rg` is not on Emacs's `exec-path`.
 
 ### The two repo-local dependencies
 
@@ -297,7 +300,10 @@ Org extensions in the author's init:
 
 Nothing else is needed. `org-agents-prefilter` defaults to `auto`, which
 uses `rg` from `exec-path` where it is found and scans live where it is
-not.
+not; set it to `require` to be refused rather than kept waiting, or to
+`nil` never to spawn anything. Where ripgrep is installed under another
+name, or somewhere Emacs's `exec-path` does not reach, name it with
+`org-agents-rg-executable`.
 
 ## Running the tests
 
@@ -307,18 +313,23 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 193 tests, no external service needed
+make test        # 199 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `193 tests, 193 results as expected, 0 unexpected` and
+`make test` reports `199 tests, 199 results as expected, 0 unexpected` and
 takes about twenty seconds. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `167 results as expected, 0
-unexpected, 26 skipped`, and prints one line saying why — `skip-unless` is
+set up. Where `rg` is not on `PATH` it reports `174 results as expected, 0
+unexpected, 25 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing.
+
+The tests that describe what a machine WITHOUT ripgrep does — the live
+fallback, its one message, `require` refusing, `nil` never spawning — do
+not skip there, which is the whole point of them. They supply their own
+ripgrep, or none.
 
 The pattern, argument-vector and exit-status tests never skip. That is
 deliberate: every under-match measured while the prefilter was designed
@@ -343,8 +354,12 @@ neither file is warning-free, for reasons that have nothing to do with this
 package. Nothing is written into the dependency directory, which by default
 is somebody else's live Emacs configuration.
 
-A full run takes about two and a half minutes, nearly all of it
-`org-agents.el`.
+A full run takes about five seconds, or ten if the script has to search
+the nix store for an Emacs. An earlier note in this repository claimed two
+and a half minutes; that is not reproducible and should not be budgeted
+for — see `docs/measured-facts.md` E9, which was written to kill exactly
+that belief. Do not skip the gate on the assumption it is slow: it is the
+only thing enforcing the zero-warning invariant.
 
 ## The ripgrep prefilter
 
@@ -381,9 +396,11 @@ Three consequences worth knowing before you rely on it:
   value depends on keeping inheritance narrow.
 * The scopes `active`, `all` and any directory do not name the files they
   will open. Where one cannot be narrowed — no ripgrep, a query with
-  nothing to push, or `org-agents-prefilter` nil — it is scanned live and
-  one message says so, naming the file count. Set `org-agents-prefilter` to
-  `require` to be refused instead.
+  nothing to push, a failed ripgrep run, or `org-agents-prefilter` nil — it
+  is scanned live and one message says so, naming the file count. Set
+  `org-agents-prefilter` to `require` to be refused instead. The failed run
+  is the only one of the four you cannot cause on purpose; see the
+  limitations below.
 * An over-match is a cost, not a fault. A `:P: v` line in ordinary body
   prose, in no drawer, puts its file in the candidate set; org-ql then does
   not match it, and the agent renders nothing for it.
@@ -423,10 +440,13 @@ answers `"al/pha"` — no whitespace in it, and no line in the file spelling
 it. `org-agents-test-rg-downgrades-a-value-it-cannot-see-on-one-line`
 pins that case.
 
-The `(property "P")` direction, by contrast, is now exact: the pattern
-admits the `:P+:` spelling, so an entry whose only line is `:P+: beta` is
-in the candidate set. Under the database this package used to prefilter
-with, it was not — that was a recorded expected failure.
+The `(property "P")` direction, by contrast, is exact: the pattern admits
+the `:P+:` spelling, so an entry whose only line is `:P+: beta` is in the
+candidate set. (An earlier version of this package prefiltered through a
+PostgreSQL index built by a separate CLI; ripgrep replaced it, and there
+the `:P+:` spelling was a recorded expected failure. Nothing in the
+package speaks to a database any more, and there is nothing to install or
+configure for the prefilter beyond ripgrep itself.)
 
 ### 2. A buffer-wide update refreshes only an agent's first dynamic block
 
@@ -445,7 +465,44 @@ deleted rather than edited, **extra drawer properties or tags you added to a
 body-less alias are discarded.** Write a line under the alias and they are
 kept along with it.
 
+### 4. One unreadable file, or one symlink loop, disables the prefilter corpus-wide
+
+ripgrep exits 2 for any per-file I/O error — an unreadable `.org` file, a
+dangling `*.org` symlink, a directory symlink loop — and it can print a
+partial answer *and* exit 2 at the same time. A partial answer is exactly
+the unsound direction, so the package **discards it on purpose** and treats
+the whole run as a failure. That is the right call, and its cost is blunt:
+one such file anywhere under the scope's root sends every corpus-scope
+agent down the live path on every update, and under
+`org-agents-prefilter` `require` makes them refuse to update at all. The
+message names ripgrep's own stderr, which names the offending path; there
+is nothing to do but fix the file.
+
+The loop case is arrived at deliberately. ripgrep is run with `--follow`
+because `directory-files-recursively` *lists* a symlink to a file outside
+the tree and org-ql matches through it, so without `--follow` the
+candidate set would be narrower than the scope's own file list — a lost
+match rather than a slow one. Following symlinks is therefore on, and a
+convenience symlink pointing at an ancestor directory is fatal to the
+prefilter for as long as it is there.
+
+Also worth knowing: a personal ripgrep configuration cannot narrow the
+candidate set. `RIPGREP_CONFIG_PATH` is unset for the child, because
+ripgrep prepends that file's arguments to the command line and the
+package's own flags do not override `--max-depth`, `--max-filesize`,
+`--pre`, `--encoding` or `--glob`.
+
 ### Others, less sharp
+
+* On this platform `directory-files-recursively` can intermittently drop a
+  symlink to a FILE from an `active` or `all` scope's base file set:
+  `file-name-all-completions` sometimes reports such a link with a trailing
+  slash, which makes the walk take it for a directory it must not follow.
+  So a corpus assembled out of per-file symlinks may see matches in the
+  linked files appear and disappear between updates, with no message. A
+  symlink to a DIRECTORY is unaffected, and so is the prefilter — ripgrep
+  reports the file either way; it is the scope's own file list that
+  wavers, and it has the last word.
 
 * A preserved alias keeps the description and format suffix it was written
   with. Only the stale mark changes, so an alias whose match has since been
@@ -458,9 +515,11 @@ kept along with it.
   `AGENT_MATCHED` counts two. Give them IDs to tell them apart.
 * A planning bound is never pushed, only the presence of the stamp:
   ripgrep cannot compare dates. org-ql applies the bound, so this costs
-  candidate files and never a match. It is also strictly better than what
-  it replaces, where `(deadline 7)` and `(deadline auto)` pushed nothing at
-  all.
+  candidate files and never a match. Every shape now pushes the stamp,
+  including `(deadline 7)` and `(deadline auto)`, which the database
+  predecessor could not push at all — a bound had to be resolved to a
+  calendar day that a second engine would read the same way, and these
+  two have no such day.
 * A non-ASCII literal is not pushed, for the encoding reason above. A
   `(heading "Café")` agent over a corpus scope therefore narrows by its
   other conjuncts only, or not at all.

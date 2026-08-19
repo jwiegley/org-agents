@@ -1,7 +1,7 @@
 # Measured facts about the surrounding systems
 
-Facts about Emacs, Org, org-ql and the org-jw CLI/database that this package
-depends on and that cost real effort to establish. Each entry states the fact,
+Facts about Emacs, Org, org-ql and ripgrep that this package depends on and
+that cost real effort to establish. Each entry states the fact,
 the evidence for it, and why it matters here. Nothing below is repeated from a
 docstring or a design note: everything was read out of the shipped source or
 measured by running it, and where a previously believed fact turned out to be
@@ -9,8 +9,18 @@ wrong the correction is recorded rather than the belief.
 
 > **§5 is historical, 2026-08-19.** It records the org-jw CLI, parser and
 > PostgreSQL database, which this package no longer uses: ripgrep replaced them
-> as the candidate-file prefilter. §§1-4 and §6 remain current except where a
-> note below says otherwise.
+> as the candidate-file prefilter.
+>
+> Also historical, and marked in place below: **E1**, **E2** and **E7** name
+> the database or the deleted `org-db-cli.el` where they mean ripgrep or
+> `org-agents.el` alone; **E9**'s figures were taken over two files, one of
+> which is gone; **E10** and **§4 Q2** cite `org-agents--absolute-date`, a
+> function that was deleted along with the second date engine it existed to
+> agree with; **§2 L7** and **§4 Q2-Q5** reason about two engines disagreeing,
+> and there is now one; **L8** states the superseded whitespace rule; and
+> **Q5** calls `ts` a declared dependency, which it is not. The three
+> cross-references reading "(§4)" for a D-entry mean §5. Everything else in
+> §§1-4 and §6 is current.
 
 Read this before changing the splitter, the gate, the dynamic-block writer, or
 the prefilter. Several entries exist because a plausible assumption was made
@@ -46,17 +56,23 @@ done
 
 **E1. `~/org` is a two-hop symlink, so paths must be compared by truename.**
 `~/org` → `/nix/store/…-home-manager-files/org` → `/Users/johnw/doc/org`
-(measured: `os.path.realpath("/Users/johnw/org")`). The database stores
-`canonicalizePath` of every file it reads (§4), so the two spellings of one file
-have *nothing* in common under `equal`. Any intersection of a locally gathered
-file set with a database answer must run `file-truename` on both sides — and a
-prefix-substitution shortcut is wrong, because the chain has two hops through a
-store path. `org-agents--same-files` is where this is done; deleting it silently
+(measured: `os.path.realpath("/Users/johnw/org")`). *Historical wording,
+2026-08-19: this entry said "a database answer"; read it as "a ripgrep
+answer", which is what `org-agents--same-files` now intersects against.* The
+two spellings of one file have *nothing* in common under `equal` whenever the
+two sides do not spell the root alike — `directory-files-recursively` does not
+expand `~`, and ripgrep prints paths built from the root it was handed — so
+the intersection must run `file-truename` on both sides, and a
+prefix-substitution shortcut is wrong because the chain has two hops through a
+store path. (A base file whose own spelling is already a candidate spelling is
+admitted without a truename, which is a saving and not a shortcut: its
+truename is trivially among the candidates' truenames.) `org-agents--same-files` is where this is done; deleting it silently
 empties every corpus-scope candidate set.
 
 **E2. `/tmp` is `/private/tmp`.** Measured. A test that creates a fixture under
-`temporary-file-directory` and compares its path against a database answer must
-compare truenames for this reason alone, independently of E1.
+`temporary-file-directory` and compares its path against a ripgrep answer must
+compare truenames for this reason alone, independently of E1. *Historical
+wording, 2026-08-19: this said "a database answer".*
 
 **E3. `~/.emacs.d/lisp` *is* `/Users/johnw/src/dot-emacs/lisp`.** Measured
 (`realpath`). This is why a checkout placed at `~/.emacs.d/lisp/org-agents`
@@ -96,7 +112,7 @@ claims the opposite ("Byte-compiled files (.elc) are tracked"); it is wrong.
 compiling one dependency is not enough.** Measured, reproducing both stages in a
 scratch copy:
 
-| stage | warnings for `org-db-cli.el` + `org-agents.el` |
+| stage | warnings for `org-agents.el` (measured when `org-db-cli.el` was compiled beside it) |
 |---|---|
 | neither dependency compiled | 1 — `org-agents.el:209:11: Warning: Package cl is deprecated` |
 | both compiled first | 0 |
@@ -117,9 +133,14 @@ is how it was first mistaken for something inherited rather than fixable.
 
 **E9. Byte-compiling this package takes seconds, not minutes.** Measured:
 `org-db-cli.el` + `org-agents.el` in one batch invocation, 2.4 s with the
-dependencies uncompiled and 3.6 s with them compiled. An earlier note in this
-project's ledger said "~2 min per file"; that is not reproducible here and
-should not be budgeted for. Do not skip the gate on the assumption it is slow.
+dependencies uncompiled and 3.6 s with them compiled. Re-measured 2026-08-19
+with `org-db-cli.el` gone, through `make gate`, which builds the dependencies
+and then compiles `org-agents.el` alone: **4.8 s** with `EMACS` given, 9.5 s
+when the script has to glob the nix store for an interpreter. An earlier note
+in this project's ledger said "~2 min per file", and README repeated it as
+"about two and a half minutes" until 2026-08-19; that is not reproducible here
+and should not be budgeted for. Do not skip the gate on the assumption it is
+slow — it is the only thing enforcing the zero-warning invariant.
 
 **E10. `setenv "TZ"` moves the zone in-process; binding `process-environment`
 does not.** Corrected, measured:
@@ -136,7 +157,11 @@ cased for `TZ` and really does change what `format-time-string` reports. An
 earlier note claimed neither worked; that is false. Even so, threading an
 explicit reference instant through the date helpers is the better test design —
 it needs no zone data and works at any hour — which is what
-`org-agents--absolute-date`'s optional NOW argument is for.
+`org-agents--absolute-date`'s optional NOW argument was for. *Moot,
+2026-08-19: there are no date helpers and no `org-agents--absolute-date`. A
+planning bound is not resolved at all now, it is DROPPED, because there is no
+second date engine to agree with — see `org-agents--pushdown-fns`. The fact
+about `setenv "TZ"` stands on its own.*
 
 ---
 
@@ -212,9 +237,18 @@ is what a degenerate `$*` reference would ask for.
 side.** Measured: a drawer holding `:TOKENS: alpha` and `:TOKENS+: beta` gives
 `(org-entry-get nil "TOKENS")` ⇒ `"alpha beta"`;
 `(org--property-get-separator "TOKENS")` ⇒ `" "`; `org-property-separators`
-defaults to `nil`. The database side of the same drawer is far worse — see D6 —
-and the divergence is why property *equality* over a whitespace-bearing value
-downgrades to existence before being pushed.
+defaults to `nil`. This is why property *equality* is downgraded to existence
+before being pushed, and the rule is stated in terms of the SEPARATOR, not of
+whitespace: `org-agents--property-value-pushable-p` pushes a value only when
+it is non-empty, the separator is non-empty, and the value does not contain
+the separator. *Corrected 2026-08-19: this entry used to say "over a
+whitespace-bearing value", and attributed the downgrade to divergence with the
+database. The two rules coincide only under the default separator. With
+`org-property-separators` set to `(("P") . "/")`, `:P: al` plus `:P+: pha`
+answers `"al/pha"` — no whitespace in it, and no line in the file spelling it —
+so the whitespace test would push a pattern that matches nothing and lose the
+file. `org-agents-test-rg-downgrades-a-value-it-cannot-see-on-one-line` pins
+all three cases.*
 
 **L9. `org-link-heading-search-string` already supplies the leading `*`.**
 Measured: `(org-link-heading-search-string "Heading")` ⇒ `"*Heading"`. A link
@@ -331,10 +365,14 @@ ts-adjust 'day 1     : 2026-03-08 23:30 -0700   ← the next calendar day
 ```
 
 A day's error, exactly across the transition, and invisible for the rest of the
-year. Using `ts-adjust` — the same function org-ql uses at Q3 — makes the two
-engines' arithmetic identical by construction rather than by agreement. That
-makes `ts` a real dependency, declared in `Package-Requires`. Any test of this
-must pin a literal expected date (`"2026-03-08"`) and skip unless the
+year. Using `ts-adjust` — the same function org-ql uses at Q3 — is how org-ql's
+own arithmetic stays right, and is a fact about org-ql worth keeping.
+*Historical, 2026-08-19: this entry went on to say that this "makes the two
+engines' arithmetic identical by construction" and "makes `ts` a real
+dependency, declared in `Package-Requires`". Both are moot. There is one
+engine, org-agents pushes no date at all, and `ts` is neither required nor
+declared: `Package-Requires` reads `((emacs "29.1") (org-ql "0.8"))` and there
+is no `(require 'ts)`.* Any test of this must pin a literal expected date (`"2026-03-08"`) and skip unless the
 local zone really transitions that night; computing the expectation
 with `ts-adjust` makes the test tautological, which is how the guarantee sat
 unprotected for a while.
@@ -566,9 +604,14 @@ differential tests designed, wired, self-verifying, and never once run, because
 no PostgreSQL was reachable during development. The prefilter is now ripgrep,
 so the property is provable in a plain `make test`: the same fixture corpus is
 handed to org-ql and to the prefilter in one Emacs, and the candidate set is
-asserted to cover org-ql's own answer. Twenty such tests exist and run, each
-naming the fixture file it loses under the mutation it guards against, and
-every one of those mutations was applied and watched to fail. What replaced the
+asserted to cover org-ql's own answer. Eighteen tests make that assertion
+through `org-agents-test--should-cover`, fifteen of them named
+`org-agents-test-rg-covers-*`, and most name the fixture file they lose under
+the mutation they guard against; 25 tests in all need ripgrep and skip without
+it, which is the number `make test` prints. *Corrected 2026-08-19: this said
+"Twenty such tests", which is the size of the deleted differential suite and
+matches no grouping of the new one.* Every mutation those tests guard against
+was applied and watched to fail. What replaced the
 unproven argument is not a better argument; it is a suite that executes.
 
 **N2. `set-window-buffer` signalling on the minibuffer window is not

@@ -10,10 +10,11 @@ sibling. That is the right neighbourhood: =org-agents= requires =org-ql= and
 =org-ql-ext=, whose =property-ts= predicate is the one the examples below
 lean on.
 
-There is nothing else to configure. The candidate-file prefilter is
-ripgrep, which needs no DSN, no config file and no credential: it is found
-on =exec-path= or it is not, and where it is not an unbounded scope is
-scanned live with one message saying so.
+There is nothing else that must be configured. The candidate-file
+prefilter is ripgrep, which needs no DSN, no config file and no
+credential: it is found on =exec-path= or it is not, and where it is not
+an unbounded scope is scanned live with one message saying so. Two options
+govern it if you want them — see the block below.
 
 * Paste-ready block
 
@@ -48,14 +49,22 @@ to the position it appears in.
    ("u" . org-agents-update-buffer)
    ("U" . org-agents-update-all))
   :custom
-  ;; The other two options are best left at their defaults:
+  ;; The other four options are best left at their defaults:
   ;; `org-agents-exclude' — (not (property "AGENT_MATCH")) — is what keeps
-  ;; agents from consuming each other's aliases, and
+  ;; agents from consuming each other's aliases;
   ;; `org-agents-safe-queries' grows by answering "remember this approval
   ;; permanently?" at the prompt, which writes to `custom-file'
-  ;; (settings.el).  Only a query holding Lisp outside the org-ql
-  ;; vocabulary ever prompts; every example below is structurally safe and
-  ;; runs unremarked.
+  ;; (settings.el) — only a query holding Lisp outside the org-ql
+  ;; vocabulary ever prompts, and every example below is structurally safe
+  ;; and runs unremarked;
+  ;; `org-agents-prefilter' is `auto', which narrows an unbounded scope
+  ;; with ripgrep where it can and scans live with one message where it
+  ;; cannot — set it to `require' to be refused rather than kept waiting,
+  ;; or to nil never to spawn anything;
+  ;; and `org-agents-rg-executable' is "rg", resolved against
+  ;; `exec-path' — name the binary here if ripgrep is installed under
+  ;; another name, or somewhere a GUI Emacs's `exec-path' does not
+  ;; reach.
   ;;
   ;; Where `org-agents-update-all' looks: files (each scanned for
   ;; `:AGENT_QUERY:') or directories, or the symbol `agenda'.

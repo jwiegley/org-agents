@@ -154,8 +154,11 @@
 ;; Scope, and why an unbounded one is worth narrowing:
 ;;
 ;; `agenda' and an explicit list of files name the files they will open,
-;; and are evaluated live -- a prefilter there is pure overhead, measured
-;; at 0.10 to 0.45 seconds of subprocess against an 0.018-second update.
+;; and are evaluated live -- a prefilter there is pure overhead.
+;; Measured: an `agenda'-scope update over the eight largest files of the
+;; author's corpus, 8.9 MB and 373 matches, costs 0.03 to 0.05 seconds
+;; once the buffers are visited and spawns no subprocess at all, against
+;; 0.10 to 0.45 seconds for a single ripgrep run over the whole corpus.
 ;; `active', `all' and any directory name nothing: nothing about naming a
 ;; directory bounds how much it holds, and reading one live means opening
 ;; however many files it turns out to contain.  Measured over a
@@ -212,9 +215,18 @@
 ;; them as source and reports their own `(require 'cl)' against the require
 ;; lines here, then compiles this one and fails on any warning at all.
 ;;
-;; See docs/design.md for the full design, including the evaluation gate,
-;; the push-down table with the soundness argument for each row, and the
-;; renderers.
+;; See docs/design.md for the evaluation gate and the renderers.  Do NOT
+;; read its push-down table: that table describes the PostgreSQL
+;; prefilter this package used to have, and its per-row justifications
+;; are facts about SQL operators that no longer run -- a heading literal
+;; is argued safe there by `ILIKE %lit%', and a property value is said to
+;; be pushable when it holds no whitespace, which the rule in this file
+;; says outright is the wrong test.  Extending the table on those
+;; arguments can push something ripgrep cannot see, which drops files
+;; with no error.  The current push-down table is
+;; `org-agents--pushdown-fns' below, whose every row states its own
+;; superset argument, and README.md's "The ripgrep prefilter" section
+;; states the same table for a reader.
 
 ;;; Code:
 
@@ -522,7 +534,8 @@ skipped instead of prompting."
 ;;
 ;; Soundness evidence: the `org-agents-test-rg-covers-*' tests, each of
 ;; which names the fixture file it loses under the mutation it guards
-;; against, and docs/design.md.
+;; against, and README.md's push-down table.  Not docs/design.md's
+;; table, which is the removed database's -- see the Commentary.
 
 (defun org-agents--heading-literals-p (strings)
   "Non-nil when every string in non-empty STRINGS may be sought in a raw line.
@@ -782,14 +795,22 @@ as \"this query offers no narrowing\" rather than as an empty answer."
 Evaluation is always org-ql's, against live buffers.  A prefilter only
 chooses which FILES org-ql opens, so it can never change an answer --
 but without one, a scope with no bound on what it holds is read by
-opening everything it turns out to hold.  Measured on a 3,634-file
-corpus: 45.98 seconds and 885 MB for a query with no prefilter, 3.90
-seconds with one, returning the same 764 matches.
+opening everything it turns out to hold.
+
+Measured on the author's corpus, `(and (todo) (property \"NEXT_REVIEW\"))'
+over an `active' scope: one ripgrep run narrows 3,634 files to 309 in
+half a second, and org-ql over those 309 finishes in ten seconds with
+764 matches over 316 buffers.  With no prefilter at all the same query
+had not finished after NINE MINUTES.  Do not budget the unprefiltered
+path in seconds: it is not a slower way to the same place within one
+attention span, it is the thing this option exists to avoid.
 
 Only `active', `all' and a directory scope are ever prefiltered.
 `agenda' and an explicit file list name their files and are always read
-live, where a prefilter is pure overhead: such an update costs 0.018
-seconds while one ripgrep run costs 0.10 to 0.45 seconds.
+live, where a prefilter is pure overhead: measured over the eight
+largest files of that corpus, 8.9 MB and 373 matches, such an update
+costs 0.03 to 0.05 seconds and spawns nothing, while one ripgrep run
+over the corpus costs 0.10 to 0.45.
 
   `auto'     Use ripgrep when `org-agents-rg-executable' is found and
              the query offers a conjunct to push.  Otherwise scan live,
@@ -797,8 +818,9 @@ seconds while one ripgrep run costs 0.10 to 0.45 seconds.
              slowness is explained rather than mysterious.  The default.
   `require'  Refuse an unbounded scope that cannot be narrowed, with a
              `user-error' naming the scope and the reason, rather than
-             scanning it live.  This is the behaviour of the releases
-             that resolved an unbounded scope through a database.
+             scanning it live.  For someone who would rather be told
+             that an agent cannot be answered affordably than wait for a
+             live walk of the whole corpus.
   nil        Never run ripgrep; read every scope live."
   :type '(choice (const :tag "Use ripgrep when it is available" auto)
                  (const :tag "Require ripgrep; refuse a scope without it"
@@ -1151,11 +1173,12 @@ Three kinds of answer, and conflating any two of them is a bug:
 Each pattern is a separate invocation and the resulting file sets are
 INTERSECTED.  Independent runs rather than clever reuse, because they
 are measured to be cheap: a whole-corpus run costs 0.10 seconds for a
-property pattern and 0.45 for a heading one, against 3.90 seconds for
-the prefiltered query as a whole.  As soon as the running intersection
-is empty the walk stops -- there is nothing left to intersect, and in
-particular the scope's base files must not be gathered to intersect
-against, which is the expensive thing the prefilter exists to avoid."
+property pattern and 0.45 for a heading one, against the ten seconds
+org-ql then spends over the files one such run selects.  As soon as the
+running intersection is empty the walk stops -- there is nothing left to
+intersect, and in particular the scope's base files must not be gathered
+to intersect against, which is the expensive thing the prefilter exists
+to avoid."
   (let ((candidates t)
         (failed nil))
     (catch 'org-agents--rg-done
@@ -1516,8 +1539,9 @@ exists to make unnecessary."
                      " explicit file list")
              scope reason))
           (let ((base (org-agents--scope-base-files scope)))
-            ;; Said once, and naming the count: 45.98 seconds and 885 MB
-            ;; of RSS over 3,640 buffers is a shocking thing to happen
+            ;; Said once, and naming the count: on the author's corpus
+            ;; this walk is 3,634 files and a query that had not finished
+            ;; after nine minutes, which is a shocking thing to happen
             ;; without explanation, and a file count explains it.
             (message (concat "org-agents: scope `%s' not narrowed (%s);"
                              " scanning %d files live")
@@ -2701,9 +2725,10 @@ to."
       ;; skip below is about what an update COSTS -- a corpus scope has no
       ;; bound on what it would open, so it is left for a command that was
       ;; asked for.  This is about a save doing no work that cannot pay for
-      ;; itself: a ripgrep run costs 0.10 to 0.45 seconds and an
-      ;; `agenda'-scope update costs 0.018, so narrowing a scope that names
-      ;; its files makes a keystroke slower to reach the same answer.  Only
+      ;; itself: a ripgrep run costs 0.10 to 0.45 seconds while an
+      ;; `agenda'-scope update over eight files measured 0.03 to 0.05, so
+      ;; narrowing a scope that names its files makes a keystroke slower
+      ;; to reach the same answer.  Only
       ;; the manual commands keep the prefilter, which is where waiting for
       ;; it is something the user chose to wait for.
       (let ((org-agents-prefilter nil))
