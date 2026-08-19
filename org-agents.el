@@ -998,6 +998,15 @@ such a string."
                       name)))
                 (split-string raw "\0" t))))
 
+(defun org-agents--rg-available-p ()
+  "Non-nil when `org-agents-rg-executable' names a program that can be run.
+A function of its own for two reasons.  It is the one place the option is
+resolved against `exec-path', so a caller cannot accidentally test the
+option's VALUE -- which is a bare name by default and always non-nil.
+And a test that stubs the backend can stub this beside it, instead of
+having to put a program on `exec-path' to be allowed to reach the stub."
+  (and (executable-find org-agents-rg-executable) t))
+
 (defun org-agents--rg-run (pattern root)
   "Files under ROOT whose text matches PATTERN, or the symbol `unavailable'.
 Returns a LIST -- possibly the EMPTY list, which means \"ripgrep
@@ -1388,8 +1397,7 @@ exists to make unnecessary."
              (reason
               (cond ((null org-agents-prefilter) "prefiltering off")
                     ((null conjuncts) "no pushable conjunct")
-                    ((not (executable-find org-agents-rg-executable))
-                     "ripgrep not found")))
+                    ((not (org-agents--rg-available-p)) "ripgrep not found")))
              (candidates (unless reason
                            (org-agents--rg-files conjuncts root))))
         (cond ((eq candidates 'unavailable) (setq reason "ripgrep failed"))

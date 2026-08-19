@@ -623,7 +623,9 @@ common, and the agent would silently match nothing at all."
       (with-current-buffer (find-file-noselect agent-file)
         (goto-char (point-min))
         (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
-          (cl-letf (((symbol-function 'org-agents--rg-files)
+          (cl-letf (((symbol-function 'org-agents--rg-available-p)
+                     (lambda () t))
+                    ((symbol-function 'org-agents--rg-files)
                      (lambda (_conjuncts _root) (list a)))
                     ((symbol-function 'org-agents--scope-base-files)
                      (lambda (_scope) (list link b))))
@@ -734,7 +736,9 @@ property that was wrong."
       (with-current-buffer (find-file-noselect agent-file)
         (goto-char (point-min))
         (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
-          (cl-letf (((symbol-function 'org-agents--rg-files)
+          (cl-letf (((symbol-function 'org-agents--rg-available-p)
+                     (lambda () t))
+                    ((symbol-function 'org-agents--rg-files)
                      (lambda (conjuncts _root) (setq asked conjuncts) (list a)))
                     ((symbol-function 'org-agents--scope-base-files)
                      (lambda (_scope) (list link b))))
@@ -757,7 +761,9 @@ which for an agent is the file the agent itself lives in."
       (let ((agent (plist-put (org-agents--read-agent)
                               :query '(heading "Decoy"))))
         (setq agent (plist-put agent :scope 'active))
-        (cl-letf (((symbol-function 'org-agents--rg-files)
+        (cl-letf (((symbol-function 'org-agents--rg-available-p)
+                   (lambda () t))
+                  ((symbol-function 'org-agents--rg-files)
                    (lambda (_conjuncts _root)
                      (list (expand-file-name "elsewhere.org" dir)))))
           (should (null (org-agents--scope-files agent)))
@@ -3464,9 +3470,12 @@ running ripgrep twice."
 
 (ert-deftest org-agents-test-rg-covers-an-accumulated-property-name ()
   "`:TOKENS+:' with no plain `:TOKENS:' line: the `\\+?' regression.
-This is the org-jw parser defect that the database suite recorded as an
-EXPECTED FAILURE turning into an ordinary passing test, and it is one of
-the two reasons the backend swap is a correctness improvement."
+This is the defect that the suite this replaces recorded as an EXPECTED
+FAILURE, turning into an ordinary passing test.  It is one of the two
+reasons the backend swap is a correctness improvement rather than only a
+simplification; the other is that ripgrep reads the bytes on disk, so
+there is no staleness window in which a file that newly matches is
+missed."
   (org-agents-test--with-rg-corpus
     (let ((cands (org-agents-test--should-cover '(property "TOKENS")
                                                 paths dir)))
