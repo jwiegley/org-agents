@@ -2573,6 +2573,281 @@ rewrite its aliases rather than insert anything."
     (should (string-match-p "no final newline\n#\\+BEGIN: org-agents"
                             (buffer-string)))))
 
+;;;; Minor mode
+
+;; Every test here saves a real file, through `save-buffer', and reads the
+;; result back off disk rather than out of the buffer that wrote it: what
+;; the mode promises is about the bytes that reach the file.
+
+(defvar org-agents-test--message-log nil
+  "Where `org-agents-test--messages' collects what `message' was passed.")
+
+(defmacro org-agents-test--messages (&rest body)
+  "Evaluate BODY and return the list of texts it passed to `message'.
+The package reports what a save did through the echo area, which in batch
+goes to stderr and is gone: capturing the calls is the only way to assert
+on a message, and on the absence of one."
+  (declare (indent 0))
+  `(let ((org-agents-test--message-log nil))
+     (cl-letf (((symbol-function 'message)
+                (lambda (format &rest args)
+                  ;; `message' with a nil format clears the echo area and
+                  ;; has no text to record.
+                  (when format
+                    (let ((text (apply #'format-message format args)))
+                      (push text org-agents-test--message-log)
+                      text)))))
+       ,@body)
+     (nreverse org-agents-test--message-log)))
+
+(defun org-agents-test--file-text (file)
+  "The bytes of FILE, read off disk rather than out of a buffer.
+Read literally, because the comparison these tests make is a byte
+comparison: a decoded string would hide a difference in the bytes, and a
+buffer visiting the file would hide whether the save wrote anything at
+all."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally file)
+    (buffer-string)))
+
+(ert-deftest org-agents-test-mode-hooks-the-buffer-it-was-enabled-in ()
+  "Enabling arms this buffer's save; disabling disarms it again.
+Buffer-locally, and nowhere else: added to the global value, the hook
+would scan every save in the session -- Org buffer or not -- for agents."
+  (let ((global (default-value 'before-save-hook)))
+    (with-temp-buffer
+      (org-mode)
+      (org-agents-mode 1)
+      (should org-agents-mode)
+      (should (local-variable-p 'before-save-hook))
+      (should (memq #'org-agents--update-on-save before-save-hook))
+      (should (equal global (default-value 'before-save-hook)))
+      (org-agents-mode -1)
+      (should-not org-agents-mode)
+      (should-not (memq #'org-agents--update-on-save before-save-hook))
+      (should (equal global (default-value 'before-save-hook))))))
+
+(ert-deftest org-agents-test-mode-refuses-a-non-org-buffer ()
+  "There are no agents outside Org, and the mode says so rather than arm.
+It must be OFF afterwards as well: `define-minor-mode' sets the variable
+before the body runs, so a refusal that only signaled would leave a mode
+reporting itself enabled with no hook behind it."
+  (with-temp-buffer
+    (fundamental-mode)
+    (should-error (org-agents-mode 1) :type 'user-error)
+    (should-not org-agents-mode)
+    (should-not (memq #'org-agents--update-on-save before-save-hook))))
+
+(ert-deftest org-agents-test-mode-renders-on-save ()
+  "A save with the mode on renders the buffer's agents before writing.
+`set-buffer-modified-p' rather than an edit: `save-buffer' does nothing at
+all to an unmodified buffer, so a test that only visited the file would
+assert nothing."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (org-agents-mode 1)
+      (set-buffer-modified-p t)
+      (save-buffer)
+      (should-not (buffer-modified-p))
+      (should (string-match-p "Fix widget" (buffer-string)))
+      ;; And in the file, not merely in the buffer that saved it.
+      (let ((text (org-agents-test--file-text agent-file)))
+        (should (string-match-p "Fix widget" text))
+        (should (string-match-p ":AGENT_MATCHED: 1 \\[" text))))))
+
+(ert-deftest org-agents-test-mode-save-that-renders-the-same-writes-no-bytes ()
+  "A save whose render is the render already there leaves the file alone.
+This is the test that fails if `:AGENT_MATCHED:' is stamped on every save
+regardless: a stamp records when an update found what it found, so
+restamping it rewrites the file -- and the timestamp a reader trusts --
+every time the buffer is saved for any reason at all.
+
+The old stamp is written BY HAND rather than left over from the first
+save, and that is what makes the test discriminate: the stamp has minute
+resolution, so two saves in the same minute produce the same text and an
+unconditional stamp would go unnoticed.  A stamp naming 2020 cannot."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (org-agents-mode 1)
+      (set-buffer-modified-p t)
+      (save-buffer)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_MATCHED" "1 [2020-01-01 Wed 09:00]")
+      (save-buffer)
+      (let ((first (org-agents-test--file-text agent-file)))
+        ;; The render found what it had found before, so the stamp was left
+        ;; as it was and still names the day it was written for.
+        (should (string-match-p ":AGENT_MATCHED: 1 \\[2020-01-01 Wed 09:00\\]"
+                                first))
+        ;; And a further save changes not one byte of it.
+        (set-buffer-modified-p t)
+        (save-buffer)
+        (should (equal first (org-agents-test--file-text agent-file)))))))
+
+(ert-deftest org-agents-test-mode-save-restamps-when-the-render-changes ()
+  "A new match is rendered on save, and the stamp is written afresh.
+The other half of the contract: the buffer goes back as it was only when
+the render wrote what was already there."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (org-agents-mode 1)
+      (set-buffer-modified-p t)
+      (save-buffer)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_MATCHED" "1 [2020-01-01 Wed 09:00]")
+      (save-buffer)
+      ;; A second entry in the corpus now matches.  Written through the
+      ;; buffer visiting the file, because org-ql evaluates against the
+      ;; live buffer and would not see a change made behind it.
+      (with-current-buffer (find-file-noselect b)
+        (goto-char (point-max))
+        (insert "* TODO Second review\n:PROPERTIES:\n"
+                ":NEXT_REVIEW: [2021-01-01 Fri]\n:END:\n")
+        (save-buffer))
+      (set-buffer-modified-p t)
+      (save-buffer)
+      (let ((text (org-agents-test--file-text agent-file)))
+        (should (string-match-p "Second review" text))
+        (should (string-match-p ":AGENT_MATCHED: 2 \\[" text))
+        (should-not (string-match-p "2020-01-01" text))))))
+
+(ert-deftest org-agents-test-mode-save-skips-an-agent-needing-the-database ()
+  "A scope that needs the prefilter is named and left alone, not run.
+A save must not wait on the database, nor fail because it is unreachable.
+The agent is skipped rather than reported as an error, and the file is
+written all the same."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (org-agents-mode 1)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_SCOPE" "active")
+      (let ((msgs (org-agents-test--messages (save-buffer))))
+        ;; One message, naming the agent that was skipped and why.
+        (should (cl-find-if
+                 (lambda (m)
+                   (and (string-prefix-p "org-agents: " m)
+                        (string-match-p "needs the database" m)
+                        (string-match-p "Review agent" m)))
+                 msgs))
+        ;; Skipped, not failed: no summary reporting a failure.
+        (should-not (cl-find-if (lambda (m) (string-match-p "failed" m)) msgs)))
+      (should-not (buffer-modified-p))
+      (should-not (string-match-p ":AGENT_MATCHED:" (buffer-string)))
+      (should-not (string-match-p "Fix widget" (buffer-string)))
+      ;; The save itself went through, edit and all.
+      (should (string-match-p ":AGENT_SCOPE: active"
+                              (org-agents-test--file-text agent-file))))))
+
+(ert-deftest org-agents-test-mode-save-writes-the-file-past-a-bad-agent ()
+  "An agent this package cannot read must not make the file unsavable.
+The failure is reported, the agents around it are rendered, and the save
+goes through: a query with a typo in it is exactly the state a file is in
+while the typo is being fixed."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-max))
+      (insert "* Bad agent\n:PROPERTIES:\n:AGENT_QUERY: (and (todo\n:END:\n")
+      (org-agents-mode 1)
+      (let ((msgs (org-agents-test--messages (save-buffer))))
+        (should (cl-find-if (lambda (m)
+                              (and (string-match-p "Bad agent" m)
+                                   (string-match-p "unreadable" m)))
+                            msgs)))
+      (should-not (buffer-modified-p))
+      (let ((text (org-agents-test--file-text agent-file)))
+        ;; The good agent rendered, and the bad one is still there to fix.
+        (should (string-match-p "Fix widget" text))
+        (should (string-match-p "Bad agent" text))))))
+
+(ert-deftest org-agents-test-mode-save-survives-a-bug-in-the-update ()
+  "A failure anywhere in the update is reported and the save goes on.
+`org-agents--update-markers' answers for a bad query already, so what is
+covered here is everything around it: no bug in this package may make a
+file unsavable.  The failure is injected rather than provoked, because a
+bug that could be provoked would be one to fix instead."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (org-agents-mode 1)
+      (set-buffer-modified-p t)
+      (let ((msgs (cl-letf (((symbol-function 'org-agents--savable-markers)
+                             (lambda (&rest _) (error "injected"))))
+                    (org-agents-test--messages (save-buffer)))))
+        (should (cl-find-if (lambda (m)
+                              (and (string-prefix-p "org-agents: " m)
+                                   (string-match-p "injected" m)))
+                            msgs)))
+      ;; Written all the same.
+      (should-not (buffer-modified-p))
+      (should (string-match-p "Review agent"
+                              (org-agents-test--file-text agent-file))))))
+
+(ert-deftest org-agents-test-mode-save-lets-a-quit-abort-the-save ()
+  "C-g during an update on save aborts the save along with the update.
+`quit' is no subtype of `error', so the handler that keeps a bad query from
+making a file unsavable does not catch it -- and that is deliberate: a
+render interrupted half way through is not what the user asked to keep, so
+the file is left exactly as it was."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (org-agents-mode 1)
+      (let ((before (org-agents-test--file-text agent-file)))
+        (set-buffer-modified-p t)
+        (cl-letf (((symbol-function 'org-agents--update-markers)
+                   (lambda (&rest _) (signal 'quit nil))))
+          (should (eq 'quit (condition-case nil (save-buffer) (quit 'quit)))))
+        ;; The save stopped where the quit did.
+        (should (equal before (org-agents-test--file-text agent-file)))
+        (should (buffer-modified-p))))))
+
+(ert-deftest org-agents-test-mode-save-is-silent-with-no-agents ()
+  "A buffer holding no agent is saved without a word said about agents.
+`global-org-agents-mode' arms a buffer whose text merely mentions the
+property, so the hook runs over buffers with nothing in them for it to do
+-- and a mode that announced itself on every such save would be worse than
+no mode at all."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect b)
+      (org-agents-mode 1)
+      (set-buffer-modified-p t)
+      (let ((msgs (org-agents-test--messages (save-buffer))))
+        (should-not (cl-find-if (lambda (m) (string-prefix-p "org-agents: " m))
+                                msgs))))))
+
+(ert-deftest org-agents-test-global-mode-arms-the-buffers-that-mention-a-query ()
+  "The global mode arms an Org buffer whose text holds the property.
+The detector is a text scan and not `org-agents--buffer-agents': a buffer
+that only QUOTES the property line, in a body rather than in a drawer, is
+armed too -- deliberately, because that costs one regexp search per save
+while the authoritative scan, which asks each heading's own drawer, runs
+at save time anyway."
+  (org-agents-test--with-corpus
+    (let ((prose (expand-file-name "prose.org" dir)))
+      (with-temp-file prose
+        (insert "* A note about agents\n"
+                "An agent's own drawer holds a line reading\n"
+                ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+                "and that property is what makes it an agent.\n"))
+      (global-org-agents-mode 1)
+      (unwind-protect
+          (progn
+            (with-current-buffer (find-file-noselect agent-file)
+              (should org-agents-mode))
+            (with-current-buffer (find-file-noselect b)
+              (should-not org-agents-mode))
+            (with-current-buffer (find-file-noselect prose)
+              (should org-agents-mode)
+              ;; And a save there finds no agent and says nothing.
+              (set-buffer-modified-p t)
+              (let ((msgs (org-agents-test--messages (save-buffer))))
+                (should-not (cl-find-if
+                             (lambda (m) (string-prefix-p "org-agents: " m))
+                             msgs)))))
+        (global-org-agents-mode -1))
+      ;; Turning it off disarms what it armed.
+      (with-current-buffer (find-file-noselect agent-file)
+        (should-not org-agents-mode)))))
+
 ;;;; Differential (database prefilter superset)
 
 ;; This section proves the one property the splitter must have: for every

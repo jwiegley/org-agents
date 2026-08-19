@@ -131,6 +131,21 @@
 ;;     changed on every update: its children are stored again and its
 ;;     title re-embedded.
 ;;
+;; Updating on save:
+;;
+;; Besides `org-agents-update', `org-agents-update-buffer' and
+;; `org-agents-update-all', an agent may be refreshed by saving the file it
+;; lives in: `org-agents-mode' updates a buffer's agents before each save,
+;; and `global-org-agents-mode' turns it on in every Org buffer whose text
+;; mentions `:AGENT_QUERY:'.  Two deliberate refusals keep a save cheap.  An
+;; agent whose scope needs the database prefilter is named and left for
+;; `org-agents-update', so no save waits on the database or fails when it
+;; cannot be reached.  And an update that renders what was already there
+;; puts the buffer back as it was, stamps and all -- so a file whose agents
+;; found nothing new reaches disk byte-identical, which is the one thing
+;; that makes writing `:AGENT_MATCHED:' on every save affordable.  A C-g
+;; during such an update aborts the save along with it.
+;;
 ;; Scope, and why a corpus scope needs the database:
 ;;
 ;; `agenda' and an explicit list of files name the files they will open,
@@ -2003,6 +2018,192 @@ rather than insert anything."
 
 ;; So `C-c C-x x' offers the block among the dynamic block types it knows.
 (org-dynamic-block-define "org-agents" #'org-agents-insert-dblock)
+
+;;;; Minor mode
+
+;; An agent is worth more refreshed than remembered, so this is the second
+;; way to update one: before the buffer holding it is saved.  Two refusals
+;; are what make that affordable rather than a nuisance.
+;;
+;; An agent whose scope needs the database prefilter is not updated on save
+;; at all.  A save is a keystroke, and resolving such a scope means asking
+;; `org db query': it would make every save as slow as the database is, and
+;; would fail the update whenever postgres is unreachable.  Those agents are
+;; named once and left for `org-agents-update'.
+;;
+;; And an update that renders exactly what was already rendered puts the
+;; buffer back as it was.  Without that, `:AGENT_MATCHED:' alone would make
+;; every save rewrite the file: the stamp says when an update ran, so it
+;; differs on every run whatever the query found.  A stamp is worth reading
+;; only if it dates the render it describes, so the render is compared with
+;; the stamps masked out, and where nothing else moved the old stamps stay.
+
+(defconst org-agents--matched-line-re "^[ \t]*:AGENT_MATCHED:.*$"
+  "A whole `:AGENT_MATCHED:' property line: its indentation and its value.")
+
+(defun org-agents--mask-matched (text)
+  "Return TEXT with every `:AGENT_MATCHED:' line replaced by a constant.
+An update writes a fresh timestamp there, so the text before an update and
+the text after one always differ by at least that.  Masked, the two are
+equal exactly when the render wrote what was already in the buffer."
+  (replace-regexp-in-string org-agents--matched-line-re
+                            ":AGENT_MATCHED:" text t t))
+
+(defun org-agents--restore-text (text)
+  "Put TEXT back into the accessible portion of the current buffer.
+`replace-buffer-contents' rather than an erase and an insert: it changes
+only what actually differs, so point, the mark, and every marker and
+overlay in the buffer survive.  Its cost is the cost of the diff it has to
+find, and the only caller reaches it having already established that the
+two texts differ in nothing but their `:AGENT_MATCHED:' lines -- a handful
+of lines however large the file is."
+  (let ((snapshot (generate-new-buffer " *org-agents-snapshot*" t)))
+    (unwind-protect
+        (progn
+          (with-current-buffer snapshot (insert text))
+          (replace-buffer-contents snapshot))
+      (kill-buffer snapshot))))
+
+(defun org-agents--savable-markers (markers)
+  "Split MARKERS into (SAVABLE . SKIPPED) for an update before a save.
+SKIPPED holds the labels of the agents whose scope needs the database
+prefilter, which are not updated on save: `org-agents-update' still
+refreshes one of those when it is asked to.
+
+An agent this package cannot READ is not skipped.  Reading a scope means
+reading a property out of a file, which may be malformed -- and a
+malformed agent belongs in the failure summary an ordinary update already
+produces, rather than in a list of agents whose scope was too expensive to
+resolve.  So a marker whose agent will not read is passed along for
+`org-agents--update-markers' to fail on and name."
+  (let ((savable nil)
+        (skipped nil))
+    (dolist (marker markers)
+      (if (condition-case nil
+              (org-agents--needs-prefilter-p
+               (plist-get (org-with-point-at marker (org-agents--read-agent))
+                          :scope))
+            (error nil))
+          (push (org-agents--agent-label marker) skipped)
+        (push marker savable)))
+    (cons (nreverse savable) (nreverse skipped))))
+
+(defun org-agents--update-on-save ()
+  "Update this buffer's agents, as `org-agents-mode' does before a save.
+A buffer holding no agent is left entirely alone, and nothing is said
+about it: the mode may well be on in one that merely mentions the
+property, and a save that finds no agent has nothing to report.
+
+Any failure is reported and the save then goes on regardless.  A file must
+not become unsavable because a query written in it is wrong -- fixing the
+query is exactly what the next save is for.
+
+A quit is deliberately NOT caught, so C-g during an update aborts the save
+along with it: a half-written render is not what the user asked to keep.
+`org-dblock-write:org-agents' names `quit' beside `error' for the same
+reason, catching it only long enough to put the block's previous body back
+before signaling it again."
+  (condition-case err
+      (when-let* ((markers (org-agents--buffer-agents)))
+        (pcase-let ((`(,savable . ,skipped)
+                     (org-agents--savable-markers markers)))
+          ;; One message for all of them, however many there are: a save is
+          ;; no place to report an agent at a time.
+          (when skipped
+            (message (concat "org-agents: not updated on save, the scope"
+                             " needs the database prefilter: %s")
+                     (string-join skipped "; ")))
+          (when savable
+            ;; Widened throughout.  `org-agents--buffer-agents' answers for
+            ;; the whole buffer whatever it is narrowed to, so an update may
+            ;; well write outside the accessible portion -- and a snapshot of
+            ;; only that portion would restore the wrong text.
+            (org-with-wide-buffer
+             (let ((before (buffer-substring-no-properties (point-min)
+                                                           (point-max))))
+               (pcase-let ((`(,updated . ,failures)
+                            (org-agents--update-markers savable)))
+                 (org-agents--report updated failures))
+               (when (equal (org-agents--mask-matched before)
+                            (org-agents--mask-matched
+                             (buffer-substring-no-properties (point-min)
+                                                             (point-max))))
+                 ;; The render wrote what was there already, so the only
+                 ;; change is a set of fresh stamps -- and stamping alone
+                 ;; would have this save rewrite the file, and the dates a
+                 ;; reader trusts, for nothing.  The buffer goes back as it
+                 ;; was and the file reaches disk byte-identical.
+                 (org-agents--restore-text before)))))))
+    (error (message "org-agents: the update on save failed: %s"
+                    (error-message-string err)))))
+
+;;;###autoload
+(define-minor-mode org-agents-mode
+  "Update this buffer's agents before it is saved.
+
+Every agent in the buffer is rendered afresh as part of the save, so what
+reaches the file is what the queries match now.  Two things are
+deliberately not done.
+
+An agent whose `:AGENT_SCOPE:' needs the database prefilter -- `active',
+`all', or a directory -- is named in the echo area and left as it was, so
+that no save waits on the database or fails when it cannot be reached.
+Use \\[org-agents-update] to refresh one of those.
+
+And an update that renders exactly what was rendered before puts the
+buffer back as it was, `:AGENT_MATCHED:' stamps and all, so saving a file
+whose agents found nothing new leaves it byte-identical -- old stamps
+included, because a stamp is worth reading only if it dates the render it
+describes.
+
+C-g during an update on save aborts the save along with the update."
+  :lighter " Agents"
+  :group 'org-agents
+  (cond
+   ((not org-agents-mode)
+    (remove-hook 'before-save-hook #'org-agents--update-on-save t))
+   ;; Turned off again before the refusal is signaled.
+   ;; `define-minor-mode' has set the variable by the time this body runs,
+   ;; so a refusal that only signaled would leave behind a mode reporting
+   ;; itself enabled with no hook under it.
+   ((not (derived-mode-p 'org-mode))
+    (setq org-agents-mode nil)
+    (user-error "org-agents: `org-agents-mode' needs an Org buffer"))
+   (t
+    ;; Buffer-locally.  On the global value the hook would scan every save
+    ;; in the session -- Org buffer or not -- for agents it will not find.
+    (add-hook 'before-save-hook #'org-agents--update-on-save nil t))))
+
+(defun org-agents--buffer-mentions-query-p ()
+  "Non-nil when this buffer's text holds an `:AGENT_QUERY:' property line.
+A deliberately CHEAP scan, and deliberately NOT
+`org-agents--buffer-agents': all this decides is whether to arm a hook,
+and the authoritative scan -- which asks each heading's own drawer, and so
+is not fooled by the property name appearing as text -- runs at save time
+anyway.  A buffer wrongly armed therefore costs that scan on each of its
+saves, and finding nothing does nothing; asking every heading HERE would
+instead cost it in every Org buffer the user visits, agent or no agent, to
+decide something a search over the text decides well enough.  Please do
+not \"fix\" this into the expensive scan.
+
+The whole buffer is read, whatever it is narrowed to."
+  (org-with-wide-buffer
+   (goto-char (point-min))
+   (re-search-forward "^[ \t]*:AGENT_QUERY:" nil t)))
+
+(defun org-agents--turn-on ()
+  "Enable `org-agents-mode' in an Org buffer whose text mentions an agent.
+What `global-org-agents-mode' calls in each buffer.  A buffer that is not
+Org is passed over silently rather than refused: the mode's own refusal is
+for a user who asked for it by name."
+  (when (and (derived-mode-p 'org-mode)
+             (org-agents--buffer-mentions-query-p))
+    (org-agents-mode 1)))
+
+;;;###autoload
+(define-globalized-minor-mode global-org-agents-mode
+  org-agents-mode org-agents--turn-on
+  :group 'org-agents)
 
 (provide 'org-agents)
 ;;; org-agents.el ends here

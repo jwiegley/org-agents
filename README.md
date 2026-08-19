@@ -156,6 +156,8 @@ refused by name rather than rendered wrongly.
 | `org-agents-update-all` | update every agent in the files `org-agents-files` names |
 | `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded and gated exactly as an agent's is, with `org-agents-exclude` appended, over `org-agenda-files` |
 | `org-agents-insert-dblock` | insert an empty `org-agents` block at point |
+| `org-agents-mode` | update this buffer's agents before each save |
+| `global-org-agents-mode` | turn `org-agents-mode` on in every Org buffer whose text mentions `:AGENT_QUERY:` |
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -168,6 +170,59 @@ which writes to `custom-file` or, without one, to `user-init-file`. Where
 the real init is a tangled Org file, `user-init-file` is the tangled output
 and a saved approval is lost the next time it is generated. Set
 `custom-file` to a file of its own to keep approvals.
+
+## Updating on save
+
+`org-agents-mode` is a buffer-local minor mode that updates every agent in
+the buffer before it is saved, so what reaches the file is what the queries
+match now rather than what they matched the last time somebody remembered to
+ask. It refuses to enable outside Org, and it hooks only the buffer it was
+enabled in.
+
+`global-org-agents-mode` turns it on in every Org buffer whose text mentions
+`:AGENT_QUERY:`. That test is a plain regexp search over the text and not the
+scan `org-agents-update-buffer` uses, which asks each heading's own drawer. It
+decides only whether to arm a hook, so a buffer that merely quotes the
+property line in a body is armed too. The cost of arming one wrongly is the
+real scan on each of its saves, finding nothing and doing nothing; the cost of
+deciding it properly here would be that same scan in every Org buffer you
+visit, agent or no agent.
+
+Two things are deliberately not done, and both are what make the mode
+usable rather than a tax on saving.
+
+**An agent whose scope needs the database prefilter is not updated on save.**
+`active`, `all` and a directory are resolved through `org db query`, so
+updating one would make every save as slow as the database is and would fail
+whenever it is unreachable. Those agents are named once in the echo area —
+one message however many there are — and left as they were.
+`org-agents-update` still refreshes any of them on demand. There is no option
+to override this.
+
+**A save whose render changes nothing changes no bytes.** `:AGENT_MATCHED:`
+records when an update ran, so stamping it on every save would rewrite the
+file, and the date a reader trusts, whether or not the query found anything
+new. So the buffer text before the update is compared against the text after
+it with the `:AGENT_MATCHED:` lines masked out of both; where the rest is
+identical the render wrote what was already there, the snapshot is put back
+with `replace-buffer-contents` — a minimal diff, so point and every marker
+survive — and the file reaches disk byte-identical, old stamps included. A
+stamp is worth reading only if it dates the render it describes.
+
+A failure is reported and the save then goes through: a file must not become
+unsavable because a query written in it has a typo, since fixing the typo is
+what the next save is for. `C-g` is the exception, and deliberately so — a
+quit during an update on save aborts the save along with the update, rather
+than committing a render that was interrupted half way through.
+
+```elisp
+;; Every Org buffer that holds an agent, for the rest of the session.
+(global-org-agents-mode 1)
+```
+
+`M-x org-agents-mode` arms one buffer, for someone who would rather say where.
+Hooking it to `org-mode-hook` instead arms every Org buffer whether or not it
+holds an agent, and each of their saves then pays for the scan that finds none.
 
 ## Installation
 
@@ -231,7 +286,9 @@ Org extensions in the author's init:
   :commands (org-agents-update
              org-agents-update-buffer
              org-agents-update-all
-             org-agents-preview)
+             org-agents-preview
+             org-agents-mode
+             global-org-agents-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
   ;; `org-update-all-dblocks', so it has to be autoloaded as well.
   :autoload (org-dblock-write:org-agents)
