@@ -2476,13 +2476,17 @@ leaves no temporary directory behind."
              ;;    arbitrary: `--no-embed' means no vector is ever stored.
              (dolist (cmd '(("db" "--db-url" :dsn "unstore")
                             ("db" "--db-url" :dsn "init" "--dimensions" "1536")))
-               (let ((res (apply #'org-agents-test--org-cli env
-                                 (mapcar (lambda (a)
-                                           (if (keywordp a) (plist-get env a) a))
-                                         cmd))))
+               (let* ((args (mapcar (lambda (a)
+                                      (if (keywordp a) (plist-get env a) a))
+                                    cmd))
+                      (res (apply #'org-agents-test--org-cli env args)))
                  (unless (eq 0 (car res))
-                   (ert-fail (format "%S exited %s: %s"
-                                     cmd (car res) (cdr res))))))
+                   ;; The substituted arguments, not the template: this is
+                   ;; the message someone whose scratch database is not
+                   ;; reachable has to work from.
+                   (ert-fail (format "`org %s' exited %s: %s"
+                                     (string-join args " ")
+                                     (car res) (cdr res))))))
              ;; 4. Store every fixture in one invocation -- the files are
              ;;    the CLI's global positional arguments, `db store' has
              ;;    none of its own -- and then assert the store took them
