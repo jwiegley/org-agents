@@ -192,14 +192,17 @@ interactively offers to persist its hash here."
   "CLI grammar spellings that are not valid org-ql, with replacements.")
 
 (defun org-agents--structurally-safe-p (form)
-  "Non-nil if FORM consists solely of known predicates and combinators."
+  "Non-nil if FORM consists solely of known predicates and combinators.
+A predicate head vouches for its own name only: org-ql evaluates a
+predicate's arguments as Lisp too, so every argument must answer for
+itself or `(tags (shell-command \"x\"))' would pass unremarked."
   (cond
    ((not (consp form)) t)                  ; literals as arguments
-   ((memq (car form) org-agents--boolean-heads)
+   ((not (proper-list-p form)) nil)        ; dotted: fail closed
+   ((or (memq (car form) org-agents--boolean-heads)
+        (memq (car form) org-agents--nested-query-heads)
+        (org-agents--known-predicate-p (car form)))
     (cl-every #'org-agents--structurally-safe-p (cdr form)))
-   ((memq (car form) org-agents--nested-query-heads)
-    (cl-every #'org-agents--structurally-safe-p (cdr form)))
-   ((org-agents--known-predicate-p (car form)) t)
    (t nil)))
 
 (defun org-agents--leftover-ref (form)
@@ -209,15 +212,17 @@ interactively offers to persist its hash here."
                           (org-agents--leftover-ref (cdr form))))))
 
 (defun org-agents--check-cli-spelling (form)
-  "Signal `user-error' if FORM uses a CLI-only predicate spelling."
+  "Signal `user-error' if FORM uses a CLI-only predicate spelling anywhere.
+Every head position is checked, not only those under a combinator: a
+CLI spelling is just as wrong inside a predicate argument, where
+`(property \"K\" (headline \"x\"))' would otherwise reach org-ql as a
+call to a function that does not exist."
   (when (consp form)
     (when-let* ((fix (alist-get (car form) org-agents--cli-only-heads)))
       (user-error "org-agents: `%s' is CLI-only syntax; use `%s'"
                   (car form) fix))
-    (when (memq (car form)
-                (append org-agents--boolean-heads
-                        org-agents--nested-query-heads))
-      (mapc #'org-agents--check-cli-spelling (cdr form)))))
+    (org-agents--check-cli-spelling (car form))
+    (org-agents--check-cli-spelling (cdr form))))
 
 (defun org-agents--check-spelling (form)
   "Signal `user-error' if FORM cannot be evaluated as written.

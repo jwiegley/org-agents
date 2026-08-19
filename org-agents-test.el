@@ -94,6 +94,50 @@
                (lambda (&rest _) (error "must not prompt"))))
       (should (org-agents--gate '(ignore))))))
 
+(defvar org-agents-test--tripwire-count 0
+  "Incremented by `org-agents-test--tripwire' when it is evaluated.")
+
+(defun org-agents-test--tripwire (&rest _)
+  "Record an evaluation the gate was supposed to prevent."
+  (setq org-agents-test--tripwire-count (1+ org-agents-test--tripwire-count))
+  t)
+
+(ert-deftest org-agents-test-gate-refuses-call-in-predicate-argument ()
+  "A known predicate must not vouch for arbitrary Lisp in its arguments."
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive t))
+    (should-not (org-agents--structurally-safe-p
+                 '(and (todo) (tags (shell-command "x")))))
+    (should-not (org-agents--gate '(and (todo) (tags (shell-command "x")))))
+    (should-not (org-agents--gate '(property "K" (shell-command "x"))))
+    (should-not (org-agents--gate '(level (shell-command "x"))))
+    ;; Nothing in a refused query is evaluated while judging it.
+    (let ((org-agents-test--tripwire-count 0))
+      (should-not (org-agents--gate '(and (todo) (tags (org-agents-test--tripwire)))))
+      (should (= 0 org-agents-test--tripwire-count)))
+    ;; Benign predicate arguments stay safe, and still do not prompt.
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "must not prompt"))))
+      (should (org-agents--gate '(ts :from -7 :to today)))
+      (should (org-agents--gate '(tags "urgent" "a")))
+      (should (org-agents--gate '(parent (and (property "KEY") (todo)))))
+      (should (org-agents--gate '(and (todo "TODO") (property "URL")))))))
+
+(ert-deftest org-agents-test-gate-rejects-improper-list ()
+  "A dotted query fails closed, rather than signaling a raw type error."
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive t))
+    (should-not (org-agents--gate '(and (todo) . foo)))))
+
+(ert-deftest org-agents-test-gate-cli-spelling-in-argument ()
+  "A CLI-only spelling is caught wherever it sits, not just at a query head."
+  (should-error (org-agents--gate '(property "K" (headline "x")))
+                :type 'user-error)
+  (should-error (org-agents--gate '(string-match "x" (re "y")))
+                :type 'user-error))
+
 (ert-deftest org-agents-test-skeleton-property-exists ()
   (should (equal (org-agents--skeleton '(and (todo) (property "NEXT_REVIEW")))
                  "(property \"NEXT_REVIEW\")")))
