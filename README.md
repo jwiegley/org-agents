@@ -188,14 +188,29 @@ real scan on each of its saves, finding nothing and doing nothing; the cost of
 deciding it properly here would be that same scan in every Org buffer you
 visit, agent or no agent.
 
-Two things are deliberately not done, and both are what make the mode
-usable rather than a tax on saving.
+Three things are deliberately not done, and together they are what make the
+mode usable rather than a tax on saving.
+
+**A save never contacts the database, whatever `org-db-cli-*` is set to.**
+This needs saying separately from the rule below, because filtering on *scope*
+does not achieve it: `org-agents--scope-files` consults the bridge for any
+query with a pushable conjunct regardless of scope, and `org-db-cli--run` is a
+synchronous `call-process` with no timeout. So a plain `agenda` agent carrying
+a `(property "P")` conjunct would otherwise have every `C-x C-s` spawn a
+subprocess and block Emacs on whatever host the DSN names — commonly a remote
+one — for as long as TCP takes to give up. The save path therefore runs with
+the bridge bound unavailable. Nothing is lost by it: the prefilter only ever
+narrows the candidate file set and never changes an answer, so a surviving
+agent matches exactly what it would have matched, having opened more of its own
+named files to find out. The manual commands keep the prefilter, which is where
+waiting for it is something you chose to wait for.
 
 **An agent whose scope needs the database prefilter is not updated on save.**
-`active`, `all` and a directory are resolved through `org db query`, so
-updating one would make every save as slow as the database is and would fail
-whenever it is unreachable. Those agents are named once in the echo area —
-one message however many there are — and left as they were.
+`active`, `all` and a directory have no bound on what they would open, and are
+resolved through `org db query` rather than walked live. Updating one on save
+would mean waiting on the database — and, with the bridge bound unavailable as
+above, would simply fail. So those agents are dropped before the update and
+named once in the echo area, one message however many there are.
 `org-agents-update` still refreshes any of them on demand. There is no option
 to override this.
 

@@ -137,14 +137,16 @@
 ;; `org-agents-update-all', an agent may be refreshed by saving the file it
 ;; lives in: `org-agents-mode' updates a buffer's agents before each save,
 ;; and `global-org-agents-mode' turns it on in every Org buffer whose text
-;; mentions `:AGENT_QUERY:'.  Two deliberate refusals keep a save cheap.  An
-;; agent whose scope needs the database prefilter is named and left for
-;; `org-agents-update', so no save waits on the database or fails when it
-;; cannot be reached.  And an update that renders what was already there
-;; puts the buffer back as it was, stamps and all -- so a file whose agents
-;; found nothing new reaches disk byte-identical, which is the one thing
-;; that makes writing `:AGENT_MATCHED:' on every save affordable.  A C-g
-;; during such an update aborts the save along with it.
+;; mentions `:AGENT_QUERY:'.  Three deliberate refusals keep a save cheap.
+;; No save contacts the database at all, whatever the `org-db-cli-*' options
+;; say, because the bridge has no timeout and the prefilter can only narrow
+;; a file set, never change an answer.  An agent whose scope needs that
+;; prefilter is therefore named and left for `org-agents-update'.  And an
+;; update that renders what was already there puts the buffer back as it
+;; was, stamps and all -- so a file whose agents found nothing new reaches
+;; disk byte-identical, which is the one thing that makes writing
+;; `:AGENT_MATCHED:' on every save affordable.  A C-g during such an update
+;; aborts the save along with it.
 ;;
 ;; Scope, and why a corpus scope needs the database:
 ;;
@@ -2022,14 +2024,20 @@ rather than insert anything."
 ;;;; Minor mode
 
 ;; An agent is worth more refreshed than remembered, so this is the second
-;; way to update one: before the buffer holding it is saved.  Two refusals
+;; way to update one: before the buffer holding it is saved.  Three refusals
 ;; are what make that affordable rather than a nuisance.
 ;;
-;; An agent whose scope needs the database prefilter is not updated on save
-;; at all.  A save is a keystroke, and resolving such a scope means asking
-;; `org db query': it would make every save as slow as the database is, and
-;; would fail the update whenever postgres is unreachable.  Those agents are
-;; named once and left for `org-agents-update'.
+;; No save contacts the database, whatever the `org-db-cli-*' options are set
+;; to.  A save is a keystroke, and `org-db-cli--run' is a synchronous
+;; `call-process' with no timeout against a host that is commonly remote.
+;; `org-agents--update-on-save' therefore runs with the bridge bound
+;; unavailable; the reasoning is written out there, where the binding is.
+;;
+;; An agent whose scope needs that prefilter is not updated on save at all.
+;; `active', `all' and a directory have no bound on what they would open, so
+;; they are resolved through the database rather than walked live -- and with
+;; the bridge unavailable such an agent would simply fail on every save.
+;; Those agents are dropped before the update and named once instead.
 ;;
 ;; And an update that renders exactly what was already rendered puts the
 ;; buffer back as it was.  Without that, `:AGENT_MATCHED:' alone would make
@@ -2102,38 +2110,73 @@ A quit is deliberately NOT caught, so C-g during an update aborts the save
 along with it: a half-written render is not what the user asked to keep.
 `org-dblock-write:org-agents' names `quit' beside `error' for the same
 reason, catching it only long enough to put the block's previous body back
-before signaling it again."
+before signaling it again.
+
+Nothing done here contacts the database, whatever the `org-db-cli-*'
+options are set to."
   (condition-case err
-      (when-let* ((markers (org-agents--buffer-agents)))
-        (pcase-let ((`(,savable . ,skipped)
-                     (org-agents--savable-markers markers)))
-          ;; One message for all of them, however many there are: a save is
-          ;; no place to report an agent at a time.
-          (when skipped
-            (message (concat "org-agents: not updated on save, the scope"
-                             " needs the database prefilter: %s")
-                     (string-join skipped "; ")))
-          (when savable
-            ;; Widened throughout.  `org-agents--buffer-agents' answers for
-            ;; the whole buffer whatever it is narrowed to, so an update may
-            ;; well write outside the accessible portion -- and a snapshot of
-            ;; only that portion would restore the wrong text.
-            (org-with-wide-buffer
-             (let ((before (buffer-substring-no-properties (point-min)
-                                                           (point-max))))
-               (pcase-let ((`(,updated . ,failures)
-                            (org-agents--update-markers savable)))
-                 (org-agents--report updated failures))
-               (when (equal (org-agents--mask-matched before)
-                            (org-agents--mask-matched
-                             (buffer-substring-no-properties (point-min)
+      ;; The whole of it runs with the bridge bound unavailable, which is
+      ;; what makes "a save never contacts the database" a property of this
+      ;; function rather than a hope about its callees.
+      ;;
+      ;; Skipping the agents whose SCOPE needs the prefilter, just below, is
+      ;; not enough to arrange that: `org-agents--scope-files' consults the
+      ;; bridge for ANY query with a pushable conjunct, whatever the scope,
+      ;; and `org-db-cli--run' is a synchronous `call-process' with no
+      ;; timeout.  So an ordinary `agenda' agent carrying a `(property ...)'
+      ;; conjunct would have every C-x C-s spawn a subprocess and wait on
+      ;; whatever host the DSN names -- commonly a remote one -- for as long
+      ;; as TCP takes to give up.  A save that hangs is worth less than an
+      ;; agent that is out of date.
+      ;;
+      ;; Safe because the prefilter only ever NARROWS the candidate file set
+      ;; and never changes an answer: without it a surviving agent reads the
+      ;; files its own scope names, live, and matches exactly what it would
+      ;; have matched, having merely opened more of them to find out.
+      ;;
+      ;; The two rules answer different questions and both are wanted.  The
+      ;; skip below is about what an update COSTS -- a corpus scope has no
+      ;; bound on what it would open, so it is left for a command that was
+      ;; asked for.  This is about a save never blocking on a network.  Only
+      ;; the manual commands keep the prefilter, which is where waiting for
+      ;; it is something the user chose to wait for.
+      ;;
+      ;; They also compose in one direction worth naming: with the bridge
+      ;; bound unavailable here, a corpus-scope agent would not walk the
+      ;; corpus -- `org-agents--scope-files' refuses it -- but would fail on
+      ;; every single save.  Dropping it below is what turns that into one
+      ;; message naming it.
+      (let ((org-db-cli-db-url nil))
+        (when-let* ((markers (org-agents--buffer-agents)))
+          (pcase-let ((`(,savable . ,skipped)
+                       (org-agents--savable-markers markers)))
+            ;; One message for all of them, however many there are: a save
+            ;; is no place to report an agent at a time.
+            (when skipped
+              (message (concat "org-agents: not updated on save, the scope"
+                               " needs the database prefilter: %s")
+                       (string-join skipped "; ")))
+            (when savable
+              ;; Widened throughout.  `org-agents--buffer-agents' answers for
+              ;; the whole buffer whatever it is narrowed to, so an update may
+              ;; well write outside the accessible portion -- and a snapshot
+              ;; of only that portion would restore the wrong text.
+              (org-with-wide-buffer
+               (let ((before (buffer-substring-no-properties (point-min)
                                                              (point-max))))
-                 ;; The render wrote what was there already, so the only
-                 ;; change is a set of fresh stamps -- and stamping alone
-                 ;; would have this save rewrite the file, and the dates a
-                 ;; reader trusts, for nothing.  The buffer goes back as it
-                 ;; was and the file reaches disk byte-identical.
-                 (org-agents--restore-text before)))))))
+                 (pcase-let ((`(,updated . ,failures)
+                              (org-agents--update-markers savable)))
+                   (org-agents--report updated failures))
+                 (when (equal (org-agents--mask-matched before)
+                              (org-agents--mask-matched
+                               (buffer-substring-no-properties (point-min)
+                                                               (point-max))))
+                   ;; The render wrote what was there already, so the only
+                   ;; change is a set of fresh stamps -- and stamping alone
+                   ;; would have this save rewrite the file, and the dates a
+                   ;; reader trusts, for nothing.  The buffer goes back as it
+                   ;; was and the file reaches disk byte-identical.
+                   (org-agents--restore-text before))))))))
     (error (message "org-agents: the update on save failed: %s"
                     (error-message-string err)))))
 
@@ -2142,13 +2185,19 @@ before signaling it again."
   "Update this buffer's agents before it is saved.
 
 Every agent in the buffer is rendered afresh as part of the save, so what
-reaches the file is what the queries match now.  Two things are
+reaches the file is what the queries match now.  Three things are
 deliberately not done.
 
-An agent whose `:AGENT_SCOPE:' needs the database prefilter -- `active',
-`all', or a directory -- is named in the echo area and left as it was, so
-that no save waits on the database or fails when it cannot be reached.
-Use \\[org-agents-update] to refresh one of those.
+No save contacts the database, whatever the `org-db-cli-*' options are set
+to: the bridge is a synchronous subprocess with no timeout, and the
+prefilter it provides can only narrow a set of candidate files and never
+change an answer, so an agent updated without it matches what it would
+have matched anyway.  The manual commands keep the prefilter.
+
+An agent whose `:AGENT_SCOPE:' needs that prefilter -- `active', `all', or
+a directory -- is named in the echo area and left as it was, since there is
+no bound on what it would otherwise open.  Use \\[org-agents-update] to
+refresh one of those.
 
 And an update that renders exactly what was rendered before puts the
 buffer back as it was, `:AGENT_MATCHED:' stamps and all, so saving a file

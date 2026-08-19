@@ -2760,6 +2760,73 @@ while the typo is being fixed."
         (should (string-match-p "Fix widget" text))
         (should (string-match-p "Bad agent" text))))))
 
+(ert-deftest org-agents-test-mode-save-never-contacts-the-database ()
+  "No save spawns the CLI, however the bridge is configured.
+Filtering out the agents whose SCOPE needs the prefilter is not enough to
+keep the database off the save path: `org-agents--scope-files' consults it
+for any query with a pushable conjunct, whatever the scope, and
+`org-db-cli--run' is a synchronous `call-process' with no timeout.  So an
+ordinary `agenda' agent with a `(property ...)' conjunct would have every
+C-x C-s block on the network for as long as TCP takes to give up.
+
+The spawn is made DETECTABLE rather than assumed away: the executable is a
+script that touches a sentinel, and the test first proves that calling the
+bridge does create it, so an assertion that it is absent after a save
+cannot pass because the harness was broken.
+
+The last assertion is the other half of the rule: `org-agents-update-buffer'
+over the very same agent DOES reach the bridge.  The binding belongs to the
+save path alone -- moved down into `org-agents--update-markers' or
+`org-agents--scope-files' it would take the prefilter away from the manual
+commands too, where waiting for it is what the user asked for."
+  (org-agents-test--with-corpus
+    (let* ((sentinel (expand-file-name "cli-was-called" dir))
+           (fake (expand-file-name "fake-org" dir))
+           (config (expand-file-name "org.yaml" dir))
+           ;; An `agenda' scope, whose files are read live, and a property
+           ;; conjunct, which is pushable -- so this is exactly the agent
+           ;; that reaches the prefilter without needing it.
+           (query "(and (todo) (property \"NEXT_REVIEW\"))")
+           (org-agenda-files (list a b))
+           (org-db-cli-executable fake)
+           (org-db-cli-config-file config)
+           (org-db-cli-db-url "postgresql://nobody@example.invalid:5432/org"))
+      (with-temp-file config (insert "# unused by the fake\n"))
+      (with-temp-file fake
+        (insert "#!/bin/sh\n"
+                ;; Records the call and prints nothing, so the bridge reads
+                ;; an empty answer rather than a malformed one.
+                "touch " (shell-quote-argument sentinel) "\n"
+                "exit 0\n"))
+      ;; `executable-find' is what `org-db-cli-available-p' asks, and it
+      ;; wants a file it may actually run.
+      (set-file-modes fake #o755)
+      (should (org-db-cli-available-p))
+      ;; The harness works: the query pushes, and reaching the bridge with
+      ;; it does spawn the script.
+      (let ((skeleton (org-agents--skeleton (car (read-from-string query)))))
+        (should skeleton)
+        (org-db-cli-query-files skeleton))
+      (should (file-exists-p sentinel))
+      (delete-file sentinel)
+      (with-temp-file agent-file
+        (insert "* Review agent\n:PROPERTIES:\n"
+                ":AGENT_QUERY: " query "\n"
+                ":AGENT_SCOPE: agenda\n:END:\n"))
+      (with-current-buffer (find-file-noselect agent-file)
+        (org-agents-mode 1)
+        (set-buffer-modified-p t)
+        (save-buffer)
+        ;; The update really ran -- so the sentinel's absence is the save
+        ;; path declining the database, not the save path doing nothing.
+        (should (string-match-p "Fix widget"
+                                (org-agents-test--file-text agent-file)))
+        (should-not (file-exists-p sentinel))
+        ;; The same agent, updated by hand, does consult it: the binding is
+        ;; the save path's and not the renderer's.
+        (org-agents-update-buffer)
+        (should (file-exists-p sentinel))))))
+
 (ert-deftest org-agents-test-mode-save-survives-a-bug-in-the-update ()
   "A failure anywhere in the update is reported and the save goes on.
 `org-agents--update-markers' answers for a bad query already, so what is
