@@ -158,12 +158,15 @@
 ;;
 ;; Known limitations:
 ;;
-;;   - `today' and integer day offsets are pushed verbatim, and the
-;;     database resolves them against the UTC day while org-ql uses the
-;;     local one.  Where the two differ -- the local evening west of UTC,
-;;     the local morning east of it -- a `scheduled'/`deadline'/`closed'
-;;     bound written as `today' can drop a true match.  Write an absolute
-;;     `"YYYY-MM-DD"' where that matters.
+;;   - A relative date -- `today', or an integer offset from it -- is
+;;     resolved against the UTC day by the database and the local day by
+;;     org-ql.  Where those name different days, which is the local evening
+;;     west of UTC and the local morning east of it, such a bound is NOT
+;;     pushed: the conjunct stays residual and org-ql applies it alone, so
+;;     a date-only agent over a corpus scope may report that it needs a
+;;     prefilter at those hours, and one with another pushable conjunct
+;;     simply narrows less.  Slower, never wrong.  An absolute
+;;     `"YYYY-MM-DD"' is a calendar date to both sides and always pushes.
 ;;   - An entry whose only value for a property comes from `:NAME+:'
 ;;     accumulation has no property rows in the database at all, so a
 ;;     `property' conjunct over such a name may drop it from the
@@ -534,12 +537,37 @@ Only a date that survives the round trip is read alike by both sides."
                    (encode-time
                     (parse-time-string (concat v " 00:00:00"))))))))
 
+(defun org-agents--relative-dates-agree-p (&optional time)
+  "Non-nil when the local day and the UTC day are the same day at TIME.
+TIME defaults to now, and stands for the moment a query would run.
+
+A relative date -- `today', or an integer offset from it -- is resolved
+against a reference day that the two engines do not share.  The database
+uses `utctDay <$> getCurrentTime', the UTC day; org-ql uses `(ts-now)',
+the local one.  Where those name different days, a pushed relative bound
+selects by a different day than org-ql will, and the direction of the
+error follows the sign of the local offset: west of UTC the database's day
+runs ahead, so `:from' and `:on' exclude an entry org-ql matches, and east
+of UTC it runs behind and `:to' does.
+
+Rather than reason keyword by keyword and zone by zone, nothing relative
+is pushed at all unless the two days coincide -- which is most of the day
+everywhere and all of it under UTC.  When they do not, the conjunct stays
+residual: the prefilter simply stops narrowing by date, which is slower
+and never wrong.  An absolute \"YYYY-MM-DD\" is a calendar date to both
+sides and is unaffected."
+  (equal (format-time-string "%F" time)
+         (format-time-string "%F" time t)))
+
 (defun org-agents--date-arg-ok-p (plist)
-  "Non-nil when PLIST holds only :from/:to/:on with CLI-safe values."
+  "Non-nil when PLIST holds only :from/:to/:on with CLI-safe values.
+A relative value is CLI-safe only while the local and UTC days coincide;
+`org-agents--relative-dates-agree-p' records why."
   (cl-loop for (k v) on plist by #'cddr
            always (and (memq k '(:from :to :on))
-                       (or (integerp v) (eq v 'today)
-                           (org-agents--date-string-p v)))))
+                       (or (org-agents--date-string-p v)
+                           (and (or (integerp v) (eq v 'today))
+                                (org-agents--relative-dates-agree-p))))))
 
 (defun org-agents--push-planning (form)
   "Push planning FORM unchanged, provided its date arguments are CLI-safe."
@@ -1692,10 +1720,12 @@ written: there is nothing there to record a count on."
           (user-error "%s" (org-agents--failure-text
                             (org-agents--agent-label marker) err)))))
       (block
-       ;; "line", not "row": a block renders a table only where its view
-       ;; says so, and every other view is a list.
+       ;; "item", not "row": a block renders a table only where its view
+       ;; says so, and every other view is a list.  Not "match" either --
+       ;; a row-sorted table cuts to `:AGENT_LIMIT:' after building its
+       ;; rows, so the count can be smaller than the number of matches.
        (let ((count (org-agents--update-block block)))
-         (message "org-agents: the block wrote %d line%s" count
+         (message "org-agents: the block wrote %d item%s" count
                   (if (= count 1) "" "s"))))
       (t (user-error
           "org-agents: no agent and no `org-agents' block at point"))))))
