@@ -62,6 +62,7 @@
 (require 'org)
 (require 'org-id)
 (require 'org-ql)
+(require 'org-ql-search)                ; `org-agents-preview' delegates to it
 (require 'org-ql-ext)
 (require 'org-db-cli)
 
@@ -1189,6 +1190,291 @@ interrupts the update it interrupted."
     ;; The interrupt still interrupts, but not before the body it
     ;; interrupted is back in the block.
     (when interrupted (signal 'quit nil))))
+
+;;;; Commands
+
+;; The commands are the only layer that writes `:AGENT_MATCHED:', and
+;; they write it once a view has been rendered, never during one: adding
+;; a line to an entry's drawer moves every position below it, and Org
+;; calls a dynamic block writer at positions it worked out before the
+;; call.  What goes wrong is named for the agent it went wrong in,
+;; because an update over a buffer or a corpus answers for one agent
+;; after another, and every property an agent supplies is text out of a
+;; file.
+
+(defun org-agents--agent-label (&optional pom)
+  "How a message names the agent at POM: its heading, and where it lives.
+POM defaults to point.  The file is named in full, because an update over
+`org-agents-files' reports on agents in file after file, several of which
+may well carry the same heading."
+  (org-with-point-at pom
+    (format "%s (%s:%d)"
+            (org-get-heading t t t t)
+            (if-let* ((file (buffer-file-name (buffer-base-buffer))))
+                (abbreviate-file-name file)
+              (buffer-name))
+            (line-number-at-pos))))
+
+(defun org-agents--failure-text (label err)
+  "The text of ERR, told of the agent LABEL it came from.
+This package's own prefix comes off the message and goes back on in front
+of the label, so what is read is one diagnosis of one agent rather than
+two of nothing in particular."
+  (format "org-agents: %s: %s" label
+          (string-remove-prefix "org-agents: " (error-message-string err))))
+
+(defun org-agents--write-matched (marker count)
+  "Record COUNT and the time of this update on the agent at MARKER.
+Written only once the view has been rendered: `org-entry-put' adds a line
+to the entry's drawer, which moves every position below it -- among them
+the bounds of the very dynamic block a render was called for.  The time
+is written as an inactive timestamp, so Org reads it back as one."
+  (org-with-point-at marker
+    (org-entry-put nil "AGENT_MATCHED"
+                   (format "%d %s" count
+                           (format-time-string
+                            (org-time-stamp-format t t))))))
+
+(defun org-agents--agent-marker ()
+  "Marker on the headline of the agent point is in, or nil for none.
+An entry is an agent when its own drawer carries a query.  A buffer is
+scanned for the property name as text, so this is where an entry that
+merely mentions it -- or writes it with nothing after it -- is told from
+an agent."
+  (save-excursion
+    (and (not (org-before-first-heading-p))
+         (progn (org-back-to-heading t)
+                (org-agents--entry-get "AGENT_QUERY"))
+         (point-marker))))
+
+(defun org-agents--block-at-point ()
+  "Position of the `#+BEGIN:' line of the `org-agents' block point is in.
+Nil when point is in no such block.  One agent may carry several blocks,
+each its own view of it, so the block point sits in is the block an
+update writes -- not whichever one the agent's subtree holds first."
+  (save-excursion
+    (and (ignore-errors (org-beginning-of-dblock) t)
+         (looking-at org-dblock-start-re)
+         (equal (match-string 1) "org-agents")
+         (point))))
+
+(defun org-agents--goto-block ()
+  "Move to the `org-agents' block of the agent at point, opening one if none.
+An agent whose view is a list or a table has nowhere to render until it
+has a block, so its first update opens one where the entry's own text
+begins: after the drawers, and above whatever else the agent holds.
+
+The first block of the subtree is the one an agent is updated by.  An
+agent carrying several is answered for by that one; the others are
+written where the user stands in them, or by `org-update-all-dblocks'."
+  (org-back-to-heading t)
+  (unless (re-search-forward "^[ \t]*#\\+BEGIN: org-agents"
+                             (save-excursion (org-end-of-subtree t t) (point))
+                             t)
+    (org-back-to-heading t)
+    (org-end-of-meta-data t)
+    ;; An entry that ends the buffer without a final newline leaves point
+    ;; mid-line, where the block would be written onto the end of it.
+    (unless (bolp) (insert "\n"))
+    (save-excursion (insert "#+BEGIN: org-agents\n#+END:\n")))
+  (forward-line 0))
+
+(defun org-agents--update-block (&optional block)
+  "Update an agent's dynamic block; return the rows or items it wrote.
+BLOCK is the position of the `#+BEGIN:' line to write; without one the
+agent at point is given a block if it has none.  The count is the
+writer's own rather than one counted again here: a row-sorted table is
+handed every match so that it can order them, and cuts to
+`:AGENT_LIMIT:' only once its rows are built."
+  (if block (goto-char block) (org-agents--goto-block))
+  (setq org-agents--last-count nil)
+  (org-update-dblock)
+  (or org-agents--last-count
+      ;; The writer diagnosed the failure as it happened and put the
+      ;; previous body back, so all that is left to say is that it wrote
+      ;; no count -- and that an older render's count is not this
+      ;; render's to record.
+      (user-error "org-agents: the block wrote no count, so its render failed")))
+
+(defun org-agents--update-agent (marker &optional block)
+  "Update the agent at MARKER and return how many matches it rendered.
+BLOCK, when non-nil, is the `#+BEGIN:' line of the dynamic block to
+write: the one point sat in when the update was asked for.
+
+The children view is rendered inside `atomic-change-group', because it
+deletes the aliases it is about to write again before it writes any of
+them: a failure part way through would otherwise leave the agent half
+rewritten.  A dynamic block writer answers for its own body already."
+  (org-with-point-at marker
+    (let* ((agent (org-agents--read-agent))
+           (count (if (eq (plist-get agent :view) 'children)
+                      (atomic-change-group
+                        (org-agents--render-children
+                         agent (org-agents--collect agent)))
+                    (org-agents--update-block block))))
+      (org-agents--write-matched marker count)
+      count)))
+
+;;;###autoload
+(defun org-agents-update ()
+  "Update the agent at point, or the `org-agents' block point sits in.
+An agent whose view is `children' rewrites its child aliases; any other
+view is written into a dynamic block, opened for the agent if it has none
+yet.  `:AGENT_MATCHED:' then records how many entries the query matched
+and when, so an agent says what it last found without being run again.
+
+A block supplying its own `:query' needs no agent entry, and is simply
+written: there is nothing there to record a count on."
+  (interactive)
+  (org-with-wide-buffer
+   (let ((block (org-agents--block-at-point))
+         (marker (org-agents--agent-marker)))
+     (cond
+      (marker
+       (condition-case err
+           (let ((count (org-agents--update-agent marker block)))
+             (message "org-agents: %d match%s" count (if (= count 1) "" "es")))
+         ;; A diagnosed refusal says whose query it was: the agent is
+         ;; standing right here, but the same refusals are read out of a
+         ;; summary of many.  Anything else is a bug in this package, and
+         ;; signals as itself -- debugger and backtrace included.
+         (user-error
+          (user-error "%s" (org-agents--failure-text
+                            (org-agents--agent-label marker) err)))))
+      (block
+       (let ((count (org-agents--update-block block)))
+         (message "org-agents: the block wrote %d row%s" count
+                  (if (= count 1) "" "s"))))
+      (t (user-error
+          "org-agents: no agent and no `org-agents' block at point"))))))
+
+(defun org-agents--buffer-agents ()
+  "Markers on the headline of every agent in the current buffer, in order.
+Collected before any of them is updated: rendering an agent inserts
+headings under it and a line into its drawer, so an agent found by
+position afterwards would no longer be where it was found.  The whole
+buffer is read, whatever it is narrowed to."
+  (let ((markers nil))
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (while (re-search-forward "^[ \t]*:AGENT_QUERY:" nil t)
+       (when-let* ((marker (org-agents--agent-marker)))
+         (push marker markers))
+       ;; One marker per entry, and nothing between here and the next
+       ;; heading is another agent.
+       (outline-next-heading)))
+    (nreverse markers)))
+
+(defun org-agents--update-markers (markers)
+  "Update the agents at MARKERS and return (UPDATED . FAILURES).
+Every agent answers for itself: one that fails is recorded, named, and
+the rest are updated regardless -- an update that stopped at the first
+bad query would leave every agent after it as it was.  Anything at all is
+caught, because a malformed property is diagnosed as a `user-error' and a
+bug in a renderer is not, and neither is reason to leave the agents after
+it unrendered."
+  (let ((updated 0)
+        (failures nil))
+    (dolist (marker markers)
+      (condition-case err
+          (progn (org-agents--update-agent marker) (cl-incf updated))
+        (error (push (org-agents--failure-text
+                      (org-agents--agent-label marker) err)
+                     failures))))
+    (cons updated (nreverse failures))))
+
+(defun org-agents--report (updated failures)
+  "Say that UPDATED agents were updated and FAILURES were not; return that.
+Each failure names its own agent, because a summary that said only how
+many had failed would leave the user to find out which."
+  (message "org-agents: updated %d agent%s%s" updated
+           (if (= updated 1) "" "s")
+           (if failures
+               (format ", %d failed:\n%s" (length failures)
+                       (string-join failures "\n"))
+             "")))
+
+;;;###autoload
+(defun org-agents-update-buffer ()
+  "Update every agent in the current buffer, continuing past failures.
+An agent that fails is named in the summary rather than stopping the ones
+after it.  A dynamic block that supplies its own query belongs to no
+agent, and is left to `org-update-all-dblocks'."
+  (interactive)
+  (pcase-let ((`(,updated . ,failures)
+               (org-agents--update-markers (org-agents--buffer-agents))))
+    (org-agents--report updated failures)))
+
+(defun org-agents--named-files ()
+  "The files `org-agents-files' names, before they are winnowed.
+A directory contributes the Org files below it, and the symbol `agenda'
+whatever `org-agenda-files' answers with."
+  (if (eq org-agents-files 'agenda)
+      (org-agenda-files)
+    (cl-loop for entry in (ensure-list org-agents-files)
+             for path = (expand-file-name entry)
+             append (if (file-directory-p path)
+                        (directory-files-recursively path "\\.org\\'")
+                      (list path)))))
+
+(defun org-agents--agent-files ()
+  "The readable files `org-agents-files' names, each of them once.
+A file named twice over -- by itself and by a directory that holds it,
+say -- is updated once: twice, and one summary would report the agents in
+it twice, as though there were two of each.  Names are compared as
+truenames, because two spellings of one file are one file."
+  (let ((seen (make-hash-table :test #'equal))
+        (files nil))
+    (dolist (file (org-agents--named-files))
+      (let ((true (file-truename file)))
+        (when (and (file-readable-p file) (not (gethash true seen)))
+          (puthash true t seen)
+          (push file files))))
+    (nreverse files)))
+
+;;;###autoload
+(defun org-agents-update-all ()
+  "Update every agent in the files `org-agents-files' names.
+An agent that fails leaves the others updated, and is named in the
+summary along with what went wrong.  The files are left modified rather
+than saved, so an update can be read over -- and undone -- before it is
+kept."
+  (interactive)
+  (let ((updated 0)
+        (failures nil))
+    (dolist (file (org-agents--agent-files))
+      (with-current-buffer (find-file-noselect file)
+        (pcase-let ((`(,n . ,fs) (org-agents--update-markers
+                                  (org-agents--buffer-agents))))
+          (cl-incf updated n)
+          (setq failures (nconc failures fs)))))
+    (org-agents--report updated failures)))
+
+;;;###autoload
+(defun org-agents-preview (query-string)
+  "Show what an agent whose query is QUERY-STRING would match.
+The query is read, expanded and gated exactly as an agent's is, and
+`org-agents-exclude' is appended before `org-ql-search' evaluates it, so
+a preview lists what an agent would render rather than something close to
+it.  The search is over `org-agenda-files': a scope belongs to an agent,
+and a preview has no agent."
+  (interactive "sAgent query: ")
+  (let ((query (org-agents--expand
+                (org-agents--read-sexp "query" query-string))))
+    (unless (org-agents--gate query)
+      (user-error "org-agents: query not approved"))
+    (org-ql-search (org-agenda-files)
+                   (if org-agents-exclude
+                       `(and ,query ,org-agents-exclude)
+                     ;; nil conjoined here is a clause that never
+                     ;; matches, which is not what turning the exclusion
+                     ;; off means.
+                     query))))
+
+;; So `C-c C-x x' offers the block among the dynamic block types it
+;; knows.  What it offers writes the agent's block, opening one where the
+;; agent has none yet.
+(org-dynamic-block-define "org-agents" #'org-agents-update)
 
 (provide 'org-agents)
 ;;; org-agents.el ends here

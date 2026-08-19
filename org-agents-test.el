@@ -1328,5 +1328,344 @@ neither of which is there read as the separator between them."
     (should-error (org-agents--sort-rows rows '(ts-column "2") columns)
                   :type 'user-error)))
 
+;;;; Commands
+
+(ert-deftest org-agents-test-update-writes-matched ()
+  "The children view renders, and what it matched is recorded after.
+`:AGENT_MATCHED:' is written once however many times the agent is
+updated, because `org-entry-put' replaces the value it finds."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-agents-update)
+      (let ((val (org-entry-get nil "AGENT_MATCHED")))
+        (should val)
+        (should (string-match-p "\\`1 \\[[0-9]\\{4\\}-" val))
+        ;; A whole inactive timestamp, which is what Org reads back.
+        (should (string-match-p
+                 (concat "\\`1 \\[[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} "
+                         ".+ [0-9]\\{2\\}:[0-9]\\{2\\}\\]\\'")
+                 val)))
+      (should (string-match-p "Fix widget" (buffer-string)))
+      (goto-char (point-min))
+      (org-agents-update)
+      (should (= 1 (cl-count-if
+                    (lambda (l) (string-match-p ":AGENT_MATCHED:" l))
+                    (split-string (buffer-string) "\n")))))))
+
+(ert-deftest org-agents-test-update-writes-a-block-view ()
+  "A list agent with no block yet is given one, and renders into it.
+`:AGENT_MATCHED:' is written only once `org-update-dblock' has returned:
+written from inside the writer, it would add a line to a drawer above the
+very block whose bounds Org worked out before calling it."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      ;; `org-update-dblock' indents in the selected window's buffer,
+      ;; which in batch is not this one unless it is put there.
+      (set-window-buffer (selected-window) (current-buffer))
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-min))
+      (org-agents-update)
+      (should (equal "1" (car (split-string
+                               (org-entry-get nil "AGENT_MATCHED")))))
+      (should (string-match-p "^- \\[\\[id:11111111-" (buffer-string)))
+      ;; A second update leaves one block, one item and one record.
+      (goto-char (point-min))
+      (org-agents-update)
+      (let ((lines (split-string (buffer-string) "\n")))
+        (dolist (re '("^#\\+BEGIN: org-agents" "^#\\+END:" "^- \\[\\[id:"
+                      ":AGENT_MATCHED:"))
+          (should (= 1 (cl-count-if (lambda (l) (string-match-p re l))
+                                    lines))))))))
+
+(ert-deftest org-agents-test-update-writes-an-indented-block ()
+  "An indented block keeps its indentation, and the record still lands.
+`org-update-dblock' indents the body once the writer returns, and
+`:AGENT_MATCHED:' is written after that: written from inside the writer
+instead, it would move a block whose bounds Org had already worked out."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (set-window-buffer (selected-window) (current-buffer))
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-max))
+      (insert "  #+BEGIN: org-agents\n  #+END:\n")
+      (goto-char (point-min))
+      (org-agents-update)
+      (should (string-match-p "^  - \\[\\[id:11111111-" (buffer-string)))
+      (should (equal "1" (car (split-string
+                               (org-entry-get nil "AGENT_MATCHED")))))
+      ;; A second update neither indents the body twice over nor writes a
+      ;; second item.
+      (goto-char (point-min))
+      (org-agents-update)
+      (let ((lines (split-string (buffer-string) "\n")))
+        (should (= 1 (cl-count-if
+                      (lambda (l) (string-match-p "^  - \\[\\[id:" l))
+                      lines)))
+        (should-not (cl-find-if (lambda (l) (string-match-p "^    - " l))
+                                lines))))))
+
+(ert-deftest org-agents-test-update-writes-the-block-at-point ()
+  "One agent may carry several blocks; an update writes the one at point.
+The first block of the agent's subtree need not be the block the user is
+standing in."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (set-window-buffer (selected-window) (current-buffer))
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-max))
+      (insert "#+BEGIN: org-agents\n#+END:\n\n#+BEGIN: org-agents\n#+END:\n")
+      (re-search-backward "#\\+BEGIN: org-agents")
+      (forward-line 1)                  ; inside the second block
+      (org-agents-update)
+      (goto-char (point-min))
+      (let ((second (progn (re-search-forward "#\\+BEGIN: org-agents")
+                           (re-search-forward "#\\+BEGIN: org-agents")))
+            (item (progn (goto-char (point-min))
+                         (re-search-forward "^- \\[\\[id:"))))
+        (should (< second item))
+        (should (= 1 (cl-count-if
+                      (lambda (l) (string-match-p "^- \\[\\[id:" l))
+                      (split-string (buffer-string) "\n"))))))))
+
+(ert-deftest org-agents-test-update-a-standalone-block ()
+  "A block supplying its own query renders where no agent entry does.
+There is no agent to record `:AGENT_MATCHED:' on, so nothing is recorded."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (set-window-buffer (selected-window) (current-buffer))
+      (goto-char (point-max))
+      (insert "* Not an agent\nsome text of the user's\n"
+              "#+BEGIN: org-agents :query (todo) :scope (\"" a "\")\n#+END:\n")
+      (re-search-backward "#\\+BEGIN: org-agents")
+      (org-agents-update)
+      (should (string-match-p "^- \\[\\[id:11111111-" (buffer-string)))
+      (org-back-to-heading t)
+      (should-not (org-entry-get nil "AGENT_MATCHED")))))
+
+(ert-deftest org-agents-test-update-refuses-where-there-is-nothing ()
+  "Neither an agent nor a block: there is nothing at point to update."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect b)
+      (goto-char (point-min))
+      (should-error (org-agents-update) :type 'user-error))))
+
+(ert-deftest org-agents-test-update-names-the-agent-it-refused ()
+  "A refusal says whose query it was, and records nothing.
+`org-agents--collect' refuses an unapproved query without naming the
+agent it came from, and an update over a buffer or a corpus answers for
+many of them."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_QUERY" "(and (todo) (shell-command \"x\"))")
+      (goto-char (point-min))
+      (let ((org-agents--session-approved (make-hash-table :test 'equal))
+            (org-agents-safe-queries nil)
+            (noninteractive t))
+        (let ((err (should-error (org-agents-update) :type 'user-error)))
+          (should (string-match-p "Review agent" (cadr err)))
+          (should (string-match-p "not approved" (cadr err)))
+          ;; One diagnosis, not this package's prefix twice over.
+          (should (string-match-p "\\`org-agents: [^:]" (cadr err)))))
+      (should-not (org-entry-get nil "AGENT_MATCHED")))))
+
+(ert-deftest org-agents-test-update-children-failure-changes-nothing ()
+  "A children render that fails part way leaves the agent as it was.
+The view deletes the aliases it is about to write again before it writes
+any of them, so a failure in the middle would leave the agent half
+rewritten -- and `:AGENT_MATCHED:' must record no count for it."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_QUERY" "(property \"NEXT_REVIEW\")")
+      (goto-char (point-min))
+      (org-agents-update)               ; two aliases
+      ;; Annotate the first alias, so the next round keeps and retitles
+      ;; it -- after it has deleted the pristine second one.
+      (goto-char (point-min))
+      (search-forward "Fix widget")
+      (org-end-of-subtree t t)
+      (insert "*** mine\n")
+      (let ((before (buffer-string)))
+        (cl-letf (((symbol-function 'org-agents--mark-stale)
+                   (lambda (&rest _) (error "boom"))))
+          (goto-char (point-min))
+          (should-error (org-agents-update) :type 'error))
+        (should (equal before (buffer-string)))))))
+
+(ert-deftest org-agents-test-update-block-failure-records-nothing ()
+  "A block whose render failed reports it, and records no count.
+The writer catches its own failures, puts the previous body back and
+returns, so the only sign left for the command is that it wrote no
+count at all -- and the count of an older render must not be recorded
+in its place."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (set-window-buffer (selected-window) (current-buffer))
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-min))
+      (cl-letf (((symbol-function 'org-agents--collect)
+                 (lambda (&rest _) (error "boom"))))
+        (let ((err (should-error (org-agents-update) :type 'user-error)))
+          (should (string-match-p "Review agent" (cadr err)))))
+      (should-not (org-entry-get nil "AGENT_MATCHED")))))
+
+(ert-deftest org-agents-test-update-buffer-updates-every-agent ()
+  "Every agent in the buffer, each anchored where it was found.
+The agents are collected as markers before any of them renders: writing
+the first one inserts headings under it and a line into its drawer, and
+a position found beforehand would no longer name the agent it was found
+for."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* First agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"
+              "* Second agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (property \"NEXT_REVIEW\")\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (let ((report (org-agents-update-buffer)))
+        (should (string-match-p "updated 2 agents" report))
+        (should-not (string-match-p "failed" report)))
+      (goto-char (point-min))
+      (should (equal "1" (car (split-string
+                               (org-entry-get nil "AGENT_MATCHED")))))
+      (search-forward "* Second agent")
+      (should (equal "2" (car (split-string
+                               (org-entry-get nil "AGENT_MATCHED")))))
+      ;; Each agent's aliases landed under it: the first agent's one
+      ;; alias sits above the second agent's heading, and the second
+      ;; agent's two below it.
+      (let ((second (progn (goto-char (point-min))
+                           (search-forward "* Second agent"))))
+        (goto-char (point-min))
+        (should (< (search-forward "Fix widget") second))
+        (should (> (progn (goto-char (point-min))
+                          (search-forward "Old thing"))
+                   second)))
+      (should (= 3 (cl-count-if
+                    (lambda (l) (string-match-p ":AGENT_MATCH: t" l))
+                    (split-string (buffer-string) "\n")))))))
+
+(ert-deftest org-agents-test-update-buffer-widens ()
+  "Every agent in the buffer, whatever the buffer is narrowed to.
+An update asked for from a narrowed buffer -- a subtree the user is
+working in -- is still an update of the buffer, and the narrowing is
+left as it was found."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* First agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"
+              "* Second agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (property \"NEXT_REVIEW\")\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-narrow-to-subtree)
+      (should (string-match-p "updated 2 agents" (org-agents-update-buffer)))
+      (should (buffer-narrowed-p))
+      (widen)
+      (should (= 2 (cl-count-if
+                    (lambda (l) (string-match-p ":AGENT_MATCHED:" l))
+                    (split-string (buffer-string) "\n")))))))
+
+(ert-deftest org-agents-test-update-buffer-ignores-what-is-not-an-agent ()
+  "Only an entry whose own drawer carries a query is an agent.
+The property name is looked for as text, so an entry that merely
+mentions it, or writes it with nothing after it, must not be reported as
+an agent that failed to update."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* Real agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"
+              "* Talks about agents\nWrite :AGENT_QUERY: (todo) in a drawer.\n"
+              "* Blank\n:PROPERTIES:\n:AGENT_QUERY:\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (let ((report (org-agents-update-buffer)))
+        (should (string-match-p "updated 1 agent\\'" report))
+        (should-not (string-match-p "failed" report))))))
+
+(ert-deftest org-agents-test-update-all-continues-past-failure ()
+  "One bad agent leaves the rest of them updated, and is named for it."
+  (org-agents-test--with-corpus
+    ;; Add a second agent with an unreadable query above the good one.
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (insert "* Broken agent\n:PROPERTIES:\n:AGENT_QUERY: (and (todo\n:END:\n")
+      (save-buffer))
+    (let* ((org-agents-files (list agent-file))
+           (report (org-agents-update-all)))
+      (should (string-match-p "updated 1 agent" report))
+      (should (string-match-p "1 failed" report))
+      (should (string-match-p "Broken agent" report))
+      (should (string-match-p "unreadable :AGENT_QUERY:" report))
+      (with-current-buffer (find-file-noselect agent-file)
+        (should (string-match-p ":AGENT_MATCHED: 1" (buffer-string)))
+        ;; Nothing was recorded for the agent that failed.
+        (should (= 1 (cl-count-if
+                      (lambda (l) (string-match-p ":AGENT_MATCHED:" l))
+                      (split-string (buffer-string) "\n"))))))))
+
+(ert-deftest org-agents-test-update-all-reads-files-and-directories ()
+  "`org-agents-files' names files, directories, or the agenda."
+  (org-agents-test--with-corpus
+    (let ((org-agents-files (list dir)))
+      ;; The corpus files hold no agents, so the whole directory yields
+      ;; only the one in agents.org.
+      (should (string-match-p "updated 1 agent\\'" (org-agents-update-all))))
+    ;; A file named twice over -- here by a directory and by itself -- is
+    ;; updated once, rather than reported as two agents where one is.
+    (let ((org-agents-files (list dir agent-file)))
+      (should (string-match-p "updated 1 agent\\'" (org-agents-update-all))))
+    (let ((org-agents-files (list (expand-file-name "nowhere.org" dir))))
+      (should (string-match-p "updated 0 agents" (org-agents-update-all))))
+    (cl-letf (((symbol-function 'org-agenda-files)
+               (lambda (&rest _) (list agent-file))))
+      (let ((org-agents-files 'agenda))
+        (should (string-match-p "updated 1 agent\\'"
+                                (org-agents-update-all)))))))
+
+(ert-deftest org-agents-test-preview-applies-exclusion ()
+  "What a preview lists is what an agent would render, aliases excluded."
+  (let (received)
+    (cl-letf (((symbol-function 'org-ql-search)
+               (lambda (_files query &rest _) (setq received query))))
+      (org-agents-preview "(todo)")
+      (should (equal received `(and (todo) ,org-agents-exclude)))
+      ;; The `$PROP' layer is expanded exactly as an agent's query is.
+      (org-agents-preview "(and (todo) $URL)")
+      (should (equal received
+                     `(and (and (todo) (property "URL")) ,org-agents-exclude)))
+      ;; And with the exclusion off, the query alone: nil conjoined here
+      ;; would be a clause that never matches.
+      (let ((org-agents-exclude nil))
+        (org-agents-preview "(todo)")
+        (should (equal received '(todo)))))))
+
+(ert-deftest org-agents-test-preview-gates-and-reads-its-query ()
+  "A preview is gated like an agent, and evaluates nothing it refuses."
+  (cl-letf (((symbol-function 'org-ql-search)
+             (lambda (&rest _) (error "must not be reached"))))
+    (should-error (org-agents-preview "(and (todo") :type 'user-error)
+    (should-error (org-agents-preview "(headline \"x\")") :type 'user-error)
+    (let ((org-agents--session-approved (make-hash-table :test 'equal))
+          (org-agents-safe-queries nil)
+          (noninteractive t))
+      (should-error (org-agents-preview "(and (todo) (shell-command \"x\"))")
+                    :type 'user-error))))
+
+(ert-deftest org-agents-test-dblock-type-is-registered ()
+  "`C-c C-x x' offers the block among the types it knows."
+  (should (member "org-agents" (org-dynamic-block-types)))
+  (should (eq #'org-agents-update (org-dynamic-block-function "org-agents"))))
+
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here
