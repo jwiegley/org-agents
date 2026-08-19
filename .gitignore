@@ -1,0 +1,18 @@
+# Byte- and native-compiled output.  Never committed: `make gate' rebuilds
+# what it needs, and a stale .elc sitting beside a newer .el is the classic
+# reason a fix appears not to have taken.
+*.elc
+*.eln
+/eln-cache/
+
+# `org-id' writes this the moment a test forgets to bind
+# `org-id-locations-file'.  Machine-local either way.
+.org-id-locations
+
+# Emacs's own droppings: auto-save files, lock files, backups.
+\#*\#
+.\#*
+*~
+
+# macOS.
+.DS_Store
