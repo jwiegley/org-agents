@@ -94,5 +94,73 @@
                (lambda (&rest _) (error "must not prompt"))))
       (should (org-agents--gate '(ignore))))))
 
+(ert-deftest org-agents-test-skeleton-property-exists ()
+  (should (equal (org-agents--skeleton '(and (todo) (property "NEXT_REVIEW")))
+                 "(property \"NEXT_REVIEW\")")))
+
+(ert-deftest org-agents-test-skeleton-property-ts-implies-exists ()
+  (should (equal (org-agents--skeleton
+                  '(and (todo) (property-ts "NEXT_REVIEW" :to today)))
+                 "(property \"NEXT_REVIEW\")")))
+
+(ert-deftest org-agents-test-skeleton-empty-for-residual-only ()
+  (should (null (org-agents--skeleton '(todo))))
+  (should (null (org-agents--skeleton '(tags "urgent"))))
+  (should (null (org-agents--skeleton '(regexp "colou?r")))))
+
+(ert-deftest org-agents-test-skeleton-heading-literal-only ()
+  (should (equal (org-agents--skeleton '(and (heading "Review") (todo)))
+                 "(heading \"Review\")"))
+  (should (null (org-agents--skeleton '(heading "Rev.*iew")))))
+
+(ert-deftest org-agents-test-skeleton-planning ()
+  (should (equal (org-agents--skeleton '(and (scheduled :to 7) (tags "x")))
+                 "(scheduled :to 7)"))
+  (should (equal (org-agents--skeleton '(deadline :from today :to "2026-12-31"))
+                 "(deadline :from today :to \"2026-12-31\")")))
+
+(ert-deftest org-agents-test-skeleton-property-equality-respects-inheritance ()
+  (let ((org-use-property-inheritance '("OVERLAY")))
+    (should (equal (org-agents--skeleton '(property "STYLE" "habit"))
+                   "(property \"STYLE\" \"habit\")"))
+    ;; Inheriting names: only existence is safe.
+    (should (equal (org-agents--skeleton '(property "OVERLAY" "x"))
+                   "(property \"OVERLAY\")"))
+    (let ((org-use-property-inheritance t))
+      (should (equal (org-agents--skeleton '(property "STYLE" "habit"))
+                     "(property \"STYLE\")")))))
+
+(ert-deftest org-agents-test-skeleton-nested-queries-residual ()
+  (should (null (org-agents--skeleton '(parent (property "X")))))
+  (should (null (org-agents--skeleton '(descendants (todo))))))
+
+(ert-deftest org-agents-test-skeleton-multiple-conjuncts-and-scope ()
+  (should (equal (org-agents--skeleton
+                  '(and (property "URL") (scheduled :to 7) (todo))
+                  '(path "positron/"))
+                 "(and (property \"URL\") (scheduled :to 7) (path \"positron/\"))")))
+
+(ert-deftest org-agents-test-skeleton-no-ts-structs ()
+  "Serialization must come from the pre-normalization sexp."
+  (let ((s (org-agents--skeleton '(and (scheduled :to 7) (property "X")))))
+    (should-not (string-match-p "#s(" s))))
+
+(ert-deftest org-agents-test-skeleton-special-properties-residual ()
+  "A special property is entry structure, not a drawer row, so it never pushes."
+  (should (null (org-agents--skeleton '(property "CATEGORY" "work"))))
+  (should (null (org-agents--skeleton '(property "ITEM"))))
+  (should (null (org-agents--skeleton '(property-ts "DEADLINE" :to today))))
+  ;; An ordinary name in the same position still pushes.
+  (should (equal (org-agents--skeleton '(property-ts "NEXT_REVIEW" :to today))
+                 "(property \"NEXT_REVIEW\")")))
+
+(ert-deftest org-agents-test-skeleton-resists-print-truncation ()
+  "An abbreviated skeleton is a different query, and the CLI reads it as one."
+  (let ((print-length 2)
+        (print-level 2))
+    (should (equal (org-agents--skeleton
+                    '(and (property "A") (property "B") (property "C")))
+                   "(and (property \"A\") (property \"B\") (property \"C\"))"))))
+
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here

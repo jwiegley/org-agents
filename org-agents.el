@@ -265,5 +265,131 @@ skipped instead of prompting."
                    (cons hash org-agents-safe-queries)))
                 t))))))
 
+;;;; Splitter
+
+;; The splitter picks out the conjuncts of an expanded query that the
+;; `org db query' CLI may answer as a candidate-file prefilter.  The
+;; CLI's semantics diverge from org-ql's on most predicates, so a
+;; conjunct may be pushed only when the database's answer is provably a
+;; SUPERSET of org-ql's: the prefilter narrows which files are opened,
+;; and org-ql alone decides what matches.  Whatever cannot be proven a
+;; superset stays residual, at the price of a wider candidate set.
+;; Divergence evidence: docs/superpowers/specs/2026-08-18-org-agents-design-review.md C1.
+
+(defconst org-agents--literal-regexp "[][*+?^$\\.{}|]"
+  "Characters that make a string a regexp rather than a literal.")
+
+(defun org-agents--literal-strings-p (strings)
+  "Non-nil when STRINGS is a non-empty list of literals, no regexp among them."
+  (and strings
+       (cl-every (lambda (s)
+                   (and (stringp s)
+                        (not (string-match-p org-agents--literal-regexp s))))
+                 strings)))
+
+(defun org-agents--property-inherits-p (name)
+  "Non-nil when property NAME might be inherited at match time.
+Mirrors `org-property-inherit-p', including its case-insensitive
+reading of a list.  An invalid setting of
+`org-use-property-inheritance' counts as inheriting: answering nil
+here pushes an equality test the database can only answer locally."
+  (pcase org-use-property-inheritance
+    ('nil nil)
+    ('t t)
+    ((pred stringp) (string-match-p org-use-property-inheritance name))
+    ((pred listp) (member-ignore-case name org-use-property-inheritance))
+    (_ t)))
+
+(defun org-agents--property-pushable-p (name)
+  "Non-nil when NAME is an ordinary drawer property.
+`org-entry-get' answers a special property such as CATEGORY or
+DEADLINE from the entry's structure or its file, where the database
+holds no property row at all, so pushing one as a property test would
+drop true matches."
+  (and (stringp name)
+       (not (member-ignore-case name (cons "CATEGORY" org-special-properties)))))
+
+(defun org-agents--date-arg-ok-p (plist)
+  "Non-nil when PLIST holds only :from/:to/:on with CLI-safe values."
+  (cl-loop for (k v) on plist by #'cddr
+           always (and (memq k '(:from :to :on))
+                       (or (integerp v) (eq v 'today)
+                           (and (stringp v)
+                                (string-match-p
+                                 "\\`[0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9]\\'" v))))))
+
+(defun org-agents--push-planning (form)
+  "Push planning FORM unchanged, provided its date arguments are CLI-safe."
+  (and (org-agents--date-arg-ok-p (cdr form)) form))
+
+;; Each classifier returns the CLI conjunct to push for a form, or nil
+;; to leave it residual.  Every row states why its conjunct is a
+;; superset of what org-ql will accept at match time.
+(defconst org-agents--pushdown-fns
+  (list
+   (cons 'property
+         (lambda (form)
+           (pcase form
+             ;; Existence is local on both sides: one-argument `property'
+             ;; reads this entry's own drawer, as the database rows do.
+             (`(property ,(and name (pred org-agents--property-pushable-p)))
+              `(property ,name))
+             (`(property ,(and name (pred org-agents--property-pushable-p))
+                         ,(and val (pred stringp)))
+              (if (org-agents--property-inherits-p name)
+                  ;; An inherited value sits on an ancestor, which has no
+                  ;; row of its own — but it is in the same file, so
+                  ;; existence still selects the file.
+                  `(property ,name)
+                ;; Equality: both sides compare the entry's own value.
+                `(property ,name ,val)))
+             (_ nil))))
+   (cons 'property-ts
+         (lambda (form)
+           (pcase form
+             ;; A date match on the value implies the property is there.
+             (`(property-ts ,(and name (pred org-agents--property-pushable-p))
+                            . ,_)
+              `(property ,name))
+             (_ nil))))
+   ;; Planning stamps are stored for exactly these three keywords, and
+   ;; both sides bound the raw stamp, so the bounds select alike.
+   (cons 'scheduled #'org-agents--push-planning)
+   (cons 'deadline #'org-agents--push-planning)
+   (cons 'closed #'org-agents--push-planning)
+   (cons 'heading
+         (lambda (form)
+           (pcase form
+             ;; ILIKE over the raw heading line ⊇ org-ql's quoted match
+             ;; over the cleaned title, and the database ORs the patterns
+             ;; org-ql ANDs.  Only literals: a regexp is neither.
+             (`(heading . ,(and strs (pred org-agents--literal-strings-p)))
+              `(heading ,@strs))
+             (_ nil)))))
+  "Alist of predicate head → superset-safe CLI conjunct, or nil.")
+
+(defun org-agents--skeleton (query &optional scope-conjunct)
+  "Extract the CLI prefilter skeleton from expanded QUERY as a string.
+Only top-level `and' conjuncts (or the whole query when it is a single
+pushable predicate) are considered, in query order, with SCOPE-CONJUNCT
+last.  Return nil when no conjunct pushes: a scope on its own is
+already known to the caller and does not earn a query."
+  (let* ((conjuncts (if (eq (car-safe query) 'and) (cdr query) (list query)))
+         (pushed
+          (delq nil
+                (mapcar (lambda (c)
+                          (when-let* ((fn (alist-get (car-safe c)
+                                                     org-agents--pushdown-fns)))
+                            (funcall fn c)))
+                        conjuncts)))
+         (all (append pushed (and scope-conjunct (list scope-conjunct))))
+         ;; As in `org-agents--query-hash': an abbreviated skeleton is a
+         ;; different query, and the CLI would read it as one.
+         (print-level nil)
+         (print-length nil))
+    (when pushed                     ; scope alone is not worth a round trip
+      (prin1-to-string
+       (if (cdr all) (cons 'and all) (car all))))))
+
 (provide 'org-agents)
 ;;; org-agents.el ends here
