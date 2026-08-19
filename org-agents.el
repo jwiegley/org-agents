@@ -328,9 +328,10 @@ skipped instead of prompting."
   "Non-nil when property NAME might be inherited at match time.
 Mirrors `org-property-inherit-p', including its case-insensitive
 reading of a list.  An invalid setting of
-`org-use-property-inheritance' counts as inheriting: answering nil
-here pushes a property conjunct the database cannot answer, which
-would narrow the candidate files wrongly."
+`org-use-property-inheritance' counts as inheriting, the answer that
+pushes less.  Refusing to push for such a name is a conservative guard
+rather than a correctness requirement; the `property' row of
+`org-agents--pushdown-fns' records why."
   (pcase org-use-property-inheritance
     ('nil nil)
     ('t t)
