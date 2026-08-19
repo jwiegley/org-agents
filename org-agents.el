@@ -1151,6 +1151,37 @@ description, which is the live heading text and drifts."
 (defconst org-agents--stale-suffix " (stale)"
   "Marks a preserved alias whose match the query no longer finds.")
 
+;; Where a subtree stops, and which of Org's two answers is wanted.
+;;
+;; A blank line between one subtree and the next is ordinary Org style and
+;; belongs to whoever wrote it, so no update may consume one -- and an
+;; update that deletes a region has to say where that region stops.
+;;
+;; `org-end-of-subtree' answers two different questions.  With TO-HEADING it
+;; runs on to the beginning of the next heading, blank lines included.
+;; Without it, it backs over the whole run of them and stops at the end of
+;; the last line holding text: "When end of the subtree has blank lines,
+;; move point before these blank lines", as its docstring puts it, and its
+;; `skip-chars-backward' takes any number of them.
+;;
+;; So the second is what an insertion point wants and already used.  What
+;; was missing is a deletion bound, which is that position advanced over its
+;; own newline -- near enough to the first form to have been reached for,
+;; and different in exactly the blank line that made this necessary.
+
+(defun org-agents--subtree-end ()
+  "End of the subtree at point: past its last line of text, before the blanks.
+The region a pristine alias is deleted over.  `org-end-of-subtree' with
+TO-HEADING runs to the next heading, so a blank line the user wrote after
+the alias would fall inside that region and be deleted with it; without
+TO-HEADING it stops short of the newline ending the last line of text,
+which would leave that newline behind.  This is the latter, advanced over
+that newline: the subtree's own text is inside the region, and the blank
+lines after it are not."
+  (save-excursion
+    (org-end-of-subtree t)
+    (if (eobp) (point) (line-beginning-position 2))))
+
 (defun org-agents--child-pristine-p ()
   "Non-nil when the alias at point holds nothing but its property drawer.
 Whitespace after the drawer counts as nothing: a blank line carries no
@@ -1182,7 +1213,11 @@ whose `AGENT_MATCH' says anything other than `t'."
       (while (re-search-forward re bound t)
         (beginning-of-line)
         (let ((beg (point))
-              (end (save-excursion (org-end-of-subtree t t) (point))))
+              ;; Not `org-end-of-subtree': its TO-HEADING form runs to the
+              ;; next heading, so a blank line the user wrote after this
+              ;; alias would fall inside the region -- and a pristine alias
+              ;; is deleted over exactly this region.
+              (end (org-agents--subtree-end)))
           (when (equal (org-entry-get nil "AGENT_MATCH") "t")
             ;; A COMMENT keyword is kept: `org-agents--mark-stale'
             ;; retitles through `org-edit-headline', which replaces the
@@ -1263,7 +1298,10 @@ the agent's own buffer, where an edit would move it."
            ;; matches follow the subtree as it now stands.  The text is
            ;; inserted before the newline that ends the subtree rather
            ;; than at the position after it, which another agent's
-           ;; marker in this buffer may be sitting on.
+           ;; marker in this buffer may be sitting on.  Without
+           ;; TO-HEADING that position is also above any blank lines the
+           ;; user left before the next heading, so the insertion has
+           ;; never had this end of the problem.
            (when-let* ((new (cl-remove-if (lambda (row) (member (car row) kept))
                                           rendered)))
              (goto-char marker)
@@ -1704,6 +1742,16 @@ or by `org-update-all-dblocks'."
     (if found
         (goto-char found)
       (org-end-of-meta-data t)
+      ;; `org-end-of-meta-data' with FULL skips "any kind of drawer, and
+      ;; blank lines" -- its own words -- so on an agent written in
+      ;; ordinary Org style, with a blank line between it and the next
+      ;; heading, point lands past that line and the block opens BELOW it:
+      ;; detached from the agent it belongs to, glued to the following
+      ;; heading, and with the user's separator now inside the agent.  Back
+      ;; over them, so the block opens against the drawer and the blank
+      ;; lines go on separating what they were written to separate.
+      (skip-chars-backward " \t\n")
+      (unless (eobp) (forward-line 1))
       ;; An entry that ends the buffer without a final newline leaves
       ;; point mid-line, where the block would be written onto the end of
       ;; it.

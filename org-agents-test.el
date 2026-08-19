@@ -1537,6 +1537,128 @@ and `org-back-to-heading' would signal a plain error over it, which
         (should-error (org-agents--render-children agent nil) :type 'user-error)
         (should (equal before (buffer-string)))))))
 
+;;;; Idempotence over the text around an agent
+
+;; One property, asserted over all three views together rather than split
+;; between the children and dynamic-block sections: rendering an agent twice
+;; leaves the buffer exactly as the first render left it.  What breaks it is
+;; never the render itself but the text AROUND the agent -- a blank line
+;; between its subtree and the next heading, which is how Org files are
+;; ordinarily written and which no test above has.
+
+(defmacro org-agents-test--with-neighbour-agent (props separator &rest body)
+  "Run BODY in a buffer holding one agent with a heading after it.
+PROPS is extra property-drawer text for the agent.  SEPARATOR is what
+stands between the agent's drawer and that heading: \"\\n\" for the blank
+line ordinary Org style puts between subtrees, or \"\" for none.
+
+The window is made to show the buffer, because a block view is written
+through `org-update-dblock', which indents in the selected window's
+buffer."
+  (declare (indent 2))
+  `(org-agents-test--with-corpus
+     (with-temp-file agent-file
+       (insert "* Review agent\n:PROPERTIES:\n"
+               ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+               ":AGENT_SCOPE: (\"" a "\")\n" ,props ":END:\n"
+               ,separator
+               "* A following heading\n"
+               "Body text.\n"))
+     (with-current-buffer (find-file-noselect agent-file)
+       (set-window-buffer (selected-window) (current-buffer))
+       ,@body)))
+
+(defun org-agents-test--render-twice ()
+  "Update this buffer's agents twice; return the text after each render.
+The `:AGENT_MATCHED:' stamps are masked out of both, because they are
+written afresh by each render and carry the time it ran: comparing them
+would report every second render as a change, or -- worse, since the stamp
+has minute resolution -- report one as unchanged only for as long as the
+two renders fall in the same minute."
+  (cl-flet ((text ()
+              ;; Without properties: a table view is font-locked, and a
+              ;; failure would otherwise print every face in the block.
+              (org-agents--mask-matched
+               (buffer-substring-no-properties (point-min) (point-max)))))
+    (org-agents-update-buffer)
+    (let ((first (text)))
+      (org-agents-update-buffer)
+      (cons first (text)))))
+
+(ert-deftest org-agents-test-render-twice-keeps-a-blank-line-children ()
+  "A blank line between an agent and the next heading is the user's.
+The children view deletes each pristine alias before writing it again, and
+the region it deletes must be the alias -- not the alias and whatever
+blank line happened to follow it.  Rendered twice, an agent written in
+ordinary Org style must leave the file exactly as the first render did."
+  (org-agents-test--with-neighbour-agent "" "\n"
+    (pcase-let ((`(,first . ,second) (org-agents-test--render-twice)))
+      ;; The alias was written, so this is idempotence and not inertia.
+      (should (string-match-p "^\\*\\* \\[\\[id:11111111-" first))
+      ;; The blank line survived the first render ...
+      (should (string-match-p ":AGENT_MATCH: t\n:END:\n\n\\* A following" first))
+      ;; ... and the second.
+      (should (string-match-p ":AGENT_MATCH: t\n:END:\n\n\\* A following" second))
+      (should (equal first second)))))
+
+(ert-deftest org-agents-test-render-twice-adds-no-blank-line-children ()
+  "Nor may a render INVENT a blank line where the user wrote none.
+The other direction of the same rule: what separates an agent from the
+next heading is the user's business, and an update neither eats it nor
+supplies it."
+  (org-agents-test--with-neighbour-agent "" ""
+    (pcase-let ((`(,first . ,second) (org-agents-test--render-twice)))
+      (should (string-match-p "^\\*\\* \\[\\[id:11111111-" first))
+      (should (string-match-p ":AGENT_MATCH: t\n:END:\n\\* A following" first))
+      (should (string-match-p ":AGENT_MATCH: t\n:END:\n\\* A following" second))
+      (should (equal first second)))))
+
+(ert-deftest org-agents-test-render-twice-keeps-two-blank-lines-children ()
+  "Two blank lines are two blank lines, and the alias goes above both.
+`org-end-of-subtree' without TO-HEADING stops in a place that keeps ONE
+blank line before the next heading, which in a run of two is the middle:
+an alias inserted there would land between them, and the run would be
+rewritten on every render."
+  (org-agents-test--with-neighbour-agent "" "\n\n"
+    (pcase-let ((`(,first . ,second) (org-agents-test--render-twice)))
+      (should (string-match-p ":AGENT_MATCH: t\n:END:\n\n\n\\* A following"
+                              first))
+      (should (string-match-p ":AGENT_MATCH: t\n:END:\n\n\n\\* A following"
+                              second))
+      (should (equal first second)))))
+
+(ert-deftest org-agents-test-render-twice-adds-no-blank-line-list ()
+  "A block view invents no separator either.
+`org-agents--goto-block' opens the block against the drawer, so an agent
+written without a blank line after it does not acquire one."
+  (org-agents-test--with-neighbour-agent ":AGENT_VIEW: list\n" ""
+    (pcase-let ((`(,first . ,second) (org-agents-test--render-twice)))
+      (should (string-match-p "^- \\[\\[id:11111111-" first))
+      (should (string-match-p "#\\+END:\n\\* A following" first))
+      (should (string-match-p "#\\+END:\n\\* A following" second))
+      (should (equal first second)))))
+
+(ert-deftest org-agents-test-render-twice-keeps-a-blank-line-list ()
+  "The same, for a list view: the block is opened, then rewritten.
+A dynamic block's body is deleted and written again on every update, so a
+block view has its own chance to consume the line after it."
+  (org-agents-test--with-neighbour-agent ":AGENT_VIEW: list\n" "\n"
+    (pcase-let ((`(,first . ,second) (org-agents-test--render-twice)))
+      (should (string-match-p "^- \\[\\[id:11111111-" first))
+      (should (string-match-p "#\\+END:\n\n\\* A following" first))
+      (should (string-match-p "#\\+END:\n\n\\* A following" second))
+      (should (equal first second)))))
+
+(ert-deftest org-agents-test-render-twice-keeps-a-blank-line-table ()
+  "The same again for a table, whose body is realigned as well as written."
+  (org-agents-test--with-neighbour-agent
+      ":AGENT_VIEW: table\n:AGENT_COLUMNS: ITEM_BY_ID NEXT_REVIEW\n" "\n"
+    (pcase-let ((`(,first . ,second) (org-agents-test--render-twice)))
+      (should (string-match-p "^| \\[\\[id:11111111-" first))
+      (should (string-match-p "#\\+END:\n\n\\* A following" first))
+      (should (string-match-p "#\\+END:\n\n\\* A following" second))
+      (should (equal first second)))))
+
 ;;;; Dynamic block
 
 (defmacro org-agents-test--with-dblock-agent (view extra &rest body)
