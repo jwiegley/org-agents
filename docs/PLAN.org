@@ -9,12 +9,18 @@
 :LABELS:   ["hygiene"]
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19.** Three of this epic's children concerned
+> `org-db-cli.el`, which was deleted when ripgrep replaced the database
+> prefilter: `tcq.3`, `tcq.4` and `tcq.5` are closed. `tcq.1`, `tcq.2`,
+> `tcq.6` and `tcq.7` were checked against the shipped source and are
+> untouched by the removal.
 
 ## Context
 
@@ -183,15 +189,17 @@ inconsistent.
 ]
 #+end_src
 
-* TODO [#E] Diagnose a malformed scope before spending a CLI round trip    :bridge:hygiene:
+* DONE [#E] Diagnose a malformed scope before spending a CLI round trip    :bridge:hygiene:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq.3
 :LABELS:   ["bridge","hygiene"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:52]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:52]
+:CLOSE_REASON: Done by construction, and verified. The premise -- 'builds the skeleton and spawns the CLI before anything looks at whether the scope is usable' -- is gone with the CLI, and the shape the replacement took happens to satisfy all three acceptance criteria. org-agents--needs-prefilter-p answers nil for anything that is not a corpus symbol or a string, so a number, a symbol that names no scope, and a list holding a non-string all go straight to org-agents--scope-base-files, whose (_ (user-error "org-agents: bad scope %S" scope)) arm raises before anything is spawned. Measured with call-process advised to count calls: scope 5, scope ("a.org" 7) and scope nosuchsymbol each raise 'org-agents: bad scope ...' with 0 subprocesses. AC2 (the base-file walk still deferred for unbounded scopes) is pinned by org-agents-test-prefilter-require-refuses-instead, which stubs org-agents--scope-base-files to error if called, and AC3 by the message text above. What is NOT covered is a test that stubs call-process specifically for the malformed-scope case; if that pin is wanted for its own sake, open it as a new issue rather than reopening this one, whose whole framing is about a CLI round trip.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -255,15 +263,17 @@ hold at once.
 ]
 #+end_src
 
-* TODO [#D] org-db-cli-files-directory is an option that does nothing    :bridge:hygiene:
+* DONE [#D] org-db-cli-files-directory is an option that does nothing    :bridge:hygiene:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq.4
 :LABELS:   ["bridge","hygiene"]
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Won't do: org-db-cli.el was deleted on 2026-08-19, so org-db-cli-files-directory no longer exists. The option that did nothing now does not exist, which is the outcome this issue wanted.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -337,15 +347,17 @@ answer, which is not a thing the CLI produces.
 ]
 #+end_src
 
-* TODO [#E] De-duplicate the bridge's file list with a hash table    :bridge:hygiene:perf:
+* DONE [#E] De-duplicate the bridge's file list with a hash table    :bridge:hygiene:perf:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq.5
 :LABELS:   ["bridge","hygiene","perf"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Won't do: org-db-cli-query-files was deleted on 2026-08-19 with the rest of the bridge, so there is no quadratic dedup left to fix. The surviving intersection, org-agents--intersect-files, already uses the hash table this issue asked for, and org-agents--same-files does too.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -485,7 +497,7 @@ to make and to verify.
 :LABELS:   ["hygiene","test"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:54]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
@@ -514,7 +526,7 @@ checks is the same failure in a different dress.
 
 - `org-agents-test.el` — `org-agents-test-gate-refuses-bare-call`, docstring and
   its single `should-not`.
-- Spec `docs/superpowers/specs/2026-08-18-org-agents-design.md`, Verification:
+- Spec `docs/design.md`, Verification:
   "gate: `org-agents-test-gate-refuses-bare-call` — an unapproved `(and (todo)
   (shell-command "x"))` is never evaluated".
 - The final review's own probing did establish the boundary empirically under
@@ -560,12 +572,23 @@ checks is the same failure in a different dress.
 :LABELS:   ["feature","v1-deferred"]
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19.** ripgrep replaced the PostgreSQL prefilter and
+> `org-db-cli.el` was deleted, so every child that named the database, the
+> bridge or the differential suite was re-read. `fbk.5` and `fbk.15` are
+> closed won't-do (they presuppose a database); `fbk.14` is closed done (the
+> shipped backend tells an empty answer from a failed one); `fbk.6`, `fbk.7`,
+> `fbk.8`, `fbk.9`, `fbk.12` and `fbk.13` carry a dated note re-pointing their
+> evidence and their acceptance vehicle, which is now the
+> `org-agents-test-rg-covers-*` pattern over `org-agents-test--rg-corpus`
+> rather than a differential suite against a database. The rest were checked
+> and need no edit.
 
 ## Context
 
@@ -608,7 +631,7 @@ modified.
 :LABELS:   ["feature","tinderbox","v1-deferred"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:54]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
@@ -631,10 +654,10 @@ objects in function position) and held, so there is a boundary to reuse.
 
 ## Evidence
 
-- Spec `docs/superpowers/specs/2026-08-18-org-agents-design.md`, "Scope of
+- Spec `docs/design.md`, "Scope of
   Version 1": "Deferred … `AGENT_ACTION` (Tinderbox `$AgentAction`) behind the
   same gate".
-- Design review `docs/superpowers/specs/2026-08-18-org-agents-design-review.md`,
+- Design review `docs/design-review.md`,
   feature cuts item 10.
 - `org-agents.el`, `org-agents--gate` — the existing choke point, and
   `org-agents--structurally-safe-p` beside it.
@@ -819,12 +842,21 @@ resisted until a real agent needs it.
 :LABELS:   ["commands","feature","tinderbox"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19: the save half SHIPPED; only the timer half is open.**
+> `org-agents-mode` and `global-org-agents-mode` update a buffer's agents
+> before each save, and the save path binds `org-agents-prefilter` to nil so a
+> keystroke never spends a subprocess. See `docs/init-snippet.org` for how to
+> arm it. The remark about freshness "the database cannot supply" is moot:
+> ripgrep reads the bytes on disk as they are now, so there is no staleness
+> window and no cadence to keep — which weakens the case for a timer rather
+> than strengthening it. Re-scope to the timer alone, or close.
 
 ## Context
 
@@ -898,12 +930,27 @@ buys less freshness than it appears to.
 :LABELS:   ["bridge","feature","prefilter"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19: still wanted, and cheaper than when it was filed.**
+> `org-agents--skeleton` and `org-db-cli.el` are both gone. What an
+> org-ql consumer would reuse is now three pure functions and one
+> subprocess call, none of which needs configuration:
+> `org-agents--prefilter-conjuncts` (query -> abstract conjuncts),
+> `org-agents--rg-patterns` (conjunct -> patterns) and
+> `org-agents--rg-files` (patterns + root -> files, or `unavailable`, or `t`).
+> There is no bridge to design around, no DSN and no credential.
+>
+> Two acceptance criteria change. "An unavailable database degrades to the
+> full file set, never to an error" is already the behaviour, and is what
+> `org-agents-prefilter` `auto` means. And the soundness vehicle is the
+> `org-agents-test-rg-covers-*` pattern over the fixture corpus rather than a
+> differential suite, which no longer exists.
 
 ## Context
 
@@ -955,15 +1002,17 @@ the file list they hand to `org-ql-select`.  Deciding which is most of the work.
 ]
 #+end_src
 
-* TODO [#D] Tell an empty database answer from a failed one    :bridge:commands:
+* DONE [#D] Tell an empty database answer from a failed one    :bridge:commands:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.14
 :LABELS:   ["bridge","commands"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Done. All three acceptance criteria hold in the shipped code, and the bridge contract change this was waiting on became unnecessary when the bridge went away. org-agents--rg-run returns a LIST -- possibly empty, which is an answer -- or the symbol 'unavailable, and callers test with listp, which is exact. org-agents--rg-files adds a third answer, t, for 'no conjunct offered a pattern', so 'an empty answer' and 'nothing was narrowed' are three distinct values rather than one nil. org-agents--scope-files renders zero matches for the empty answer and keeps the fallback message for a failure. org-agents-test-prefilter-empty-answer-renders-zero-matches asserts :AGENT_MATCHED: 0 with no 'not narrowed' message, and org-agents-test-collect-empty-prefilter-selects-nothing now discriminates the empty-answer branch directly -- until 2026-08-19 that branch had no test that could fail.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1032,15 +1081,17 @@ Fixing it is a bridge contract change, which is why v1 documented it instead.
 ]
 #+end_src
 
-* TODO [#D] Migrate org-ql-semantic.el onto the org-db-cli bridge    :bridge:
+* DONE [#D] Migrate org-ql-semantic.el onto the org-db-cli bridge    :bridge:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.15
 :LABELS:   ["bridge","dot-emacs"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Won't do: there is no org-db-cli bridge to migrate org-ql-semantic.el onto -- it was deleted on 2026-08-19. If exposing the prefilter to other org-ql consumers is still wanted, fbk.13 is the issue for it, now rewritten around ripgrep.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1555,15 +1606,17 @@ which nothing in v1 does; that is a decision, not an oversight.
 ]
 #+end_src
 
-* TODO [#E] Discover agents from the database instead of a file list    :commands:feature:prefilter:
+* DONE [#E] Discover agents from the database instead of a file list    :commands:feature:prefilter:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.5
 :LABELS:   ["commands","feature","prefilter"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Won't do: discovering agents from the database presupposes a database, and there is none as of 2026-08-19. Agents are found through org-agents-files (files, directories, or the symbol agenda). If discovering them by content over a corpus is still wanted, that is a new issue and ripgrep is the obvious mechanism -- the same pattern global-org-agents-mode already uses to decide whether a buffer mentions :AGENT_QUERY:.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1634,12 +1687,39 @@ an `:AGENT_QUERY+:` continuation.
 :LABELS:   ["feature","prefilter","soundness"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19; the substance stands, the reasons below do not.**
+> The database was replaced by ripgrep, so re-derive both refusals against the
+> new backend rather than reading the ones stated here.
+>
+> `todo`/`done`: the reason was a database keyword column that might be empty
+> and a database notion of `todo` that included done keywords. Neither exists.
+> The real question now is whether ripgrep can decide, from the bytes of a
+> heading line alone, a SUPERSET of what org-ql's `todo` predicate matches —
+> which turns on `org-todo-keywords` being per-buffer and settable by a
+> `#+TODO:` line, so one pattern over a mixed corpus is the thing to prove or
+> refuse.
+>
+> `tags`: the reason was that the database missed `#+FILETAGS:`. ripgrep does
+> not miss it — it reads the same bytes org-ql does — but a file-level tag is
+> inherited by every entry and is NOT on the heading line, so a pattern
+> anchored on the heading under-matches for exactly the org-jw reason,
+> arrived at differently. A sound push would have to admit a file on either
+> the heading tag list or a `#+FILETAGS:` line.
+>
+> Acceptance vehicle: no differential suite exists any more. Each new row
+> needs an `org-agents-test-rg-covers-*` test over the fixture corpus in
+> `org-agents-test--rg-corpus`, asserting through
+> `org-agents-test--should-cover` that the candidate set covers org-ql's own
+> answer, plus a fixture that the row LOSES if the pattern is wrong.
+> `orga-org-jw-followups-a35.4`, which used to block this, was closed won't-do
+> and the edge removed.
 
 ## Context
 
@@ -1701,15 +1781,6 @@ for growing the table.
   },
   {
     "issue_id": "orga-deferred-features-fbk.6",
-    "depends_on_id": "orga-org-jw-followups-a35.4",
-    "type": "blocks",
-    "created_at": "2026-08-19T17:30:23.385823Z",
-    "created_by": "johnw",
-    "metadata": "{}",
-    "thread_id": ""
-  },
-  {
-    "issue_id": "orga-deferred-features-fbk.6",
     "depends_on_id": "orga-prove-the-prefilter-b9p.1",
     "type": "related",
     "created_at": "2026-08-19T17:30:23.385823Z",
@@ -1727,12 +1798,28 @@ for growing the table.
 :LABELS:   ["feature","prefilter","soundness"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19: evidence re-pointed, substance unchanged.**
+> `org-agents--skeleton` was deleted; the splitter is
+> `org-agents--prefilter-conjuncts` plus the `org-agents--pushdown-fns` alist,
+> which returns a list of abstract conjuncts and emits no string. The
+> abstract vocabulary this issue would extend is `(property NAME)`,
+> `(property NAME VALUE)`, `(scheduled)`, `(deadline)`, `(closed)` and
+> `(heading LITERAL...)`.
+>
+> The acceptance vehicle is no longer a differential suite against a database
+> — there is none. It is an `org-agents-test-rg-covers-*` test over the
+> fixture corpus, asserting through `org-agents-test--should-cover` that the
+> candidates cover org-ql's own answer, plus a fixture the row loses if the
+> analysis is wrong. Note that the ripgrep backend INTERSECTS per-conjunct
+> file sets and has no union: pushing a disjunction means emitting one
+> pattern that admits either branch, not unioning two answers.
 
 ## Context
 
@@ -1808,12 +1895,26 @@ differential suite running first.
 :LABELS:   ["feature","prefilter"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19: the argument holds, the counterparty changed.**
+> The soundness argument reads better now, not worse: `:inherit nil` asks for
+> the entry's own drawer, and the entry's own drawer is exactly what
+> `^[ \t]*:NAME\+?:` matches — the bytes org-ql itself reads, with no second
+> store to agree with. Note that `org-agents--pushdown-fns`' `property` row
+> matches only the two- and three-element forms by ARITY, so a
+> plist-bearing form falls through to `(_ nil)`; admitting `:inherit nil`
+> means adding an arm, not relaxing a predicate.
+>
+> Acceptance vehicle: an `org-agents-test-rg-covers-*` test over
+> `org-agents-test--rg-corpus` through `org-agents-test--should-cover`, not a
+> differential case — the differential suite was deleted with the database.
+> The `related` edge to the deleted database issue is stale.
 
 ## Context
 
@@ -1884,12 +1985,21 @@ had to be retracted twice.  Whatever lands here must not restate it.
 :LABELS:   ["commands","feature"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:53]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
+
+> **Reconciled 2026-08-19.** The mechanism to gate is ripgrep, not a CLI:
+> there is no skeleton state and no CLI state, only
+> `org-agents--needs-prefilter-p`, which today decides purely by scope SHAPE.
+> This issue is the file-count threshold that `orga-gate-prefilter-by-cost-1h3`
+> proposed and did not implement. Numbers to size it against, measured
+> 2026-08-19: one ripgrep run over the corpus costs 0.10 to 0.45 s, while an
+> `agenda`-scope update over eight files totalling 8.9 MB costs 0.03 to 0.05 s
+> once the buffers are visited.
 
 ## Context
 
@@ -1956,90 +2066,81 @@ it turns out to name fewer than N files.
 ]
 #+end_src
 
-* TODO [#B] Gate the database prefilter on how much it can save
+* TODO [#D] Bound how long the ripgrep prefilter can block Emacs
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-gate-prefilter-by-cost-1h3
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 12:31]
-:MODIFIED: [2026-08-19 Wed 12:32]
+:MODIFIED: [2026-08-19 Wed 16:52]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
 :END:
 
-Gate the database prefilter on how much it can save, not on whether it is configured.
+Re-scoped 2026-08-19: the database this issue was written against is gone, two of
+its three acceptance criteria are now met, and the third survives the backend
+swap unchanged.
 
-## Steps to Reproduce
+## What is already done
 
-1. Configure the bridge: set `org-db-cli-config-file`, `org-db-cli-db-url` and
-   an `org-db-cli-executable` that `executable-find` resolves.
-2. Write an agent with `:AGENT_SCOPE: agenda` — a bounded scope naming 8 files
-   here — and a pushable conjunct, e.g.
-   `:AGENT_QUERY: (and (todo) (property "NEXT_REVIEW"))`.
-3. Run `M-x org-agents-update` on it.
+The cost gate shipped. `org-agents--needs-prefilter-p` decides by SCOPE, not by
+whether the query has something to push: `active`, `all` and a directory are
+narrowed because nothing about them bounds what they hold; `agenda` and an
+explicit file list name their files and are read live, where a prefilter is pure
+overhead. Both halves are pinned —
+`org-agents-test-prefilter-not-consulted-for-named-files` makes the spawn
+DETECTABLE rather than assumed away (a `call-process` stub that records the
+breach in a flag, because the backend catches errors by design and would swallow
+a signalling stub), and `org-agents-test-prefilter-consulted-for-a-corpus-scope`
+asserts the other direction so the first cannot be satisfied by never
+prefiltering at all.
 
-Observed: `org db query` is spawned and the query round-trips to PostgreSQL, in
-order to narrow a file set the scope already enumerates. Point
-`org-db-cli-executable` at a script that `touch`es a sentinel to see it happen;
-point `org-db-cli-db-url` at an unroutable host to watch Emacs block with no
-bound. Expected: no subprocess, because the scope names its files.
+Measured 2026-08-19, replacing this issue's original 0.018 s figure, which was
+quoted as measured in four places by people who had not measured it: an
+`agenda`-scope update over the eight largest files of the corpus — 8.9 MB, 373
+matches — costs 0.03 to 0.05 s once the buffers are visited, and spawns nothing.
+Verified by counting calls to `org-agents--rg-run` across three rounds: zero. One
+ripgrep run over the corpus costs 0.10 to 0.45 s.
 
-`org-agents-mode` already binds `org-db-cli-db-url` to nil for the save path, so
-reproduce this through the *manual* command rather than a save.
+The defcustom file-count threshold this issue proposed was NOT implemented, and
+is tracked separately as `orga-deferred-features-fbk.9`.
 
-## Problem
+## What survives, and is the whole of this issue now
 
-`org-agents--scope-files` (org-agents.el:966-995) consults the bridge whenever
-the query has a pushable conjunct, with no test on the scope and no test on how
-many files the scope names:
-
-```elisp
-(candidates (and skeleton (org-db-cli-available-p) (org-db-cli-query-files skeleton)))
-```
-
-`org-db-cli--run` (org-db-cli.el:67-101) is a synchronous `call-process` with no
-timeout. So for an `agenda`-scope agent naming 8 files, org-agents pays a
-subprocess spawn plus a round trip to a possibly-remote PostgreSQL in order to
-narrow *8 files* — and if the host is unreachable, Emacs blocks until TCP gives
-up, with no bound.
-
-Measured 2026-08-19: a live agenda-scope update over those 8 files (2.4 MB,
-`todo.org` alone 1.3 MB / 373 matches) costs **0.018s** when the dirtied buffer
-is re-scanned and the rest are org-ql cache hits. Narrowing that is not worth a
-network round trip on its best day.
-
-`org-agents-mode` already binds the bridge away for the save path specifically,
-because a save must never block on a network. That fixes the acute case and
-leaves the general one.
-
-## Proposal
-
-Consult the prefilter only when it can plausibly pay for itself:
-
-- always for a scope in `org-agents--corpus-scopes` or a directory (they have no
-  bound, and this is the case the prefilter exists for);
-- for a named-file scope, only when the file count exceeds a defcustom threshold
-  (some tens of files — the crossover is where a spawn plus a round trip beats
-  opening that many buffers; measure before fixing the default);
-- never when the base file set is already in memory as up-to-date buffers, since
-  org-ql will take cache hits on all of them.
-
-Independently: give `org-db-cli--run` a timeout so no code path can block Emacs
-without bound. `call-process` has no timeout argument, so this means either an
-asynchronous process with a timer, or a `timeout(1)`-style wrapper. The former
-is the honest fix and is a larger change; the latter is one prefix argument and
-covers the realistic failure.
+`org-agents--rg-run` is a synchronous `call-process` with no timeout, and the
+argument vector passes `--follow`. So an unbounded scope whose root reaches a
+slow or unresponsive filesystem through a followed symlink — an NFS or sshfs
+mount, a sleeping external disk — blocks Emacs inside the prefilter for as long
+as the filesystem takes. This is milder than the version this replaces: there is
+no network protocol and no TCP timeout to wait out, and `C-g` escapes the
+synchronous call (`org-agents--rg-run`'s docstring commits to that: a `quit`
+during the call still escapes, as it must). But "the user can always interrupt
+it" is not the same as "no code path blocks", and the original criterion asked
+for the latter.
 
 ## Acceptance Criteria
 
-- An agenda-scope agent with a pushable conjunct spawns no subprocess (a test
-  asserts it, the way the save-path test does).
-- A corpus-scope agent still uses the prefilter.
-- No org-agents code path can block Emacs indefinitely on an unreachable
-  database host; a test covers the timeout with a deliberately hanging stub.
+- [x] an agenda-scope agent with a pushable conjunct spawns no subprocess, and a
+      test asserts it
+- [x] a corpus-scope agent still uses the prefilter, and a test asserts that too
+- [ ] the prefilter cannot block Emacs for an unbounded time on an unresponsive
+      filesystem: either `org-agents--rg-run` grows a timeout (which means
+      `make-process` plus a sentinel, or `call-process` under an interrupt timer
+      — `call-process` takes no timeout argument), or the decision to rely on
+      `C-g` is written down as deliberate, with the reasoning, so it stops
+      reading as an oversight
+- [ ] whichever is chosen, a test covers it with a deliberately hanging stub
+
+## Note on --follow
+
+Dropping `--follow` would shrink the exposure and is NOT an option: the flag is
+there because `directory-files-recursively` lists a symlink to a file outside the
+tree and org-ql matches through it, so without it the candidate set would be
+narrower than the scope's own file list — a lost match rather than a slow one.
+See `org-agents--rg-args` and README's honest limitation 4.
 
 * TODO [#D] Report a missing scope file legibly, not as a bufferp type error
 :PROPERTIES:
@@ -2105,15 +2206,17 @@ because the failure is maximally confusing for a trivial cause.
   silently drop one from a scope the user named explicitly (an explicit file
   list is a different case from an agenda that filters itself).
 
-* TODO [#B] org-jw changes the prefilter depends on    :upstream:
+* DONE [#B] org-jw changes the prefilter depends on    :upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35
 :LABELS:   ["org-jw","upstream"]
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Won't do in this tracker, with all seven children. org-agents does not depend on org-jw as of 2026-08-19. The children's measurements and citations are preserved in their bodies for whoever carries them to org-jw's own tracker; closing here records only that org-agents is no longer the thing that would accept a fix.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2156,15 +2259,16 @@ Every org-jw item this project recorded, in dependency order:
 - [ ] no org-agents guarantee still rests on an unfixed org-jw defect without
       saying so in the README
 
-* TODO [#B] org-jw: a property name ending in + loses the whole drawer    :soundness:upstream:
+* DONE [#B] org-jw: a property name ending in + loses the whole drawer    :soundness:upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35.1
 :LABELS:   ["org-jw","soundness","upstream"]
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2245,6 +2349,12 @@ and would leave the equality->existence downgrade in place.
       become unnecessary)
 #+end_example
 
+** Close Reason
+
+Won't do IN THIS TRACKER: org-agents does not depend on org-jw as of 2026-08-19, when ripgrep replaced the PostgreSQL prefilter and org-db-cli.el was deleted. This tracker is org-agents', and nothing here can be verified or accepted against it any more.
+
+NOT A JUDGEMENT THAT THE BUG IS UNREAL. Every one of these was measured, and each remains a real defect in the org-jw Haskell project, with its evidence and file:line citations preserved in this issue's body. If org-jw wants them, they belong in org-jw's own tracker -- copy the body across rather than re-deriving it. Closing here only records that org-agents will not be the thing that proves or consumes the fix.
+
 ** Dependencies
 
 #+begin_src json
@@ -2270,15 +2380,16 @@ and would leave the equality->existence downgrade in place.
 ]
 #+end_src
 
-* TODO [#C] org-jw: batch the file-path lookup in db query --format json    :perf:upstream:
+* DONE [#C] org-jw: batch the file-path lookup in db query --format json    :perf:upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35.2
 :LABELS:   ["org-jw","perf","upstream"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2333,6 +2444,12 @@ that each repo's change stands alone.
       eyeball)
 - [ ] a before/after timing is recorded on a corpus-sized data set
 
+** Close Reason
+
+Won't do IN THIS TRACKER: org-agents does not depend on org-jw as of 2026-08-19, when ripgrep replaced the PostgreSQL prefilter and org-db-cli.el was deleted. This tracker is org-agents', and nothing here can be verified or accepted against it any more.
+
+NOT A JUDGEMENT THAT THE BUG IS UNREAL. Every one of these was measured, and each remains a real defect in the org-jw Haskell project, with its evidence and file:line citations preserved in this issue's body. If org-jw wants them, they belong in org-jw's own tracker -- copy the body across rather than re-deriving it. Closing here only records that org-agents will not be the thing that proves or consumes the fix.
+
 ** Dependencies
 
 #+begin_src json
@@ -2349,15 +2466,16 @@ that each repo's change stands alone.
 ]
 #+end_src
 
-* TODO [#C] org-jw: Query.hs has no tests    :test:upstream:
+* DONE [#C] org-jw: Query.hs has no tests    :test:upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35.3
 :LABELS:   ["org-jw","test","upstream"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2415,6 +2533,12 @@ Golden-SQL assertions are enough for most of it and need no database.
 - [ ] a deliberate mutation of the date fold (first-wins instead of last-wins)
       fails a named test
 
+** Close Reason
+
+Won't do IN THIS TRACKER: org-agents does not depend on org-jw as of 2026-08-19, when ripgrep replaced the PostgreSQL prefilter and org-db-cli.el was deleted. This tracker is org-agents', and nothing here can be verified or accepted against it any more.
+
+NOT A JUDGEMENT THAT THE BUG IS UNREAL. Every one of these was measured, and each remains a real defect in the org-jw Haskell project, with its evidence and file:line citations preserved in this issue's body. If org-jw wants them, they belong in org-jw's own tracker -- copy the body across rather than re-deriving it. Closing here only records that org-agents will not be the thing that proves or consumes the fix.
+
 ** Dependencies
 
 #+begin_src json
@@ -2440,15 +2564,16 @@ Golden-SQL assertions are enough for most of it and need no database.
 ]
 #+end_src
 
-* TODO [#D] org-jw: file tags never reach entry_tags    :soundness:upstream:
+* DONE [#D] org-jw: file tags never reach entry_tags    :soundness:upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35.4
 :LABELS:   ["org-jw","soundness","upstream"]
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:54]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2485,7 +2610,7 @@ The cause is that the header-tags parse is commented out in org-parse.
 - `org-db/src/Org/DB/Store.hs:657` — `INSERT INTO entry_tags (entry_id, tag,
   is_inherited, source_id)`; the `is_inherited` column exists, so the schema
   already anticipates tags an entry did not write itself.
-- Spec `docs/superpowers/specs/2026-08-18-org-agents-design.md`, soundness
+- Spec `docs/design.md`, soundness
   table: "Everything else is residual in v1 — explicitly including … `tags`
   (misses `#+FILETAGS:`)".
 
@@ -2497,6 +2622,12 @@ The cause is that the header-tags parse is commented out in org-parse.
 - [ ] the org-agents differential suite gains (or converts) a case asserting the
       `tags` conjunct is now a superset filter — a prerequisite for pushing it
 - [ ] the spec's soundness-table parenthetical is corrected when it lands
+
+** Close Reason
+
+Won't do IN THIS TRACKER: org-agents does not depend on org-jw as of 2026-08-19, when ripgrep replaced the PostgreSQL prefilter and org-db-cli.el was deleted. This tracker is org-agents', and nothing here can be verified or accepted against it any more.
+
+NOT A JUDGEMENT THAT THE BUG IS UNREAL. Every one of these was measured, and each remains a real defect in the org-jw Haskell project, with its evidence and file:line citations preserved in this issue's body. If org-jw wants them, they belong in org-jw's own tracker -- copy the body across rather than re-deriving it. Closing here only records that org-agents will not be the thing that proves or consumes the fix.
 
 ** Dependencies
 
@@ -2514,15 +2645,16 @@ The cause is that the header-tags parse is commented out in org-parse.
 ]
 #+end_src
 
-* TODO [#D] org-jw: legacy JSON printers emit unescaped control characters    :upstream:
+* DONE [#D] org-jw: legacy JSON printers emit unescaped control characters    :upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35.5
 :LABELS:   ["org-jw","upstream"]
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2577,6 +2709,12 @@ the symptom would be silently missing rows rather than a visible error.
       `search` printer, and that the raw byte is absent
 - [ ] no second escaping implementation is left in the executable
 
+** Close Reason
+
+Won't do IN THIS TRACKER: org-agents does not depend on org-jw as of 2026-08-19, when ripgrep replaced the PostgreSQL prefilter and org-db-cli.el was deleted. This tracker is org-agents', and nothing here can be verified or accepted against it any more.
+
+NOT A JUDGEMENT THAT THE BUG IS UNREAL. Every one of these was measured, and each remains a real defect in the org-jw Haskell project, with its evidence and file:line citations preserved in this issue's body. If org-jw wants them, they belong in org-jw's own tracker -- copy the body across rather than re-deriving it. Closing here only records that org-agents will not be the thing that proves or consumes the fix.
+
 ** Dependencies
 
 #+begin_src json
@@ -2593,15 +2731,16 @@ the symptom would be silently missing rows rather than a visible error.
 ]
 #+end_src
 
-* TODO [#D] org-jw: printers emit an entry ltree where a file path belongs    :upstream:
+* DONE [#D] org-jw: printers emit an entry ltree where a file path belongs    :upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35.6
 :LABELS:   ["org-jw","upstream"]
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2651,6 +2790,12 @@ because this project found it.
 - [ ] a test asserts `db review --format json`'s `"file"` is a real path for a
       nested entry
 
+** Close Reason
+
+Won't do IN THIS TRACKER: org-agents does not depend on org-jw as of 2026-08-19, when ripgrep replaced the PostgreSQL prefilter and org-db-cli.el was deleted. This tracker is org-agents', and nothing here can be verified or accepted against it any more.
+
+NOT A JUDGEMENT THAT THE BUG IS UNREAL. Every one of these was measured, and each remains a real defect in the org-jw Haskell project, with its evidence and file:line citations preserved in this issue's body. If org-jw wants them, they belong in org-jw's own tracker -- copy the body across rather than re-deriving it. Closing here only records that org-agents will not be the thing that proves or consumes the fix.
+
 ** Dependencies
 
 #+begin_src json
@@ -2667,15 +2812,16 @@ because this project found it.
 ]
 #+end_src
 
-* TODO [#E] org-jw: three small items to confirm or refute    :upstream:
+* DONE [#E] org-jw: three small items to confirm or refute    :upstream:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-org-jw-followups-a35.7
 :LABELS:   ["org-jw","upstream"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2717,6 +2863,12 @@ Recorded in the Task 1 review's deferred minors and carried into worklist item
       the finding is written into this issue
 - [ ] the confirmed ones are fixed, or split into their own issues
 - [ ] this issue is closed once none of the three is still an open question
+
+** Close Reason
+
+Won't do IN THIS TRACKER: org-agents does not depend on org-jw as of 2026-08-19, when ripgrep replaced the PostgreSQL prefilter and org-db-cli.el was deleted. This tracker is org-agents', and nothing here can be verified or accepted against it any more.
+
+NOT A JUDGEMENT THAT THE BUG IS UNREAL. Every one of these was measured, and each remains a real defect in the org-jw Haskell project, with its evidence and file:line citations preserved in this issue's body. If org-jw wants them, they belong in org-jw's own tracker -- copy the body across rather than re-deriving it. Closing here only records that org-agents will not be the thing that proves or consumes the fix.
 
 ** Dependencies
 
@@ -2854,7 +3006,7 @@ creates.
 :LABELS:   ["dot-emacs","hygiene"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:54]
 :CREATED_BY: johnw
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
@@ -2881,7 +3033,9 @@ Dropping the two lines would remove the need for that stage.
 
 Measured during development: dropping the require from only one of the two files
 leaves the warning (each is necessary, neither sufficient); dropping both gives a
-zero-warning compile of `org-agents.el` and `org-db-cli.el`.  Neither file becomes
+zero-warning compile of `org-agents.el`.  (Until 2026-08-19 it compiled
+`org-db-cli.el` beside it; that file was deleted when ripgrep replaced the
+database prefilter, so the gate compiles one file now.)  Neither file becomes
 warning-free in itself — `org-ext.el` has 13 unrelated warnings and `org-ql-ext.el`
 3 — so this is not a cleanup that finishes anything, just one that removes a dead
 line and a build workaround.
@@ -3076,15 +3230,17 @@ Pick one, and it is a matter of taste:
 ]
 #+end_src
 
-* TODO [#B] Prove the database prefilter's superset property    :differential:prefilter:
+* DONE [#B] Prove the database prefilter's superset property    :differential:prefilter:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prove-the-prefilter-b9p
 :LABELS:   ["differential","prefilter"]
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Superseded, and its third success criterion met by other means. The epic asked for the database prefilter's superset property to be proven; the database is gone. The property is now proven for the prefilter that shipped, by a suite that actually executes -- which is what the epic was really after. See b9p.1 and b9p.2.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -3131,15 +3287,17 @@ and are tracked under the org-jw epic.
 - [ ] the project no longer has to carry the caveat "the prefilter's superset
       property is designed, wired, self-verifying and unproven"
 
-* TODO [#A] Run the 20 differential tests against a scratch PostgreSQL database    :differential:prefilter:test:
+* DONE [#A] Run the 20 differential tests against a scratch PostgreSQL database    :differential:prefilter:test:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prove-the-prefilter-b9p.1
 :LABELS:   ["differential","prefilter","test"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Won't do: the differential suite, the bridge it ran through, and the database it compared against were all removed on 2026-08-19 when ripgrep replaced the PostgreSQL prefilter. There is nothing left to run: the 20 tests are deleted, org-db-cli.el is deleted, ORG_AGENTS_TEST_DB_URL / _CONFIG / _KEYWORDS / _ORG_EXE are read nowhere in the repository, and the only call-process in the package is ripgrep. This was the tracker's sole P0 and therefore the first thing 'obr ready' handed out, so a worker following AGENTS.md would have provisioned a scratch PostgreSQL before discovering the impossibility. What replaced the unproven argument: the superset property is now asserted over a fixture corpus inside a plain 'make test' -- 18 tests through org-agents-test--should-cover, 15 of them org-agents-test-rg-covers-*, plus a real-corpus differential over 290 heading literals and an exhaustive 482,148-substring check of the heading guard. See docs/measured-facts.md N1.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -3234,15 +3392,17 @@ the only thing that would have caught that class independently.
 ]
 #+end_src
 
-* TODO [#D] Measure what the prefilter is actually worth    :perf:prefilter:
+* DONE [#D] Measure what the prefilter is actually worth    :perf:prefilter:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prove-the-prefilter-b9p.2
 :LABELS:   ["perf","prefilter"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Done. What the prefilter is worth was measured on 2026-08-19 against the real corpus and is recorded in README.md's table under 'The ripgrep prefilter': one ripgrep run narrows 3,669 files to 314 in 0.09 s, org-ql over those finishes in 12.1 s with 764 matches, and the same query unnarrowed did not finish in nine minutes. Independently reproduced today over an 'active' scope: 3,634 files narrowed to 309 in 0.50 s, 9.8 s to 764 matches over 316 buffers. The CLI-side perf follow-up this issue was waiting on (queryFilePath per file id, three quadratic dedup passes) is moot -- that code is not org-agents' any more.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -3310,28 +3470,21 @@ both numbers become cheap to get.
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
-  },
-  {
-    "issue_id": "orga-prove-the-prefilter-b9p.2",
-    "depends_on_id": "orga-prove-the-prefilter-b9p.1",
-    "type": "blocks",
-    "created_at": "2026-08-19T17:30:22.580940Z",
-    "created_by": "johnw",
-    "metadata": "{}",
-    "thread_id": ""
   }
 ]
 #+end_src
 
-* TODO [#B] Add a ripgrep prefilter backend so corpus scopes need no database
+* DONE [#B] Add a ripgrep prefilter backend so corpus scopes need no database
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-rg-prefilter-backend-wlc
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 12:31]
-:MODIFIED: [2026-08-19 Wed 12:32]
+:MODIFIED: [2026-08-19 Wed 16:51]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 16:51]
+:CLOSE_REASON: Done, 2026-08-19, across commits 85996bf..8a3f0a2. ripgrep is the only prefilter; org-db-cli.el, org-db-cli-test.el and the 20 database differential tests are deleted. org-agents--pushdown-fns kept its backend-agnostic abstract conjuncts and org-agents--skeleton's prin1-to-string was dropped rather than made to serialize for two backends. Note two departures from this issue's own plan: conjuncts are always INTERSECTED, never unioned for 'or' -- a conjunct under 'or' is left residual by omission, which widens -- and the property pattern is ^[ \t]*:NAME\+?: rather than ^[ \t]*:NAME:, because an entry whose only line is ':NAME+: v' answers org-entry-get and org-ql matches it. The 45.98 s / 3.90 s figures quoted in this issue's own table were not reproducible and have been retracted everywhere they appeared; see README's table for the numbers that replaced them.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
