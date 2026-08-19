@@ -909,6 +909,99 @@ regions are collected before the first edit and acted on back to front."
           (should (= 1 (cl-count-if (lambda (l) (string-match-p title l))
                                     (split-string text "\n")))))))))
 
+(ert-deftest org-agents-test-children-spares-a-child-whose-match-is-not-t ()
+  "Only `:AGENT_MATCH: t' exactly authorizes reaping a child.
+`org-agents--alias-regions' compares the value with `equal', because a
+generated alias is the one text this package deletes that it did not
+write, and `AGENT_MATCH' arrives as text out of a file like every other
+agent property.  A child saying anything else -- `nil', the same word in
+another case, a property line with nothing after it -- is the user's, and
+is neither deleted nor retitled."
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent))
+          (mine '("nil" "yes" "T" "true")))
+      ;; A generated alias first, so the reaping loop demonstrably runs and
+      ;; the children below are spared by their value rather than by a
+      ;; loop that found nothing to do.
+      (should (= 1 (org-agents--render-children
+                    agent (org-agents--collect agent))))
+      (goto-char (point-max))
+      (dolist (value mine)
+        (insert "** Mine " value "\n:PROPERTIES:\n:AGENT_MATCH: " value
+                "\n:END:\nwhat I wrote under " value "\n"))
+      ;; And one whose property line is written but says nothing, which
+      ;; `org-entry-get' answers with the empty string.
+      (insert "** Mine blank\n:PROPERTIES:\n:AGENT_MATCH:\n:END:\n")
+      (let ((before (buffer-string)))
+        (goto-char (point-min))
+        (should (= 0 (org-agents--render-children agent nil)))
+        (let ((after (buffer-string)))
+          ;; The alias was reaped ...
+          (should-not (string-match-p "Fix widget" after))
+          ;; ... and from the first of the user's children to the end of
+          ;; the buffer nothing changed at all: no deletion, no stale mark.
+          (should-not (string-match-p "(stale)" after))
+          (should (equal (substring before (string-match "\\*\\* Mine nil"
+                                                         before))
+                         (substring after (string-match "\\*\\* Mine nil"
+                                                        after)))))))))
+
+(ert-deftest org-agents-test-children-render-with-the-element-cache-on ()
+  "A render agrees with itself whether or not `org-element-use-cache' is on.
+The cache is on in ordinary use and off in every other fixture here, and
+every edit `org-agents--render-children' makes is followed by an element
+read -- among them the `org-ql-select' of the render after it, which is
+where the cache is actually consulted: the renderer's own reads go
+through `org-back-to-heading', `org-end-of-subtree' and
+`org-property-start-re', and none of those touch `org-element' at all.
+
+Both of the paths that edit are taken: the second render deletes the
+pristine alias the first wrote and writes it again, and the third finds
+that alias annotated and retitles it in place instead.  The shape of the
+result is pinned as well as the agreement, because two passes wrong in
+the same way would agree with each other."
+  (let (texts)
+    (dolist (cache (list nil (default-value 'org-element-use-cache)))
+      (org-agents-test--with-corpus
+        (let ((org-element-use-cache cache))
+          (with-current-buffer (find-file-noselect agent-file)
+            (goto-char (point-min))
+            ;; Not a vacuous pass: where the cache is asked for, it is
+            ;; really on, so what follows reads the buffer through it.
+            (org-element-at-point)
+            (should (eq (and cache t) (and (org-element--cache-active-p) t)))
+            (let ((agent (org-agents--read-agent)))
+              ;; 1: insert.
+              (org-agents--render-children agent (org-agents--collect agent))
+              ;; 2: the alias is pristine, so it is deleted and rewritten.
+              (goto-char (point-min))
+              (org-agents--render-children agent (org-agents--collect agent))
+              ;; 3: annotated, so it is kept and retitled in place.
+              (goto-char (point-max))
+              (insert "*** annotated by hand\n")
+              (goto-char (point-min))
+              (org-agents--render-children agent (org-agents--collect agent))
+              ;; Each pass gets its own corpus, whose name the agent's
+              ;; `:AGENT_SCOPE:' spells out; the outline around it is what
+              ;; the two passes have to agree on.
+              (push (replace-regexp-in-string (regexp-quote dir) "<corpus>"
+                                              (buffer-string))
+                    texts))))))
+    (should (= 2 (length texts)))
+    ;; Both passes agree, and both are right: two passes that had gone
+    ;; wrong in the same way would agree too.
+    (should (equal (car texts) (cadr texts)))
+    (dolist (text texts)
+      (should (= 1 (cl-count-if (lambda (l) (string-match-p "Fix widget" l))
+                                (split-string text "\n"))))
+      ;; The annotation is still the alias's own child, which is what
+      ;; pinned the alias in the first place.
+      (should (string-match-p
+               (concat "^\\*\\* \\[\\[id:[^\n]*Fix widget[^\n]*\n"
+                       ":PROPERTIES:\n:AGENT_MATCH: t\n:END:\n"
+                       "\\*\\*\\* annotated by hand$")
+               text)))))
+
 (ert-deftest org-agents-test-children-spares-a-sibling-agent ()
   "Rendering one agent must not move the next agent's anchor.
 `org-agents-update-buffer' reads the agents of a buffer before it
@@ -940,6 +1033,43 @@ agent's new alias instead of on its own heading."
                        (goto-char (point-min))
                        (search-forward "Fix widget"))
                      (marker-position (plist-get second-agent :marker)))))))))
+
+(ert-deftest org-agents-test-children-spares-a-sibling-agent-on-a-second-render ()
+  "The delete path must spare the next agent's anchor as the insert does.
+A first render exercises only the insert.  The second runs the
+back-to-front `delete-region' loop over the pristine alias the first one
+wrote, with the second agent's marker live throughout -- which is where a
+stranded marker showed up before.  A marker a deletion moved would leave
+the second agent reading the first agent's entry."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* First agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"
+              "* Second agent\n:PROPERTIES:\n:AGENT_QUERY: (todo)\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let* ((first-agent (org-agents--read-agent))
+             (second-agent (progn (goto-char (point-min))
+                                  (search-forward "Second agent")
+                                  (org-agents--read-agent))))
+        (should (= 1 (org-agents--render-children
+                      first-agent (org-agents--collect first-agent))))
+        (let ((once (buffer-string)))
+          (should (= 1 (org-agents--render-children
+                        first-agent (org-agents--collect first-agent))))
+          ;; Idempotent with a sibling present, not merely without one.
+          (should (equal once (buffer-string))))
+        (should (= 1 (cl-count-if (lambda (l) (string-match-p "Fix widget" l))
+                                  (split-string (buffer-string) "\n"))))
+        ;; The second agent's marker still names its own headline, so its
+        ;; query is still read out of its own drawer.
+        (should (equal "Second agent"
+                       (org-with-point-at (plist-get second-agent :marker)
+                         (org-get-heading t t t t))))
+        (should (equal '(todo)
+                       (org-with-point-at (plist-get second-agent :marker)
+                         (plist-get (org-agents--read-agent) :query))))))))
 
 (ert-deftest org-agents-test-children-format-suffix ()
   "`:AGENT_FORMAT:' names properties to show after the link."
