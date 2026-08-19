@@ -1133,6 +1133,38 @@ for no limit, which is not what a block saying nothing about one asks."
     (org-dblock-update)
     (should (= 2 org-agents--last-count))))
 
+(ert-deftest org-agents-test-dblock-refuses-a-nil-scope-or-view ()
+  "A block may clear a property that has a `none' of its own, and no other.
+`:sort', `:limit', `:columns' and `:format' each have one.  A scope does
+not: nil resolves to no files at all, so the block would render empty and
+read exactly like a query that matched nothing.  Neither does a view: nil
+is not `table', so it would quietly degrade to a list and read out of
+`org-agents--check-row-sort' as \"the view is `nil'\"."
+  (org-agents-test--with-dblock-agent "list" ":AGENT_LIMIT: 1\n"
+    (should-error (org-agents--dblock-agent '(:name "org-agents" :scope nil))
+                  :type 'user-error)
+    (should-error (org-agents--dblock-agent '(:name "org-agents" :view nil))
+                  :type 'user-error)
+    (dolist (key '(:sort :limit :columns :format))
+      (should-not (plist-get (org-agents--dblock-agent
+                              (list :name "org-agents" key nil))
+                             key)))))
+
+(ert-deftest org-agents-test-dblock-nil-scope-empties-nothing ()
+  "A refused parameter leaves the block as it was, rather than emptying it.
+An empty body and a count of none are what a query that matched nothing
+looks like, and a scope that names no files must not be read as one."
+  (org-agents-test--with-dblock-agent "list" ""
+    (org-dblock-update)
+    (should (= 1 org-agents--last-count))
+    (end-of-line)
+    (insert " :scope nil")
+    (beginning-of-line)
+    (let ((before (buffer-string)))
+      (org-dblock-update)
+      (should (equal before (buffer-string)))
+      (should (null org-agents--last-count)))))
+
 (ert-deftest org-agents-test-dblock-table-without-links-builds-none ()
   "A table with no link column builds no link, and registers no ID.
 `org-agents--link-to' registers the id location of every match it links
@@ -1407,6 +1439,87 @@ instead, it would move a block whose bounds Org had already worked out."
         (should-not (cl-find-if (lambda (l) (string-match-p "^    - " l))
                                 lines))))))
 
+(ert-deftest org-agents-test-update-list-view-creates-block ()
+  "The list branch creates the block on first update, then reads its count.
+No window shows this buffer, which is the state every agent is in during
+an update over a file set."
+  (org-agents-test--with-corpus
+    (set-window-buffer (selected-window) (get-buffer-create "*scratch*"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-min))
+      (org-agents-update)
+      (should (string-match-p "#\\+BEGIN: org-agents" (buffer-string)))
+      (should (string-match-p "^- \\[\\[id:11111111-" (buffer-string)))
+      ;; The property is written above the block, and the block survives it.
+      (should (equal "1" (car (split-string
+                               (org-entry-get nil "AGENT_MATCHED"))))))))
+
+(ert-deftest org-agents-test-update-list-view-is-idempotent ()
+  "A second update writes into the block it wrote, not beside it."
+  (org-agents-test--with-corpus
+    (set-window-buffer (selected-window) (get-buffer-create "*scratch*"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (dotimes (_ 2) (goto-char (point-min)) (org-agents-update))
+      (should (= 1 (cl-count-if
+                    (lambda (l) (string-match-p "#\\+BEGIN: org-agents" l))
+                    (split-string (buffer-string) "\n")))))))
+
+(ert-deftest org-agents-test-update-reports-a-failed-block-render ()
+  "A render that failed must not be reported with an older count.
+The refusal here is a real one -- an unapproved residual query, refused
+inside the writer -- rather than a stubbed failure."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-min))
+      (org-agents-update)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_QUERY"
+                     "(and (string-match \"x\" (or (org-entry-get nil \"ID\") \"\")))")
+      (goto-char (point-min))
+      (let ((org-agents--session-approved (make-hash-table :test 'equal))
+            (org-agents-safe-queries nil)
+            (noninteractive t))
+        (let ((err (should-error (org-agents-update) :type 'user-error)))
+          ;; What the render failed with, not merely that it failed.
+          (should (string-match-p "not approved" (cadr err)))
+          (should (string-match-p "Review agent" (cadr err)))))
+      ;; The previous body is back and the previous count still describes it.
+      (should (string-match-p "^- \\[\\[id:11111111-" (buffer-string)))
+      (should (string-match-p "\\`1 \\[" (org-entry-get nil "AGENT_MATCHED"))))))
+
+(ert-deftest org-agents-test-update-buffer-indents-in-the-right-buffer ()
+  "An indented block survives an update of a buffer no window shows.
+`org-update-dblock' indents the body the writer wrote by selecting the
+window it was called from and working in whatever buffer that window
+shows.  Over a buffer nothing displays -- every agent of an update over a
+file set -- that is a stranger's buffer, where the pass fails, or worse
+indents a block that is none of ours."
+  (org-agents-test--with-corpus
+    (set-window-buffer (selected-window) (get-buffer-create "*scratch*"))
+    (with-temp-file agent-file
+      (insert "* Block agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:AGENT_VIEW: list\n:END:\n"
+              "  #+BEGIN: org-agents\n  #+END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (should (string-match-p "updated 1 agent\\'" (org-agents-update-buffer)))
+      (should (string-match-p "^  - \\[\\[id:11111111-" (buffer-string)))
+      ;; The window is where it was, still showing what it showed.
+      (should (equal "*scratch*" (buffer-name (window-buffer (selected-window)))))
+      ;; A second update neither drops the indentation nor doubles it.
+      (org-agents-update-buffer)
+      (let ((lines (split-string (buffer-string) "\n")))
+        (should (= 1 (cl-count-if (lambda (l) (string-match-p "^  - \\[\\[id:" l))
+                                  lines)))
+        (should-not (cl-find-if (lambda (l) (string-match-p "^    - " l))
+                                lines))))))
+
 (ert-deftest org-agents-test-update-writes-the-block-at-point ()
   "One agent may carry several blocks; an update writes the one at point.
 The first block of the agent's subtree need not be the block the user is
@@ -1430,6 +1543,60 @@ standing in."
         (should (= 1 (cl-count-if
                       (lambda (l) (string-match-p "^- \\[\\[id:" l))
                       (split-string (buffer-string) "\n"))))))))
+
+(ert-deftest org-agents-test-update-finds-only-its-own-block ()
+  "The block an agent renders into is one in the agent's own entry.
+A block under a child heading is that child's -- the writer reads the
+properties of the heading a block sits under -- so adopting it would
+render one agent into another's view."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-max))
+      (insert "** A child of the agent\n#+BEGIN: org-agents\n#+END:\n")
+      (goto-char (point-min))
+      (org-agents-update)
+      (let* ((text (buffer-string))
+             (child (string-match "^\\*\\* A child of the agent" text))
+             (item (string-match "^- \\[\\[id:" text)))
+        ;; The agent opened a block of its own, above its child; the
+        ;; child's block was left as empty as it was found.
+        (should item)
+        (should (< item child))))))
+
+(ert-deftest org-agents-test-update-reads-the-block-name-org-does ()
+  "A block is ours by the name Org reads out of it, not by its spelling.
+A name that merely starts with ours belongs to somebody else, and writing
+into it would call a dblock writer that does not exist; `#+begin:' in
+lower case is a block Org reads like any other."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-max))
+      (insert "#+BEGIN: org-agentsX\n#+END:\n")
+      (goto-char (point-min))
+      (org-agents-update)
+      (should (string-match-p "^- \\[\\[id:" (buffer-string)))
+      ;; A block of our own was opened; the stranger was not written into.
+      (should (= 1 (cl-count-if
+                    (lambda (l) (string-match-p "^#\\+BEGIN: org-agents\\'" l))
+                    (split-string (buffer-string) "\n"))))))
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-max))
+      (insert "#+begin: org-agents\n#+end:\n")
+      (goto-char (point-min))
+      (org-agents-update)
+      ;; Written into the block that was there, not beside it: one block
+      ;; in the buffer, counted case-insensitively as Org reads them.
+      (should (string-match-p "^- \\[\\[id:" (buffer-string)))
+      (should (= 1 (cl-count-if
+                    (lambda (l) (string-match-p "^#\\+begin: org-agents" l))
+                    (split-string (buffer-string) "\n")))))))
 
 (ert-deftest org-agents-test-update-a-standalone-block ()
   "A block supplying its own query renders where no agent entry does.
@@ -1510,9 +1677,12 @@ in its place."
       (org-entry-put nil "AGENT_VIEW" "list")
       (goto-char (point-min))
       (cl-letf (((symbol-function 'org-agents--collect)
-                 (lambda (&rest _) (error "boom"))))
+                 (lambda (&rest _) (error "the corpus caught fire"))))
         (let ((err (should-error (org-agents-update) :type 'user-error)))
-          (should (string-match-p "Review agent" (cadr err)))))
+          (should (string-match-p "Review agent" (cadr err)))
+          ;; What it failed with, and not merely that it failed: the
+          ;; summary of an update over a file set is all the user sees.
+          (should (string-match-p "the corpus caught fire" (cadr err)))))
       (should-not (org-entry-get nil "AGENT_MATCHED")))))
 
 (ert-deftest org-agents-test-update-buffer-updates-every-agent ()
@@ -1610,6 +1780,9 @@ an agent that failed to update."
       (with-current-buffer (find-file-noselect agent-file)
         (should (string-match-p ":AGENT_MATCHED: 1" (buffer-string)))
         ;; Nothing was recorded for the agent that failed.
+        (goto-char (point-min))
+        (should (equal "Broken agent" (org-get-heading t t t t)))
+        (should-not (org-entry-get nil "AGENT_MATCHED"))
         (should (= 1 (cl-count-if
                       (lambda (l) (string-match-p ":AGENT_MATCHED:" l))
                       (split-string (buffer-string) "\n"))))))))

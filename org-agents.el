@@ -951,6 +951,12 @@ Nil until a render succeeds: `org-agents-update' writes
 `:AGENT_MATCHED:' from this once `org-update-dblock' returns, and a
 render that failed must not be reported with the count of an older one.")
 
+(defvar org-agents--last-error nil
+  "What the most recent dblock render failed with, or nil if it did not.
+The writer catches its own failures, so the reason would otherwise reach
+no further than a `message': `org-agents--update-block' reads it, and the
+summary of an update over a whole file set is all a user sees of it.")
+
 (defun org-agents--table-cell (s)
   "Escape S for use inside an Org table cell.
 A bar in the text would read as the boundary of a cell that is not
@@ -1103,7 +1109,16 @@ and says so rather than emptying itself over it."
     ;; a block saying nothing about a limit asks for.
     (dolist (key '(:view :scope :sort :limit :columns :format))
       (when (plist-member params key)
-        (setq agent (plist-put agent key (plist-get params key)))))
+        (let ((value (plist-get params key)))
+          ;; Four of the six have a `none' for nil to ask for.  A scope
+          ;; does not: no scope resolves to no files, so the block would
+          ;; render empty and read exactly like a query that matched
+          ;; nothing.  Neither does a view: nil is not `table', so it
+          ;; would quietly render as a list and read out of
+          ;; `org-agents--check-row-sort' as "the view is `nil'".
+          (when (and (null value) (memq key '(:view :scope)))
+            (user-error "org-agents: a block's `%s' may not be nil" key))
+          (setq agent (plist-put agent key value)))))
     (unless (plist-get agent :query)
       (user-error "org-agents: block has no :query and no enclosing agent"))
     (org-agents--check-row-sort agent)
@@ -1142,7 +1157,8 @@ through the work would leave the block empty: instead the failure is
 reported and that body goes back as it was.  A quit is caught for that
 same reason and signaled again once the body is back, so C-g still
 interrupts the update it interrupted."
-  (setq org-agents--last-count nil)
+  (setq org-agents--last-count nil
+        org-agents--last-error nil)
   (let* ((restored nil)
          (interrupted nil)
          (body
@@ -1176,7 +1192,11 @@ interrupts the update it interrupted."
             ;; and is signaled again below rather than swallowed.
             ((error quit)
              (setq restored t
-                   interrupted (eq (car err) 'quit))
+                   interrupted (eq (car err) 'quit)
+                   ;; Recorded rather than only messaged: the caller has
+                   ;; nothing else to report a failed render by, and a
+                   ;; message is gone by the time a summary is read.
+                   org-agents--last-error (error-message-string err))
              (unless interrupted
                (message "org-agents: dblock update failed: %s"
                         (error-message-string err)))
@@ -1237,10 +1257,11 @@ is written as an inactive timestamp, so Org reads it back as one."
 
 (defun org-agents--agent-marker ()
   "Marker on the headline of the agent point is in, or nil for none.
-An entry is an agent when its own drawer carries a query.  A buffer is
-scanned for the property name as text, so this is where an entry that
-merely mentions it -- or writes it with nothing after it -- is told from
-an agent."
+An entry is an agent when its own drawer supplies a query, and point may
+sit anywhere in it: on the heading, in the drawer, in the body, in a
+dynamic block.  A heading that supplies none is no agent -- an alias with
+a note under it is the common case -- and a command asked for an agent
+there says so rather than acting on whatever heading is above."
   (save-excursion
     (and (not (org-before-first-heading-p))
          (progn (org-back-to-heading t)
@@ -1264,20 +1285,51 @@ An agent whose view is a list or a table has nowhere to render until it
 has a block, so its first update opens one where the entry's own text
 begins: after the drawers, and above whatever else the agent holds.
 
-The first block of the subtree is the one an agent is updated by.  An
-agent carrying several is answered for by that one; the others are
-written where the user stands in them, or by `org-update-all-dblocks'."
+Only the agent's own entry is searched, not its whole subtree, and a
+block is recognized by the name Org reads out of it rather than by the
+text of its `#+BEGIN:' line.  A block under a child heading belongs to
+that child -- `org-dblock-write:org-agents' reads the properties of the
+heading a block sits under -- and adopting it would render one agent into
+another's view.  An agent carrying several blocks of its own is answered
+for by the first; the others are written where the user stands in them,
+or by `org-update-all-dblocks'."
   (org-back-to-heading t)
-  (unless (re-search-forward "^[ \t]*#\\+BEGIN: org-agents"
-                             (save-excursion (org-end-of-subtree t t) (point))
-                             t)
-    (org-back-to-heading t)
-    (org-end-of-meta-data t)
-    ;; An entry that ends the buffer without a final newline leaves point
-    ;; mid-line, where the block would be written onto the end of it.
-    (unless (bolp) (insert "\n"))
-    (save-excursion (insert "#+BEGIN: org-agents\n#+END:\n")))
-  (forward-line 0))
+  (let ((entry-end (save-excursion (outline-next-heading) (point)))
+        (found nil))
+    (save-excursion
+      (while (and (not found)
+                  (re-search-forward org-dblock-start-re entry-end t))
+        (when (equal (match-string 1) "org-agents")
+          (setq found (match-beginning 0)))))
+    (if found
+        (goto-char found)
+      (org-end-of-meta-data t)
+      ;; An entry that ends the buffer without a final newline leaves
+      ;; point mid-line, where the block would be written onto the end of
+      ;; it.
+      (unless (bolp) (insert "\n"))
+      (save-excursion (insert "#+BEGIN: org-agents\n#+END:\n")))))
+
+(defun org-agents--update-dblock-in-window ()
+  "Run `org-update-dblock' on the block at point, in a window showing it.
+Once the writer returns, `org-update-dblock' indents the body it wrote by
+selecting the window it was called from -- and then works in whatever
+buffer that window shows.  Over a buffer no window displays, which is
+every agent of an update over a file set, that is a stranger's buffer:
+the pass fails there, leaving an indented block dedented and the update
+reported as having failed, or it indents a dynamic block that is none of
+ours.  So the block's own buffer goes into the selected window for the
+duration, with point on the line the pass looks for."
+  (if (eq (current-buffer) (window-buffer (selected-window)))
+      (org-update-dblock)
+    (let ((position (point)))
+      (save-window-excursion
+        ;; A strongly dedicated window refuses another buffer; the window
+        ;; configuration puts the flag back with everything else.
+        (set-window-dedicated-p (selected-window) nil)
+        (set-window-buffer (selected-window) (current-buffer))
+        (goto-char position)
+        (org-update-dblock)))))
 
 (defun org-agents--update-block (&optional block)
   "Update an agent's dynamic block; return the rows or items it wrote.
@@ -1287,14 +1339,19 @@ writer's own rather than one counted again here: a row-sorted table is
 handed every match so that it can order them, and cuts to
 `:AGENT_LIMIT:' only once its rows are built."
   (if block (goto-char block) (org-agents--goto-block))
-  (setq org-agents--last-count nil)
-  (org-update-dblock)
+  (setq org-agents--last-count nil
+        org-agents--last-error nil)
+  (org-agents--update-dblock-in-window)
   (or org-agents--last-count
-      ;; The writer diagnosed the failure as it happened and put the
-      ;; previous body back, so all that is left to say is that it wrote
-      ;; no count -- and that an older render's count is not this
-      ;; render's to record.
-      (user-error "org-agents: the block wrote no count, so its render failed")))
+      ;; The writer caught the failure and put the previous body back, so
+      ;; it is the writer that holds the reason -- and an older render's
+      ;; count is not this render's to record.  The type and the
+      ;; backtrace were lost where the writer caught it, so nothing is
+      ;; gained by signaling anything but a diagnosis of this agent.
+      (user-error "org-agents: the block did not render: %s"
+                  (string-remove-prefix
+                   "org-agents: "
+                   (or org-agents--last-error "it wrote no count")))))
 
 (defun org-agents--update-agent (marker &optional block)
   "Update the agent at MARKER and return how many matches it rendered.
@@ -1352,17 +1409,19 @@ written: there is nothing there to record a count on."
   "Markers on the headline of every agent in the current buffer, in order.
 Collected before any of them is updated: rendering an agent inserts
 headings under it and a line into its drawer, so an agent found by
-position afterwards would no longer be where it was found.  The whole
-buffer is read, whatever it is narrowed to."
+position afterwards would no longer be where it was found.
+
+Headings are what is scanned, and an agent is a heading whose own drawer
+supplies a query.  Searching the buffer for the property name as text
+would find it in the annotation a user wrote under an alias, or in an
+agent's own body, and so call one heading two agents, or a heading that
+is no agent one.  The whole buffer is read, whatever it is narrowed to."
   (let ((markers nil))
     (org-with-wide-buffer
      (goto-char (point-min))
-     (while (re-search-forward "^[ \t]*:AGENT_QUERY:" nil t)
-       (when-let* ((marker (org-agents--agent-marker)))
-         (push marker markers))
-       ;; One marker per entry, and nothing between here and the next
-       ;; heading is another agent.
-       (outline-next-heading)))
+     (while (re-search-forward org-outline-regexp-bol nil t)
+       (when (org-agents--entry-get "AGENT_QUERY")
+         (push (copy-marker (match-beginning 0)) markers))))
     (nreverse markers)))
 
 (defun org-agents--update-markers (markers)
