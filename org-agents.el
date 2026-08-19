@@ -1030,7 +1030,26 @@ Never signals an error.  A `quit' from C-g during the synchronous call
 still escapes, as it must.  Spawned from `temporary-file-directory',
 because a `default-directory' that has been deleted makes `call-process'
 signal and a remote one would run the binary on another host, against
-files that are not the corpus."
+files that are not the corpus.
+
+RIPGREP_CONFIG_PATH is UNSET for the child, and that is a soundness
+requirement rather than tidiness.  ripgrep prepends every argument in
+the file that variable names to its command line, and the vector
+`org-agents--rg-args' builds overrides only the flags it repeats:
+`--max-depth', `--max-filesize', `--pre', `--encoding' and `--glob' are
+not among them.  Measured, with a config file holding one line: under
+`--max-depth=1' a matching file one directory down is not reported, and
+under `--max-filesize=10' nothing is reported at all and ripgrep exits
+1 -- which this function correctly reads as \"an answer, and no file
+matches\", so every agent renders nothing with no error and no message.
+A file the prefilter does not report is a file org-ql never opens, so a
+personal ripgrep default -- the mechanism ripgrep's own README
+recommends for one -- would silently empty an unbounded agent.
+
+Unset rather than `--no-config': `org-agents-rg-executable' names
+ripgrep 13 as the supported floor, an unknown flag there exits 2, and an
+entry of `process-environment' holding no `=' removes the variable for
+the child on every Emacs this package supports."
   (condition-case err
       (let ((stderr-file (make-temp-file "org-agents-rg-stderr")))
         (unwind-protect
@@ -1040,6 +1059,8 @@ files that are not the corpus."
               ;; the process `call-process' spawns.
               (let* ((default-directory temporary-file-directory)
                      (coding-system-for-read 'binary)
+                     (process-environment
+                      (cons "RIPGREP_CONFIG_PATH" process-environment))
                      (code (apply #'call-process org-agents-rg-executable
                                   nil (list (current-buffer) stderr-file)
                                   nil (org-agents--rg-args pattern root))))

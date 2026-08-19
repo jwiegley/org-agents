@@ -2918,7 +2918,18 @@ does."
   "The flags, in order, because five measured under-matches are missing flags.
 `--regexp' before the pattern so that a literal beginning with `-' -- a
 heading such as `* -- notes' -- cannot be read as a flag, and the root
-after `--' for the same reason."
+after `--' for the same reason.
+
+This pin is not the coverage for any flag, and must not be mistaken for
+it.  It fails for every edit to the vector, correct or not, and its
+message names no lost file -- so a developer removing a flag they
+believe redundant would simply update it.  The flags that keep the
+superset invariant are covered by OUTCOME tests over the fixture
+corpus, `org-agents-test-rg-covers-*', each of which names the file it
+loses.  The vector is also not the whole story: ripgrep prepends the
+contents of RIPGREP_CONFIG_PATH to it, and
+`org-agents-test-rg-run-unsets-the-ripgrep-config-variable' is what
+pins that away."
   (let ((args (org-agents--rg-args "PAT" "/corpus")))
     (should (equal args '("--files-with-matches" "--null" "--ignore-case"
                           "--text" "--crlf" "--no-ignore" "--hidden"
@@ -2999,6 +3010,40 @@ unsound direction."
                                   (and (string-match-p "org-agents" m)
                                        (string-match-p "Permission denied" m)))
                                 msgs))))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-rg-run-unsets-the-ripgrep-config-variable ()
+  "The child must not inherit RIPGREP_CONFIG_PATH, and this needs no ripgrep.
+ripgrep prepends every argument in the file that variable names to its
+command line, and the vector overrides only the flags it repeats --
+`--max-depth', `--max-filesize', `--pre', `--encoding' and `--glob' are
+not among them.  So a user's personal ripgrep defaults, which is what
+ripgrep's own README recommends the variable for, would silently narrow
+or empty the candidate set: a file the prefilter does not report is a
+file org-ql never opens.
+
+The fake ripgrep here reports the variable's state through its EXIT
+STATUS, which `org-agents--rg-run' already distinguishes exactly: exit 1
+is \"an answer, and no file matches\" and answers `nil', while exit 2 is
+a failure and answers `unavailable'.  So `nil' here means the child saw
+no variable.  See `org-agents-test-rg-covers-a-subdirectory-under-a-user-rg-config'
+for the outcome half, which shows the file that is lost without this."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg
+           (expand-file-name "rg" dir)
+           ;; Set, however it is spelled, is a failure; unset is exit 1.
+           "if [ -n \"${RIPGREP_CONFIG_PATH+set}\" ]; then exit 2; fi"
+           "exit 1")))
+    (unwind-protect
+        (let ((process-environment
+               (cons (concat "RIPGREP_CONFIG_PATH="
+                             (expand-file-name "ripgreprc" dir))
+                     process-environment)))
+          ;; The ambient environment really does carry it, so the
+          ;; assertion below cannot pass for want of anything to unset.
+          (should (getenv "RIPGREP_CONFIG_PATH"))
+          (should (null (org-agents--rg-run "PAT" dir))))
       (delete-directory dir t))))
 
 (ert-deftest org-agents-test-rg-run-reports-a-signal-and-a-spawn-failure ()
@@ -3311,15 +3356,53 @@ Body with a NUL: \0 and more text.
 :NEXT_REVIEW: [2024-12-12 Thu]
 :END:
 ")
+    ;; A `.org' file inside a DOT-DIRECTORY, which is a different hazard
+    ;; from `.stealth.org' above and the one that actually discriminates.
+    ;; MEASURED: an inclusive `--iglob '*.org'' outranks ripgrep's
+    ;; ignore and hidden rules for a FILE, so `.stealth.org',
+    ;; `ignored.org' and `gitignored.org' are all still reported with
+    ;; `--hidden' and `--no-ignore' removed -- but a file under a hidden
+    ;; or ignored DIRECTORY is not, because the directory is never
+    ;; descended into and the glob never gets to speak.  Without this
+    ;; fixture and the next, dropping either flag broke the superset
+    ;; invariant while the whole suite stayed green except for the
+    ;; argument-vector pin.
+    (".hidden/inhidden.org" . "\
+* TODO Review inside a hidden directory
+:PROPERTIES:
+:NEXT_REVIEW: [2024-12-20 Fri]
+:END:
+")
+    ;; The same hazard through `.gitignore' rather than a leading dot:
+    ;; the control below names the DIRECTORY, so `--no-ignore' is what
+    ;; makes ripgrep descend into it.
+    ("gitignored-dir/inside.org" . "\
+* TODO Review inside an ignored directory
+:PROPERTIES:
+:NEXT_REVIEW: [2024-12-21 Sat]
+:END:
+")
+    ;; A property value with TRAILING WHITESPACE after it.  `org-entry-get'
+    ;; trims, and answers \"habit\", so org-ql matches
+    ;; `(property \"STYLE\" \"habit\")' here -- while a value pattern
+    ;; ending `habit$' rather than `habit[ \\t]*$' does not match the
+    ;; line.  This is the fixture that makes the `[ \\t]*' tail of the
+    ;; value pattern fail as a LOST FILE rather than only as a
+    ;; string-equality pin.
+    ("prop-trailing.org" . "\
+* TODO Review with a trailing space
+:PROPERTIES:
+:STYLE: habit \n:END:
+")
     ;; Controls, not part of the base file set.
     (".ignore" . "ignored.org\n")
-    (".gitignore" . "gitignored.org\n"))
+    (".gitignore" . "gitignored.org\ngitignored-dir/\n"))
   "Fixture files for the soundness suite: relative name . contents.")
 
-(defconst org-agents-test--rg-corpus-count 27
+(defconst org-agents-test--rg-corpus-count 30
   "How many `.org' files `org-agents-test--with-rg-corpus' reliably shows.
-Twenty-six from the manifest, plus the latin-1 file the macro builds.
-`link.org' is a twenty-eighth that is deliberately NOT counted: see the
+Twenty-nine from the manifest, plus the latin-1 file the macro builds.
+`link.org' is a thirty-first that is deliberately NOT counted: see the
 macro for the platform quirk that makes its presence in the base file set
 intermittent, and why that costs the suite nothing.
 
@@ -3505,7 +3588,15 @@ renders nothing."
                                                 paths dir)))
       (should (member (file-truename (funcall F "prop.org")) cands))
       (should (member (file-truename (funcall F "two-props.org")) cands))
-      (should (= 2 (length cands))))
+      ;; The witness for the `[ \t]*' tail of the value pattern.
+      ;; `prop-trailing.org' spells the line `:STYLE: habit ' with one
+      ;; trailing space; `org-entry-get' trims and answers "habit", so
+      ;; org-ql matches -- and a pattern ending `habit$' rather than
+      ;; `habit[ \t]*$' does not match the line and loses the file.
+      ;; Without this, tightening the tail failed only the pattern's
+      ;; string-equality pin, whose message names no lost file.
+      (should (member (file-truename (funcall F "prop-trailing.org")) cands))
+      (should (= 3 (length cands))))
     ;; A CRLF file, which the value pattern reaches only with `--crlf'.
     (let ((cands (org-agents-test--should-cover '(property "OWNER" "Jane")
                                                 paths dir)))
@@ -3663,15 +3754,57 @@ work; `[^\\n]*' is not."
       (should (member (file-truename (funcall F "latin1.org")) cands)))))
 
 (ert-deftest org-agents-test-rg-covers-the-files-it-skips-by-default ()
-  "One test for the six traversal hazards, because they share one cause --
+  "One test for the traversal hazards, because they share one cause --
 rg's default filters -- and one fix, the argument vector.  Each is a file
-`directory-files-recursively' lists and org-ql matches."
+`directory-files-recursively' lists and org-ql matches.
+
+The last two are the ones that make `--hidden' and `--no-ignore'
+DISCRIMINATE, and they are directories rather than files on purpose.
+MEASURED: with an inclusive `--iglob \\='*.org\\='' in the vector,
+ripgrep still reports `.stealth.org', `ignored.org' and
+`gitignored.org' with both flags removed -- the glob outranks its ignore
+and hidden rules for a file it is handed.  A file under a hidden or
+ignored DIRECTORY is different: the directory is never descended into,
+so the glob never gets to speak, and the file is lost from the candidate
+set with no error.  Before `.hidden/inhidden.org' and
+`gitignored-dir/inside.org' existed, deleting `--hidden' and
+`--no-ignore' broke the superset invariant while every soundness test
+here stayed green."
   (org-agents-test--with-rg-corpus
     (let ((cands (org-agents-test--should-cover '(property "NEXT_REVIEW")
                                                 paths dir)))
       (dolist (name '(".stealth.org" "ignored.org" "gitignored.org"
-                      "UPPER.ORG" "link.org" "nul.org"))
+                      "UPPER.ORG" "link.org" "nul.org"
+                      ".hidden/inhidden.org" "gitignored-dir/inside.org"))
         (should (member (file-truename (funcall F name)) cands))))))
+
+(ert-deftest org-agents-test-rg-covers-a-subdirectory-under-a-user-rg-config ()
+  "A user's own ripgrep config must not narrow the candidate set.
+The outcome half of `org-agents-test-rg-run-unsets-the-ripgrep-config-variable',
+and the one that names the lost file.  RIPGREP_CONFIG_PATH is pointed at
+a config holding the single line `--max-depth=1', which is the shape of
+a personal default a ripgrep user is likely to have.  MEASURED against
+the shipped vector with the variable inherited: `sub/scoped.org' and
+`sub{1}/braced.org' vanish from the candidate set while org-ql goes on
+matching in them, and nothing is signalled -- `org-agents--rg-run' sees
+exit 0 and a short answer, so it reports a successful prefilter.
+
+`--max-filesize=10' is the sharper version of the same config: rg then
+reports nothing at all and exits 1, which is a legitimate empty ANSWER,
+so every agent renders zero matches with no message whatsoever.  This
+test uses `--max-depth' because a lost file is a better failure message
+than an empty everything."
+  (org-agents-test--with-rg-corpus
+    (let ((rc (expand-file-name "ripgreprc" outside)))
+      (with-temp-file rc (insert "--max-depth=1\n"))
+      (let ((process-environment
+             (cons (concat "RIPGREP_CONFIG_PATH=" rc) process-environment)))
+        (should (getenv "RIPGREP_CONFIG_PATH"))
+        (let ((cands (org-agents-test--should-cover '(property "NEXT_REVIEW")
+                                                    paths dir)))
+          (should (member (file-truename (funcall F "sub/scoped.org")) cands))
+          (should (member (file-truename (funcall F "sub{1}/braced.org"))
+                          cands)))))))
 
 (ert-deftest org-agents-test-rg-over-matches-body-prose-harmlessly ()
   "An over-match is a cost, never a fault.
