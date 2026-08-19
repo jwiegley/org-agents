@@ -384,13 +384,20 @@ and every later test in the process inherits it."
      (org-agents-test--with-corpus-1 ,@body)))
 
 (defmacro org-agents-test--with-corpus-1 (&rest body)
-  "The body of `org-agents-test--with-corpus'; call that instead."
+  "The body of `org-agents-test--with-corpus'; call that instead.
+`org-agents-prefilter' is bound to `auto' for the same reason
+`org-agents-test--with-rg-corpus' binds it: a developer's own
+customization must not decide what these tests exercise.  Several tests
+here assert that NO subprocess was spawned, and against an ambient nil
+that assertion is vacuously true -- it would pass because nothing ever
+prefilters anything, not because the rule it names holds."
   (declare (indent 0))
   `(let* ((dir (make-temp-file "org-agents-corpus" t))
           (a (expand-file-name "a.org" dir))
           (b (expand-file-name "b.org" dir))
           (agent-file (expand-file-name "agents.org" dir))
           (org-directory dir)
+          (org-agents-prefilter 'auto)
           (org-use-property-inheritance nil)
           (org-element-use-cache nil)
           (org-id-locations (make-hash-table :test #'equal))
@@ -751,7 +758,17 @@ property that was wrong."
 (ert-deftest org-agents-test-collect-empty-prefilter-selects-nothing ()
   "A prefilter that rules out every file selects nothing.
 Handed no files at all, `org-ql-select' searches the current buffer,
-which for an agent is the file the agent itself lives in."
+which for an agent is the file the agent itself lives in.
+
+TWO ways of arriving at no files, and they are different branches of
+`org-agents--scope-files'.  The first stub answers a NON-EMPTY candidate
+list naming a file the scope does not hold, so the intersection empties
+it -- that is the `same-files' branch.  The second answers the EMPTY
+list, which is ripgrep saying \"no file can match\", and reaches the
+`((null candidates) nil)' branch instead.  Nothing used to test the
+second: replacing that branch with the scope's whole base file set left
+the suite green, which is precisely the conflation of \"an empty answer\"
+with \"nothing was narrowed\" that this backend exists to remove."
   (org-agents-test--with-corpus
     (with-temp-buffer
       (insert "* TODO Decoy beside the agent\n")
@@ -767,7 +784,28 @@ which for an agent is the file the agent itself lives in."
                    (lambda (_conjuncts _root)
                      (list (expand-file-name "elsewhere.org" dir)))))
           (should (null (org-agents--scope-files agent)))
-          (should (null (org-agents--collect agent))))))))
+          (should (null (org-agents--collect agent))))
+        ;; An EMPTY ripgrep answer.  `nil' rather than the base list is
+        ;; what distinguishes the branch, and the base list here is not
+        ;; empty -- the corpus holds `a.org' and `b.org' -- so the
+        ;; assertion cannot hold for want of anything to lose.
+        (cl-letf (((symbol-function 'org-agents--rg-available-p)
+                   (lambda () t))
+                  ((symbol-function 'org-agents--rg-files)
+                   (lambda (_conjuncts _root) nil)))
+          (should (org-agents--scope-base-files 'active))
+          (should (null (org-agents--scope-files agent)))
+          (should (null (org-agents--collect agent))))
+        ;; And the base files must not even be GATHERED for an empty
+        ;; answer: gathering them is the recursive walk the prefilter
+        ;; exists to make unnecessary.
+        (cl-letf (((symbol-function 'org-agents--rg-available-p)
+                   (lambda () t))
+                  ((symbol-function 'org-agents--rg-files)
+                   (lambda (_conjuncts _root) nil))
+                  ((symbol-function 'org-agents--scope-base-files)
+                   (lambda (&rest _) (error "must not walk the corpus"))))
+          (should (null (org-agents--scope-files agent))))))))
 
 (ert-deftest org-agents-test-collect-refuses-unapproved-query ()
   (org-agents-test--in-agent
@@ -3430,10 +3468,27 @@ developer's own customization cannot decide what these tests exercise.
 
 `skip-unless' guards on the executable: a ripgrep backend cannot be
 tested end to end without ripgrep.  The pattern and exit-status tests
-above do NOT go through this macro and never skip."
+above do NOT go through this macro and never skip.
+
+Use `org-agents-test--with-rg-corpus-unguarded' instead for a test that
+needs the CORPUS but not the executable -- the fallback tests, which
+point `org-agents-rg-executable' at a name that does not exist, at a
+fake shell script, or turn the prefilter off entirely.  Guarding those
+on ripgrep hid, on exactly the machine that has none, the tests that
+describe what that machine will do at runtime."
+  (declare (indent 0))
+  `(progn
+     (skip-unless (executable-find org-agents-rg-executable))
+     (org-agents-test--with-rg-corpus-unguarded ,@body)))
+
+(defmacro org-agents-test--with-rg-corpus-unguarded (&rest body)
+  "`org-agents-test--with-rg-corpus' without the ripgrep `skip-unless'.
+For a test that needs the fixture corpus but supplies its own ripgrep,
+or none: a nonexistent executable name, a fake shell script, or
+`org-agents-prefilter' nil.  Call the guarded macro for anything that
+runs the real thing."
   (declare (indent 0))
   `(let ((org-agents-prefilter 'auto))
-     (skip-unless (executable-find org-agents-rg-executable))
      (let* ((dir (make-temp-file "org-agents-rg-corpus" t))
             (outside (make-temp-file "org-agents-rg-outside" t))
             (org-directory dir)
@@ -3950,7 +4005,7 @@ all."
 No process for any scope, and a corpus scope resolves to its whole base
 file set rather than to the old refusal, which would make the opt-out
 unusable."
-  (org-agents-test--with-rg-corpus
+  (org-agents-test--with-rg-corpus-unguarded
     (let ((org-agents-prefilter nil)
           (breached nil))
       (cl-letf (((symbol-function 'call-process)
@@ -3970,7 +4025,7 @@ unusable."
 45.98 seconds and 885 MB of RSS over 3,640 buffers is a shocking thing to
 happen without explanation, and a message naming 3,634 files explains
 it.  Silence is what this replaces; an error is what `require' is for."
-  (org-agents-test--with-rg-corpus
+  (org-agents-test--with-rg-corpus-unguarded
     (let ((org-agents-rg-executable "no-such-program-xyzzy")
           (agent (list :scope 'all :query '(property "NEXT_REVIEW"))))
       (let* (files
@@ -4004,7 +4059,7 @@ it.  Silence is what this replaces; an error is what `require' is for."
 Using the runs that succeeded would be sound -- an intersection missing a
 term is wider -- but a partial answer from a broken tool is not a thing
 to build on, and the fallback is correct and merely slower."
-  (org-agents-test--with-rg-corpus
+  (org-agents-test--with-rg-corpus-unguarded
     (let* ((fake (org-agents-test--fake-rg
                   (expand-file-name "fake-rg" outside)
                   "echo 'rg: broken' >&2" "exit 2"))
@@ -4024,7 +4079,7 @@ to build on, and the fallback is correct and merely slower."
 A `user-error' rather than a bare `error', because
 `org-agents-update-buffer' catches the former per agent and one
 misconfigured agent must not abort a whole buffer's run."
-  (org-agents-test--with-rg-corpus
+  (org-agents-test--with-rg-corpus-unguarded
     (let ((org-agents-prefilter 'require)
           (org-agents-rg-executable "no-such-program-xyzzy"))
       (cl-letf (((symbol-function 'org-agents--scope-base-files)
@@ -4043,6 +4098,25 @@ misconfigured agent must not abort a whole buffer's run."
                     :type 'user-error)))
           (should (string-match-p "no pushable conjunct"
                                   (error-message-string err))))))))
+
+(ert-deftest org-agents-test-prefilter-require-proceeds-when-it-can-narrow ()
+  "`require' refuses only what cannot be narrowed, and narrows the rest.
+Every other `require' test arranges for the prefilter to be UNABLE to
+answer, so both opposite ways of breaking the option survived: widening
+the refusal guard to fire on a successful narrowing made the option
+entirely non-functional, and returning the scope's base file set instead
+of the narrowed one made it walk the whole corpus -- the one thing it
+exists to forbid.  Both left the suite green.
+
+The assertion is the same single-file answer
+`org-agents-test-prefilter-consulted-for-a-corpus-scope' makes under
+`auto': `require' must not change WHAT is resolved, only what happens
+when it cannot be."
+  (org-agents-test--with-rg-corpus
+    (let* ((org-agents-prefilter 'require)
+           (agent (list :scope 'active :query '(property "TOKENS")))
+           (files (org-agents--scope-files agent)))
+      (should (equal files (list (funcall F "prop-accum.org")))))))
 
 (ert-deftest org-agents-test-prefilter-empty-answer-renders-zero-matches ()
   "An empty answer completes the update and renders nothing.
