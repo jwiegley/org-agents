@@ -304,6 +304,10 @@ lands on a different calendar day, and the prefilter would be a day out
 exactly when the query crosses the change."
   (should (equal (org-agents--absolute-date 'today)
                  (ts-format "%Y-%m-%d" (ts-now))))
+  ;; Pinned a second way, through Emacs rather than through `ts', so that
+  ;; `ts-now' drifting from the local clock could not pass unnoticed.
+  (should (equal (org-agents--absolute-date 'today)
+                 (format-time-string "%Y-%m-%d")))
   (dolist (n '(0 1 7 -1 -7 30 -365))
     (should (equal (org-agents--absolute-date n)
                    (ts-format "%Y-%m-%d" (ts-adjust 'day n (ts-now))))))
@@ -324,6 +328,15 @@ different day to each engine and the prefilter would drop entries org-ql
 matches -- an under-match in the one property the whole push-down table
 exists to guarantee.  Naming the day removes the disagreement."
   (let ((today (ts-format "%Y-%m-%d" (ts-now))))
+    ;; The shape that made this worth fixing rather than documenting: for a
+    ;; "what is due" agent the date is the ONLY pushable conjunct -- `todo'
+    ;; is residual and no other row applies -- so a splitter that refused
+    ;; to push it would leave the skeleton empty, and a corpus or directory
+    ;; scope answers an empty skeleton with a hard error.  Resolving the
+    ;; date always pushes, so that agent has no hour at which it breaks.
+    (should (equal (org-agents--skeleton '(and (todo) (scheduled :to today)))
+                   (format "(scheduled :to \"%s\")" today)))
+    (should (null (org-agents--skeleton '(todo))))
     (dolist (case (list
                    (cons '(scheduled :to today)
                          (format "(scheduled :to \"%s\")" today))
