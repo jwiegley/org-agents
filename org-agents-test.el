@@ -326,8 +326,10 @@
 entry's `:AGENT_SCOPE:' lists.  `org-directory' is the corpus, so no
 test can reach the developer's own; the database bridge is left
 unconfigured and property inheritance off, so a test that wants either
-must arrange it; buffers visiting the corpus are killed afterwards,
-because the files they visit are about to be deleted."
+must arrange it; the ID location table is a fresh one, so rendering a
+link cannot write a temporary corpus into the developer's
+`org-id-locations-file'; buffers visiting the corpus are killed
+afterwards, because the files they visit are about to be deleted."
   (declare (indent 0))
   `(let* ((dir (make-temp-file "org-agents-corpus" t))
           (a (expand-file-name "a.org" dir))
@@ -337,7 +339,9 @@ because the files they visit are about to be deleted."
           (org-db-cli-config-file nil)
           (org-db-cli-db-url nil)
           (org-use-property-inheritance nil)
-          (org-element-use-cache nil))
+          (org-element-use-cache nil)
+          (org-id-locations (make-hash-table :test #'equal))
+          (org-id-files nil))
      (unwind-protect
          (progn
            (with-temp-file a
@@ -358,6 +362,11 @@ because the files they visit are about to be deleted."
 (defun org-agents-test--titles (matches)
   "The headline text of MATCHES, in order."
   (mapcar (lambda (element) (org-element-property :raw-value element)) matches))
+
+(defun org-agents-test--alias-line (needle)
+  "The first line of the current buffer holding NEEDLE."
+  (cl-find-if (lambda (line) (string-match-p needle line))
+              (split-string (buffer-string) "\n")))
 
 (defmacro org-agents-test--in-agent (&rest body)
   "Run BODY in the agent buffer of `org-agents-test--with-corpus', at its start."
@@ -665,6 +674,260 @@ which for an agent is the file the agent itself lives in."
                             (plist-put agent :sort '(ts-column 2))))))
       (should (= 1 (length (org-agents--collect
                             (plist-put agent :sort 'bogus))))))))
+
+;;;; Links
+
+(ert-deftest org-agents-test-link-id-and-fallback ()
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let* ((agent (org-agents--read-agent))
+             (matches (org-agents--collect agent))
+             (link (org-agents--link-to (car matches))))
+        (should (string-match-p "\\`\\[\\[id:11111111-" link))
+        (should (string-match-p "\\[Fix widget\\]\\]\\'" link)))))
+  ;; Fallback: entry without ID gets a file link with a heading search.
+  (let ((dir (make-temp-file "org-agents-noid" t)))
+    (unwind-protect
+        (let ((f (expand-file-name "x.org" dir)))
+          (with-temp-file f (insert "* TODO A [tricky] title\n"))
+          (let* ((matches (org-ql-select (list f) '(todo)
+                            :action 'element-with-markers))
+                 (link (org-agents--link-to (car matches))))
+            (should (string-match-p "\\`\\[\\[file:" link))
+            (should (string-match-p "::\\*" link))))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-link-escapes-brackets ()
+  "A rendered link must read back as one link, and as the same target.
+`org-agents--render-children' recognizes an alias by the target read
+back out of its heading, so a description that swallowed the closing
+brackets would leave the alias unrecognizable -- and Org would not
+follow it either.  `org-link-escape' escapes every bracket in the
+target, so only an unescaped reading compares equal to the target a
+fresh render builds.  The search target carries exactly one asterisk,
+which `org-link-heading-search-string' supplies itself."
+  (let ((dir (make-temp-file "org-agents-brackets" t))
+        (org-element-use-cache nil))
+    (unwind-protect
+        (let ((f (expand-file-name "brackets.org" dir)))
+          (with-temp-file f
+            (insert "* TODO A [tricky] title\n"
+                    "* TODO [[https://example.com][site]]\n"
+                    "* TODO Ends in a bracket [x]\n"))
+          (let ((elements (org-ql-select (list f) '(todo)
+                            :action 'element-with-markers)))
+            (should (= 3 (length elements)))
+            (dolist (element elements)
+              (let ((link (org-agents--link-to element))
+                    (title (org-element-property :raw-value element)))
+                ;; One bracket link, start to end: no part of the
+                ;; description leaked out of it.
+                (should (string-match org-link-bracket-re link))
+                (should (= 0 (match-beginning 0)))
+                (should (= (length link) (match-end 0)))
+                (should (equal (org-agents--alias-target link)
+                               (concat "file:" f "::"
+                                       (org-link-heading-search-string title))))))
+            ;; The inner link's own description survives the escaping.
+            (should (string-match-p "site" (org-agents--link-to
+                                            (nth 1 elements))))))
+      (dolist (buf (buffer-list))
+        (when-let* ((f (buffer-file-name buf)))
+          (when (string-prefix-p (file-name-as-directory dir) f)
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf))))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-link-unresolved-match ()
+  "A match whose marker names no buffer is rendered as plain text.
+A killed buffer or a reverted file detaches the marker org-ql handed
+us, and there is no heading left to build a link at.  A link that does
+not resolve is worse than text saying there is none."
+  (let ((ghost (org-element-create
+                'headline (list :raw-value "Vanished entry"
+                                :org-hd-marker (make-marker)))))
+    (should (equal "Vanished entry (?)" (org-agents--link-to ghost)))
+    ;; Nor is there an entry left to read `:AGENT_FORMAT:' properties at.
+    (should (null (org-agents--format-suffix ghost "NEXT_REVIEW"))))
+  ;; An element that never carried a marker reads the same way.
+  (should (equal "Vanished entry (?)"
+                 (org-agents--link-to
+                  (org-element-create 'headline
+                                      (list :raw-value "Vanished entry"))))))
+
+;;;; Children view
+
+(ert-deftest org-agents-test-children-render-and-preserve ()
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let ((agent (org-agents--read-agent)))
+        ;; First render.
+        (should (= 1 (org-agents--render-children
+                      agent (org-agents--collect agent))))
+        (should (string-match-p ":AGENT_MATCH: t" (buffer-string)))
+        ;; Annotate the alias, then re-render: annotation survives,
+        ;; no duplicate child appears.
+        (goto-char (point-max))
+        (insert "*** my note about this match\n")
+        (goto-char (point-min))
+        (org-agents--render-children agent (org-agents--collect agent))
+        (should (string-match-p "my note about this match" (buffer-string)))
+        (should (= 1 (cl-count-if
+                      (lambda (l) (string-match-p "Fix widget" l))
+                      (split-string (buffer-string) "\n"))))))))
+
+(ert-deftest org-agents-test-children-stale-marker ()
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let ((agent (org-agents--read-agent)))
+        (org-agents--render-children agent (org-agents--collect agent))
+        (goto-char (point-max))
+        (insert "*** keep me\n")
+        ;; Now render with no matches: annotated alias is kept, marked stale.
+        (goto-char (point-min))
+        (org-agents--render-children agent nil)
+        (should (string-match-p "(stale)" (buffer-string)))
+        (should (string-match-p "keep me" (buffer-string)))))))
+
+(ert-deftest org-agents-test-children-unstale-when-the-match-returns ()
+  "The mark answers for this update, not for an older one."
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent)))
+      (org-agents--render-children agent (org-agents--collect agent))
+      (goto-char (point-max))
+      (insert "*** pinned\n")
+      (org-agents--render-children agent nil)
+      (should (string-match-p "(stale)" (buffer-string)))
+      (org-agents--render-children agent (org-agents--collect agent))
+      (should-not (string-match-p "(stale)" (buffer-string)))
+      ;; And the returning match is still not duplicated.
+      (should (= 1 (cl-count-if (lambda (l) (string-match-p "Fix widget" l))
+                                (split-string (buffer-string) "\n")))))))
+
+(ert-deftest org-agents-test-children-idempotent ()
+  "A second update over the same matches leaves the buffer as it was."
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent)))
+      (org-agents--render-children agent (org-agents--collect agent))
+      (let ((rendered (buffer-string)))
+        (org-agents--render-children agent (org-agents--collect agent))
+        (should (equal rendered (buffer-string)))))))
+
+(ert-deftest org-agents-test-children-mixed-children ()
+  "Children of every kind at once: what is reaped, and what is left.
+Deleting or retitling one child moves every position after it, so the
+regions are collected before the first edit and acted on back to front."
+  (org-agents-test--in-agent
+    (let ((agent (plist-put (org-agents--read-agent)
+                            :query '(property "NEXT_REVIEW"))))
+      (should (= 2 (org-agents--render-children
+                    agent (org-agents--collect agent))))
+      ;; Annotate the first alias, and add two children of the user's
+      ;; own, one of them carrying a property drawer of its own.
+      (goto-char (point-min))
+      (search-forward "Fix widget")
+      (org-end-of-subtree t t)
+      (insert "*** annotated by hand\n")
+      (goto-char (point-max))
+      (insert "** hand written\n"
+              "** with a drawer\n:PROPERTIES:\n:NOTE: mine\n:END:\n")
+      (org-agents--render-children agent (org-agents--collect agent))
+      (let ((text (buffer-string)))
+        (should (string-match-p "annotated by hand" text))
+        (should (string-match-p "hand written" text))
+        (should (string-match-p ":NOTE: mine" text))
+        (should-not (string-match-p "(stale)" text))
+        (dolist (title '("Fix widget" "Old thing"))
+          (should (= 1 (cl-count-if (lambda (l) (string-match-p title l))
+                                    (split-string text "\n")))))))))
+
+(ert-deftest org-agents-test-children-spares-a-sibling-agent ()
+  "Rendering one agent must not move the next agent's anchor.
+`org-agents-update-buffer' reads the agents of a buffer before it
+renders any of them.  A marker sitting where the first agent's subtree
+ends does not move when text is inserted at that very position, so
+appending there would leave the second agent anchored on the first
+agent's new alias instead of on its own heading."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* First agent\n:PROPERTIES:\n"
+              ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+              ":AGENT_SCOPE: (\"" a "\")\n:END:\n"
+              "* Second agent\n:PROPERTIES:\n:AGENT_QUERY: (todo)\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let* ((first-agent (org-agents--read-agent))
+             (second-agent (progn (goto-char (point-min))
+                                  (search-forward "Second agent")
+                                  (org-agents--read-agent))))
+        (should (= 1 (org-agents--render-children
+                      first-agent (org-agents--collect first-agent))))
+        (should (equal "Second agent"
+                       (org-with-point-at (plist-get second-agent :marker)
+                         (org-get-heading t t t t))))
+        ;; And the alias landed under the first agent, not the second.
+        (should (org-with-point-at (plist-get first-agent :marker)
+                  (< (point)
+                     (save-excursion
+                       (goto-char (point-min))
+                       (search-forward "Fix widget"))
+                     (marker-position (plist-get second-agent :marker)))))))))
+
+(ert-deftest org-agents-test-children-format-suffix ()
+  "`:AGENT_FORMAT:' names properties to show after the link."
+  (org-agents-test--in-agent
+    (org-entry-put nil "AGENT_FORMAT" "NEXT_REVIEW")
+    (goto-char (point-min))
+    (let ((agent (org-agents--read-agent)))
+      (org-agents--render-children agent (org-agents--collect agent))
+      (should (string-suffix-p "]]  [2020-01-01 Wed]"
+                               (org-agents-test--alias-line "Fix widget"))))
+    ;; A property the match does not carry adds nothing to the heading,
+    ;; not even the space that would have separated it.
+    (goto-char (point-min))
+    (org-entry-put nil "AGENT_FORMAT" "NO_SUCH_PROPERTY")
+    (goto-char (point-min))
+    (let ((agent (org-agents--read-agent)))
+      (org-agents--render-children agent (org-agents--collect agent))
+      (should (string-suffix-p "]]" (org-agents-test--alias-line
+                                     "Fix widget"))))))
+
+(ert-deftest org-agents-test-children-unresolved-match-renders-plain ()
+  "A match that cannot be located still gets an alias, marked `(?)'."
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent))
+          (ghost (org-element-create
+                  'headline (list :raw-value "Vanished entry"
+                                  :org-hd-marker (make-marker)))))
+      (should (= 1 (org-agents--render-children agent (list ghost))))
+      (should (string-match-p (regexp-quote "** Vanished entry (?)")
+                              (buffer-string)))
+      ;; It is a generated alias like any other, so the next update
+      ;; reaps it even though it links to nothing.
+      (org-agents--render-children agent nil)
+      (should-not (string-match-p "Vanished" (buffer-string))))))
+
+(ert-deftest org-agents-test-render-children-refuses-a-bad-anchor ()
+  "A render that deletes text must know where it is writing.
+An agent read from a file-level property drawer has no subtree at all,
+and `org-back-to-heading' would signal a plain error over it, which
+`org-agents-update-all' cannot tell from a bug in this package."
+  (org-agents-test--in-agent
+    (should-error (org-agents--render-children
+                   (plist-put (org-agents--read-agent) :marker nil) nil)
+                  :type 'user-error))
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert ":PROPERTIES:\n:AGENT_QUERY: (todo)\n:END:\n* Not an agent\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let ((agent (org-agents--read-agent))
+            (before (buffer-string)))
+        (should-error (org-agents--render-children agent nil) :type 'user-error)
+        (should (equal before (buffer-string)))))))
 
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here

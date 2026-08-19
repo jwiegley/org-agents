@@ -60,6 +60,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'org)
+(require 'org-id)
 (require 'org-ql)
 (require 'org-ql-ext)
 (require 'org-db-cli)
@@ -699,6 +700,211 @@ marker rather than let this comparison quietly stop being made."
                                   (org-agents--self-match-p element self))
                                 matches)))
     (if limit (take limit matches) matches)))
+
+;;;; Links
+
+;; Every view links back to the match's live heading rather than to the
+;; element org-ql handed over: the buffer may have moved on since the
+;; query ran, and the link has to resolve against the text that is
+;; there now.  A match whose marker no longer names a buffer cannot be
+;; linked at all, and says so rather than pointing somewhere wrong.
+
+(defconst org-agents--unresolved-suffix " (?)"
+  "Marks a match rendered as plain text for want of a live marker.")
+
+(defun org-agents--live-marker (element)
+  "Return ELEMENT's headline marker, if it still names a live buffer.
+org-ql sets `:org-hd-marker' when selecting `element-with-markers'.
+By the time a render reaches a match the marker may be detached -- its
+buffer killed, its file reverted -- and a detached marker has no
+position to read a heading at."
+  (when-let* ((m (org-element-property :org-hd-marker element)))
+    (and (marker-buffer m) m)))
+
+(defun org-agents--link-to (element)
+  "Return an Org link to ELEMENT's heading, built at the live heading.
+An `id:' target is registered with `org-id-add-location', so following
+the link needs no corpus rescan; without an ID the heading search
+string stands in for one.  A match that cannot be located renders as
+its recorded heading text, marked `(?)': a link that does not resolve
+is worse than text saying there is none."
+  (let (target title)
+    (if-let* ((m (org-agents--live-marker element)))
+        (with-current-buffer (marker-buffer m)
+          (org-with-wide-buffer
+           (goto-char m)
+           (let ((file (buffer-file-name))
+                 (id (org-id-get)))
+             (setq title (org-get-heading t t t t)
+                   target
+                   (cond
+                    (id (when file (org-id-add-location id file))
+                        (concat "id:" id))
+                    ;; With neither an ID nor a file there is nothing to
+                    ;; link to: `file:nil::*…' is not a location, and
+                    ;; `org-id-add-location' refuses a buffer that
+                    ;; visits nothing.
+                    (file
+                     ;; `org-link-heading-search-string' supplies the
+                     ;; `*' that makes the search a headline search.
+                     (concat "file:" file "::"
+                             (org-link-heading-search-string))))))))
+      (setq title (or (org-element-property :raw-value element) "")))
+    (if target
+        (org-link-make-string target title)
+      (concat title org-agents--unresolved-suffix))))
+
+(defun org-agents--format-suffix (element format-props)
+  "Property values named by FORMAT-PROPS at ELEMENT's heading.
+FORMAT-PROPS is an `:AGENT_FORMAT:' value: property names separated by
+whitespace.  A match that cannot be located has no entry to read them
+at, and so has no suffix either."
+  (when-let* ((props (and format-props (split-string format-props)))
+              (m (org-agents--live-marker element)))
+    (with-current-buffer (marker-buffer m)
+      (org-with-wide-buffer
+       (goto-char m)
+       (mapconcat (lambda (p) (or (org-entry-get nil p) "")) props "  ")))))
+
+(defun org-agents--alias-target (heading)
+  "The target of the first bracket link in HEADING, or nil if it has none.
+Read back unescaped, because `org-link-escape' escapes every bracket in
+a target and a heading search string is full of them.  The same reading
+serves both sides of the comparison `org-agents--render-children'
+makes: an alias is recognized by the target it links to, never by its
+description, which is the live heading text and drifts."
+  (when (string-match org-link-bracket-re heading)
+    (org-link-unescape (match-string 1 heading))))
+
+;;;; Children view
+
+;; The children view is the only view that writes outside a dynamic
+;; block, so it alone must answer for what it deletes.  A generated
+;; alias is ephemeral: it carries `:AGENT_MATCH: t' and holds nothing
+;; but its own property drawer, and every update reaps it.  The moment
+;; the user writes anything under one it is theirs, and no update
+;; deletes it; when its match is gone it is retitled instead.  A child
+;; that never carried `:AGENT_MATCH: t' is not this package's to touch.
+
+(defconst org-agents--stale-suffix " (stale)"
+  "Marks a preserved alias whose match the query no longer finds.")
+
+(defun org-agents--child-pristine-p ()
+  "Non-nil when the alias at point holds nothing but its property drawer.
+Whitespace after the drawer counts as nothing: a blank line carries no
+text of the user's, and reading one as an annotation would pin the
+alias for good."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t t) (point))))
+      (forward-line 1)
+      (and (looking-at-p org-property-start-re)
+           (re-search-forward org-property-end-re end t)
+           (progn (forward-line 1)
+                  (string-blank-p
+                   (buffer-substring-no-properties (point) end)))))))
+
+(defun org-agents--alias-regions (level bound)
+  "Records of the generated aliases directly under the heading at point.
+LEVEL is that heading's depth and BOUND the end of its subtree.  Each
+record is (BEG END PRISTINE TARGET HEADING), in buffer order, where BEG
+and END bound the whole child subtree.
+
+Only a child at exactly LEVEL+1 carrying `:AGENT_MATCH: t' is recorded.
+Everything else below the agent is the user's: a child written deeper
+than LEVEL+1 is not something this package wrote, and neither is one
+whose `AGENT_MATCH' says anything other than `t'."
+  (let ((re (format "^\\*\\{%d\\} " (1+ level)))
+        (records nil))
+    (save-excursion
+      (while (re-search-forward re bound t)
+        (beginning-of-line)
+        (let ((beg (point))
+              (end (save-excursion (org-end-of-subtree t t) (point))))
+          (when (equal (org-entry-get nil "AGENT_MATCH") "t")
+            (let ((heading (org-get-heading t t t t)))
+              (push (list beg end
+                          (org-agents--child-pristine-p)
+                          (org-agents--alias-target heading)
+                          heading)
+                    records)))
+          (goto-char end))))
+    (nreverse records)))
+
+(defun org-agents--mark-stale (heading stale)
+  "Retitle the alias at point, marking it stale or not according to STALE.
+HEADING is its current title.  A match that comes back unmarks the
+alias its absence marked, so the mark answers for this update rather
+than for an older one."
+  (let ((bare (string-remove-suffix org-agents--stale-suffix heading)))
+    (org-edit-headline (if stale
+                           (concat bare org-agents--stale-suffix)
+                         bare))))
+
+(defun org-agents--render-children (agent matches)
+  "Render MATCHES as AGENT's child aliases; return how many there were.
+A pristine alias -- `:AGENT_MATCH: t' and nothing but its own property
+drawer -- is deleted and written again from MATCHES.  One the user has
+annotated stays where they put it: no second alias is written for the
+match it already stands for, and a match gone this round marks it
+stale rather than deleting it.
+
+Every link is built before the first edit, because a match may live in
+the agent's own buffer, where an edit would move it."
+  (let ((marker (plist-get agent :marker))
+        (format-props (plist-get agent :format))
+        (kept nil))
+    (unless (and (markerp marker) (marker-buffer marker))
+      (user-error "org-agents: agent has no live marker to render under"))
+    (let ((rendered                     ; (TARGET TEXT SUFFIX) per match
+           (mapcar (lambda (element)
+                     (let ((text (org-agents--link-to element)))
+                       (list (org-agents--alias-target text) text
+                             (org-agents--format-suffix element format-props))))
+                   matches)))
+      (with-current-buffer (marker-buffer marker)
+        (org-with-wide-buffer
+         (goto-char marker)
+         (when (org-before-first-heading-p)
+           (user-error "org-agents: the children view needs an agent heading"))
+         (org-back-to-heading t)
+         (let* ((level (org-current-level))
+                (regions (org-agents--alias-regions
+                          level (save-excursion (org-end-of-subtree t t)
+                                                (point))))
+                (targets (mapcar #'car rendered)))
+           ;; Back to front: every edit below lies at or after the
+           ;; region it belongs to, so the regions still to come keep
+           ;; the positions they were found at.  Forwards, each
+           ;; deletion and each retitle would move the next one.
+           (pcase-dolist (`(,beg ,end ,pristine ,target ,heading)
+                          (nreverse regions))
+             (cond
+              (pristine (delete-region beg end))
+              ;; An alias whose heading holds no link cannot be compared
+              ;; against this round's matches at all, so it is left as
+              ;; it stands rather than marked on a guess.
+              ((null target))
+              (t (push target kept)
+                 (goto-char beg)
+                 (org-agents--mark-stale heading
+                                         (not (member target targets))))))
+           ;; What the user annotated stays where it is; the rest of the
+           ;; matches follow the subtree as it now stands.  The text is
+           ;; inserted before the newline that ends the subtree rather
+           ;; than at the position after it, which another agent's
+           ;; marker in this buffer may be sitting on.
+           (when-let* ((new (cl-remove-if (lambda (row) (member (car row) kept))
+                                          rendered)))
+             (goto-char marker)
+             (org-back-to-heading t)
+             (org-end-of-subtree t)
+             (pcase-dolist (`(,_ ,text ,suffix) new)
+               (insert "\n" (make-string (1+ level) ?*) " " text)
+               (when-let* ((extra (org-string-nw-p suffix)))
+                 (insert "  " extra))
+               (insert "\n:PROPERTIES:\n:AGENT_MATCH: t\n:END:")))))))
+    (length matches)))
 
 (provide 'org-agents)
 ;;; org-agents.el ends here
