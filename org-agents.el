@@ -168,6 +168,13 @@
 ;;     accumulation has no property rows in the database at all, so a
 ;;     `property' conjunct over such a name may drop it from the
 ;;     candidate set.
+;;   - One agent may carry several blocks, each its own view of it, but an
+;;     update that was not asked for from inside a particular one writes
+;;     only the FIRST: `org-agents-update' with point outside a block, and
+;;     therefore `org-agents-update-buffer' and `org-agents-update-all',
+;;     refresh that one and leave the rest as they were.  Put point in a
+;;     block to write that block, or use `org-update-all-dblocks' to write
+;;     every block in the buffer.
 ;;
 ;; Both are covered by tests in the differential section of
 ;; org-agents-test.el, which record them rather than hide them.
@@ -707,21 +714,27 @@ but empty and not written at all mean the same thing here."
   (when-let* ((value (org-entry-get nil property)))
     (unless (string-blank-p value) value)))
 
-(defun org-agents--read-sexp (property value)
-  "Read VALUE, the `:PROPERTY:' of an agent entry, as a Lisp form.
+(defun org-agents--read-sexp (source value)
+  "Read VALUE, which SOURCE supplied, as a Lisp form.
+SOURCE names where the text came from, and is written into the diagnosis
+as given: `:AGENT_QUERY:' for an agent property, `:query' for a dynamic
+block parameter, `the query' for what was typed at a prompt.  Spelling it
+here rather than wrapping it in colons is what keeps a prompt from being
+reported as a property that does not exist.
+
 A malformed value reaches `read-from-string' as an end of file, which
 `org-agents-update-all' cannot tell from a bug in this package: it
 answers for one agent at a time by catching `user-error', and anything
 else aborts the whole run."
   (condition-case err (car (read-from-string value))
-    (error (user-error "org-agents: unreadable :%s: `%s': %s"
-                       property value (error-message-string err)))))
+    (error (user-error "org-agents: unreadable %s `%s': %s"
+                       source value (error-message-string err)))))
 
 (defun org-agents--read-scope (value)
   "Read the `:AGENT_SCOPE:' property VALUE, which may be nil."
   (cond
    ((null value) 'agenda)
-   ((string-prefix-p "(" value) (org-agents--read-sexp "AGENT_SCOPE" value))
+   ((string-prefix-p "(" value) (org-agents--read-sexp ":AGENT_SCOPE:" value))
    ;; Only the three corpus names are symbols.  Interning every bare
    ;; value would leave no way to write the directory scope the design
    ;; calls for, and no `stringp' scope could ever reach
@@ -756,12 +769,12 @@ whose query matched nothing."
   "Read the agent entry at point into a plist."
   (let ((q (org-agents--entry-get "AGENT_QUERY")))
     (unless q (user-error "No :AGENT_QUERY: at point"))
-    (let ((query (org-agents--read-sexp "AGENT_QUERY" q)))
+    (let ((query (org-agents--read-sexp ":AGENT_QUERY:" q)))
       (list :query (org-agents--expand query)
             :view (org-agents--read-view (org-agents--entry-get "AGENT_VIEW"))
             :scope (org-agents--read-scope (org-agents--entry-get "AGENT_SCOPE"))
             :sort (when-let* ((s (org-agents--entry-get "AGENT_SORT")))
-                    (org-agents--read-sexp "AGENT_SORT" s))
+                    (org-agents--read-sexp ":AGENT_SORT:" s))
             :limit (org-agents--read-limit (org-agents--entry-get "AGENT_LIMIT"))
             :columns (org-agents--entry-get "AGENT_COLUMNS")
             :format (org-agents--entry-get "AGENT_FORMAT")
@@ -1271,7 +1284,7 @@ It may be written as a string or as the form itself, since Org has read
 the block's parameters as Lisp before this function sees them."
   (when-let* ((query (plist-get params :query)))
     (org-agents--expand
-     (if (stringp query) (org-agents--read-sexp "query" query) query))))
+     (if (stringp query) (org-agents--read-sexp ":query" query) query))))
 
 (defun org-agents--check-dblock-param (key value)
   "Signal a `user-error' when a block's KEY parameter may not be VALUE.
@@ -1522,6 +1535,11 @@ update writes -- not whichever one the agent's subtree holds first."
          (equal (match-string 1) "org-agents")
          (point))))
 
+(defconst org-agents--empty-block "#+BEGIN: org-agents\n#+END:\n"
+  "An `org-agents' dynamic block with nothing in it yet.
+Written both by `org-agents--goto-block', for an agent whose view needs a
+block and has none, and by `org-agents-insert-dblock' for `C-c C-x x'.")
+
 (defun org-agents--goto-block ()
   "Move to the `org-agents' block of the agent at point, opening one if none.
 An agent whose view is a list or a table has nowhere to render until it
@@ -1551,7 +1569,7 @@ or by `org-update-all-dblocks'."
       ;; point mid-line, where the block would be written onto the end of
       ;; it.
       (unless (bolp) (insert "\n"))
-      (save-excursion (insert "#+BEGIN: org-agents\n#+END:\n")))))
+      (save-excursion (insert org-agents--empty-block)))))
 
 (defun org-agents--update-dblock-in-window ()
   "Run `org-update-dblock' on the block at point, in a window showing it.
@@ -1561,18 +1579,50 @@ buffer that window shows.  Over a buffer no window displays, which is
 every agent of an update over a file set, that is a stranger's buffer:
 the pass fails there, leaving an indented block dedented and the update
 reported as having failed, or it indents a dynamic block that is none of
-ours.  So the block's own buffer goes into the selected window for the
-duration, with point on the line the pass looks for."
-  (if (eq (current-buffer) (window-buffer (selected-window)))
-      (org-update-dblock)
-    (let ((position (point)))
-      (save-window-excursion
-        ;; A strongly dedicated window refuses another buffer; the window
-        ;; configuration puts the flag back with everything else.
-        (set-window-dedicated-p (selected-window) nil)
-        (set-window-buffer (selected-window) (current-buffer))
-        (goto-char position)
-        (org-update-dblock)))))
+ours.  So the block is written from a window that shows its own buffer:
+one that already does where there is one, and otherwise the selected
+window, borrowed for the duration.
+
+`set-window-buffer' signals on the minibuffer window, so an update begun
+while the minibuffer is selected -- `M-x' itself, or a run over a file set
+started from there -- must not reach it.  Another window is looked for
+instead, and where there is none to borrow the pass is simply run where it
+stands: an unindented block is worth more than an update that failed over
+where it was going to be indented."
+  (let ((buffer (current-buffer))
+        (position (point)))
+    (cond
+     ;; Already showing it: nothing to borrow.
+     ((eq buffer (window-buffer (selected-window)))
+      (org-update-dblock))
+     ;; Displayed in some other window, so use that one rather than moving
+     ;; buffers into and out of the selected window.
+     ((when-let* ((window (get-buffer-window buffer)))
+        (with-selected-window window
+          (goto-char position)
+          (org-update-dblock))
+        t))
+     (t
+      (let ((window (if (window-minibuffer-p (selected-window))
+                        (get-mru-window nil nil t)
+                      (selected-window))))
+        (if (or (null window) (window-minibuffer-p window))
+            ;; Nothing to borrow -- the minibuffer is all there is.  Run it
+            ;; where it stands: an unindented block is worth more than an
+            ;; update that failed over where it was going to be indented.
+            (org-update-dblock)
+          (save-window-excursion
+            ;; A strongly dedicated window refuses another buffer; the
+            ;; window configuration puts the flag back with everything else.
+            (set-window-dedicated-p window nil)
+            (set-window-buffer window buffer)
+            ;; Selected only once the window shows BUFFER, and through
+            ;; `with-selected-window' so the selection is put back.
+            ;; Selecting first would make the window's old buffer current,
+            ;; and every edit below would land in a stranger's buffer.
+            (with-selected-window window
+              (goto-char position)
+              (org-update-dblock)))))))))
 
 (defun org-agents--update-block (&optional block)
   "Update an agent's dynamic block; return the rows or items it wrote.
@@ -1642,8 +1692,10 @@ written: there is nothing there to record a count on."
           (user-error "%s" (org-agents--failure-text
                             (org-agents--agent-label marker) err)))))
       (block
+       ;; "line", not "row": a block renders a table only where its view
+       ;; says so, and every other view is a list.
        (let ((count (org-agents--update-block block)))
-         (message "org-agents: the block wrote %d row%s" count
+         (message "org-agents: the block wrote %d line%s" count
                   (if (= count 1) "" "s"))))
       (t (user-error
           "org-agents: no agent and no `org-agents' block at point"))))))
@@ -1663,8 +1715,14 @@ is no agent one.  The whole buffer is read, whatever it is narrowed to."
     (org-with-wide-buffer
      (goto-char (point-min))
      (while (re-search-forward org-outline-regexp-bol nil t)
-       (when (org-agents--entry-get "AGENT_QUERY")
-         (push (copy-marker (match-beginning 0)) markers))))
+       ;; The heading's position is read before the property lookup, not
+       ;; after: `org-entry-get' searches for the drawer itself, so by the
+       ;; time it returns, the match data describes whatever Org's property
+       ;; machinery matched last -- the entry's last property line, as it
+       ;; happens -- and not the heading this loop just found.
+       (let ((heading (match-beginning 0)))
+         (when (org-agents--entry-get "AGENT_QUERY")
+           (push (copy-marker heading) markers)))))
     (nreverse markers)))
 
 (defun org-agents--update-markers (markers)
@@ -1738,18 +1796,29 @@ truenames, because two spellings of one file are one file."
 (defun org-agents-update-all ()
   "Update every agent in the files `org-agents-files' names.
 An agent that fails leaves the others updated, and is named in the
-summary along with what went wrong.  The files are left modified rather
-than saved, so an update can be read over -- and undone -- before it is
-kept."
+summary along with what went wrong.  A whole file that cannot be read is
+recorded the same way: `find-file-noselect' can fail or ask a question of
+its own -- a file grown past `large-file-warning-threshold', one that
+changed on disk since it was last visited, a coding system that cannot
+decode it -- and one such file must not take with it the count of every
+file already updated.  The files are left modified rather than saved, so
+an update can be read over -- and undone -- before it is kept."
   (interactive)
   (let ((updated 0)
         (failures nil))
     (dolist (file (org-agents--agent-files))
-      (with-current-buffer (find-file-noselect file)
-        (pcase-let ((`(,n . ,fs) (org-agents--update-markers
-                                  (org-agents--buffer-agents))))
-          (cl-incf updated n)
-          (setq failures (nconc failures fs)))))
+      (condition-case err
+          (with-current-buffer (find-file-noselect file)
+            (pcase-let ((`(,n . ,fs) (org-agents--update-markers
+                                      (org-agents--buffer-agents))))
+              (cl-incf updated n)
+              (setq failures (nconc failures fs))))
+        ;; Named by its file, because nothing in it was reached: there is
+        ;; no agent to name, and the file is what the user has to fix.
+        (error (setq failures
+                     (nconc failures
+                            (list (org-agents--failure-text
+                                   (abbreviate-file-name file) err)))))))
     (org-agents--report updated failures)))
 
 ;;;###autoload
@@ -1759,13 +1828,23 @@ The query is read, expanded and gated exactly as an agent's is, and
 `org-agents-exclude' is appended before `org-ql-search' evaluates it, so
 a preview lists what an agent would render rather than something close to
 it.  The search is over `org-agenda-files': a scope belongs to an agent,
-and a preview has no agent."
+and a preview has no agent.  With no agenda files there is nothing to
+preview, and this says so rather than searching the current buffer, which
+is what `org-ql-search' does when it is handed none."
   (interactive "sAgent query: ")
   (let ((query (org-agents--expand
-                (org-agents--read-sexp "query" query-string))))
+                (org-agents--read-sexp "the query" query-string)))
+        (files (org-agenda-files)))
     (unless (org-agents--gate query)
       (user-error "org-agents: query not approved"))
-    (org-ql-search (org-agenda-files)
+    ;; Handed no files, `org-ql-search' searches the current buffer -- so a
+    ;; preview with no agenda files would list matches from wherever the
+    ;; user happened to be standing, under a heading promising the agenda.
+    ;; `org-agents--collect' guards the same case for the same reason.
+    (unless files
+      (user-error
+       "org-agents: `org-agenda-files' is empty, so there is nothing to preview"))
+    (org-ql-search files
                    (if org-agents-exclude
                        `(and ,query ,org-agents-exclude)
                      ;; nil conjoined here is a clause that never
@@ -1773,10 +1852,21 @@ and a preview has no agent."
                      ;; off means.
                      query))))
 
-;; So `C-c C-x x' offers the block among the dynamic block types it
-;; knows.  What it offers writes the agent's block, opening one where the
-;; agent has none yet.
-(org-dynamic-block-define "org-agents" #'org-agents-update)
+;;;###autoload
+(defun org-agents-insert-dblock ()
+  "Insert an empty `org-agents' dynamic block at point.
+What `C-c C-x x' offers, and what `columnview' and `clocktable' do there:
+insert the block, leaving it to be written.  Writing it is
+`org-agents-update', which the block's own `C-c C-c' reaches -- and which
+would be the wrong thing to offer here, since on a plain heading it has no
+agent to update and on a `children' agent it would rewrite the aliases
+rather than insert anything."
+  (interactive)
+  (unless (bolp) (insert "\n"))
+  (save-excursion (insert org-agents--empty-block)))
+
+;; So `C-c C-x x' offers the block among the dynamic block types it knows.
+(org-dynamic-block-define "org-agents" #'org-agents-insert-dblock)
 
 (provide 'org-agents)
 ;;; org-agents.el ends here

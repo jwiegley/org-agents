@@ -362,7 +362,19 @@ unconfigured and property inheritance off, so a test that wants either
 must arrange it; the ID location table is a fresh one, so rendering a
 link cannot write a temporary corpus into the developer's
 `org-id-locations-file'; buffers visiting the corpus are killed
-afterwards, because the files they visit are about to be deleted."
+afterwards, because the files they visit are about to be deleted.
+
+The window configuration is put back as well.  Several tests here have to
+show a corpus buffer in the selected window, because `org-update-dblock'
+indents in that window's buffer and in batch it is `*scratch*'; left
+unrestored, the window goes on showing a buffer this fixture then kills,
+and every later test in the process inherits it."
+  (declare (indent 0))
+  `(save-window-excursion
+     (org-agents-test--with-corpus-1 ,@body)))
+
+(defmacro org-agents-test--with-corpus-1 (&rest body)
+  "The body of `org-agents-test--with-corpus'; call that instead."
   (declare (indent 0))
   `(let* ((dir (make-temp-file "org-agents-corpus" t))
           (a (expand-file-name "a.org" dir))
@@ -2011,12 +2023,59 @@ in its place."
           (should (string-match-p "the corpus caught fire" (cadr err)))))
       (should-not (org-entry-get nil "AGENT_MATCHED")))))
 
+(ert-deftest org-agents-test-buffer-agents-marks-the-headline ()
+  "Every marker names its agent's own headline, not a line inside it.
+`org-agents--entry-get' runs `org-entry-get', which searches for the
+drawer itself, so the match data after it describes whatever Org's
+property machinery matched last -- measured as the entry's LAST PROPERTY
+LINE.  Reading `match-beginning' there put every marker several lines
+below its heading.  Nothing rendered wrong, because `--read-agent'
+recomputes the marker and `org-entry-get' works from anywhere in an
+entry, but the docstring's promise was false and every failure summary
+named the wrong line."
+  (dolist (cache (list nil (default-value 'org-element-use-cache)))
+    (with-temp-buffer
+      (org-mode)
+      (setq-local org-element-use-cache cache)
+      (insert "* First agent\n:PROPERTIES:\n:AGENT_QUERY: (todo)\n"
+              ":AGENT_SCOPE: agenda\n:END:\n"
+              "* Not an agent\n:PROPERTIES:\n:NOTE: mine\n:END:\n"
+              "* Second agent\n:PROPERTIES:\n:AGENT_QUERY: (todo)\n"
+              ":AGENT_SCOPE: agenda\n:END:\n")
+      (let ((markers (org-agents--buffer-agents)))
+        (should (= 2 (length markers)))
+        (dolist (pair (cl-mapcar #'cons markers '("First agent" "Second agent")))
+          (org-with-point-at (car pair)
+            ;; On the heading itself: at its very first character, and the
+            ;; line reads as the headline it belongs to.
+            (should (looking-at-p org-outline-regexp-bol))
+            (should (equal (cdr pair) (org-get-heading t t t t)))
+            (should (= (point) (line-beginning-position)))))))))
+
+(ert-deftest org-agents-test-update-buffer-names-the-agents-own-line ()
+  "A failure summary names the line the agent's heading is on.
+`org-agents--agent-label' reads `line-number-at-pos' at the marker, so a
+marker that had drifted into the drawer reported an agent whose heading
+is on line 1 as though it were three lines further down."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* Broken agent\n:PROPERTIES:\n:AGENT_QUERY: (and (todo\n"
+              ":AGENT_SCOPE: agenda\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (let ((report (org-agents-update-buffer)))
+        (should (string-match-p "1 failed" report))
+        (should (string-match-p "Broken agent" report))
+        ;; Line 1, which is where the heading is -- not line 3, where the
+        ;; unreadable property sits, nor line 4, the drawer's last line.
+        (should (string-match-p "agents\\.org:1)" report))))))
+
 (ert-deftest org-agents-test-update-buffer-updates-every-agent ()
-  "Every agent in the buffer, each anchored where it was found.
-The agents are collected as markers before any of them renders: writing
-the first one inserts headings under it and a line into its drawer, and
-a position found beforehand would no longer name the agent it was found
-for."
+  "Every agent in the buffer, each rendering under its own heading.
+That the agents are collected as markers before any of them renders is
+what `org-agents-test-buffer-agents-marks-the-headline' pins; the
+guarantee this test carries is narrower and is Task 7's: an alias
+inserted at the end of the first agent's subtree does not move the second
+agent's anchor, so each agent's aliases land under it."
   (org-agents-test--with-corpus
     (with-temp-file agent-file
       (insert "* First agent\n:PROPERTIES:\n"
@@ -2132,13 +2191,48 @@ an agent that failed to update."
         (should (string-match-p "updated 1 agent\\'"
                                 (org-agents-update-all)))))))
 
+(ert-deftest org-agents-test-update-all-continues-past-an-unreadable-file ()
+  "A file that cannot be visited costs that file, not the whole run.
+`find-file-noselect' can fail or ask a question of its own -- a file grown
+past `large-file-warning-threshold', one changed on disk since it was last
+visited, a coding system that cannot decode it.  Unguarded, that took with
+it every count already accumulated and `org-agents--report' never ran at
+all, so an update over a file set stopped silently partway through."
+  (org-agents-test--with-corpus
+    (let* ((bad (expand-file-name "unreadable.org" dir))
+           (org-agents-files (list agent-file bad))
+           (real (symbol-function 'find-file-noselect)))
+      (with-temp-file bad
+        (insert "* Agent in a file that will not open\n:PROPERTIES:\n"
+                ":AGENT_QUERY: (todo)\n:END:\n"))
+      (cl-letf (((symbol-function 'find-file-noselect)
+                 (lambda (file &rest args)
+                   (if (equal (file-truename file) (file-truename bad))
+                       (error "Opening `%s': bad coding system" file)
+                     (apply real file args)))))
+        (let ((report (org-agents-update-all)))
+          ;; The good file was still updated, and the summary still printed.
+          (should (string-match-p "updated 1 agent" report))
+          (should (string-match-p "1 failed" report))
+          ;; The failure names the FILE, since no agent in it was reached.
+          (should (string-match-p "unreadable\\.org" report))
+          (should (string-match-p "bad coding system" report))))
+      ;; And the agent that could be reached really was written.
+      (with-current-buffer (find-file-noselect agent-file)
+        (should (string-match-p ":AGENT_MATCHED: 1" (buffer-string)))))))
+
 (ert-deftest org-agents-test-preview-applies-exclusion ()
   "What a preview lists is what an agent would render, aliases excluded."
-  (let (received)
-    (cl-letf (((symbol-function 'org-ql-search)
-               (lambda (_files query &rest _) (setq received query))))
+  (let (received files)
+    ;; A preview searches the agenda, so the fixture has to supply one:
+    ;; batch implies `-q', which leaves `org-agenda-files' empty, and a
+    ;; preview refuses that rather than searching the current buffer.
+    (cl-letf (((symbol-function 'org-agenda-files) (lambda (&rest _) '("a.org")))
+              ((symbol-function 'org-ql-search)
+               (lambda (fs query &rest _) (setq files fs received query))))
       (org-agents-preview "(todo)")
       (should (equal received `(and (todo) ,org-agents-exclude)))
+      (should (equal files '("a.org")))
       ;; The `$PROP' layer is expanded exactly as an agent's query is.
       (org-agents-preview "(and (todo) $URL)")
       (should (equal received
@@ -2148,6 +2242,18 @@ an agent that failed to update."
       (let ((org-agents-exclude nil))
         (org-agents-preview "(todo)")
         (should (equal received '(todo)))))))
+
+(ert-deftest org-agents-test-preview-refuses-an-empty-agenda ()
+  "A preview with no agenda files must not fall back to the current buffer.
+Handed no files, `org-ql-search' searches the buffer point is in, so a
+preview would list matches from wherever the user was standing under a
+heading that says it searched the agenda.  `org-agents--collect' guards
+the same case for the same reason."
+  (cl-letf (((symbol-function 'org-agenda-files) #'ignore)
+            ((symbol-function 'org-ql-search)
+             (lambda (&rest _) (error "must not search the current buffer"))))
+    (let ((err (should-error (org-agents-preview "(todo)") :type 'user-error)))
+      (should (string-match-p "org-agenda-files" (error-message-string err))))))
 
 (ert-deftest org-agents-test-preview-gates-and-reads-its-query ()
   "A preview is gated like an agent, and evaluates nothing it refuses."
@@ -2162,9 +2268,31 @@ an agent that failed to update."
                     :type 'user-error))))
 
 (ert-deftest org-agents-test-dblock-type-is-registered ()
-  "`C-c C-x x' offers the block among the types it knows."
+  "`C-c C-x x' offers the block, and what it offers INSERTS one.
+`columnview' and `clocktable' register inserters there, and this must
+too: registering `org-agents-update' instead would error on a plain
+heading, which has no agent to update, and on a `children' agent would
+rewrite its aliases rather than insert anything."
   (should (member "org-agents" (org-dynamic-block-types)))
-  (should (eq #'org-agents-update (org-dynamic-block-function "org-agents"))))
+  (should (eq #'org-agents-insert-dblock
+              (org-dynamic-block-function "org-agents")))
+  ;; On a plain heading -- no agent anywhere -- it inserts a block.
+  (with-temp-buffer
+    (org-mode)
+    (insert "* Just a heading\n")
+    (funcall (org-dynamic-block-function "org-agents"))
+    (should (string-match-p "^#\\+BEGIN: org-agents\n#\\+END:$" (buffer-string)))
+    ;; And Org reads back what it wrote as a block of this type.
+    (goto-char (point-min))
+    (should (re-search-forward org-dblock-start-re nil t))
+    (should (equal "org-agents" (match-string 1))))
+  ;; Point mid-line does not get the block written onto the end of it.
+  (with-temp-buffer
+    (org-mode)
+    (insert "* Heading with no final newline")
+    (org-agents-insert-dblock)
+    (should (string-match-p "no final newline\n#\\+BEGIN: org-agents"
+                            (buffer-string)))))
 
 ;;;; Differential (database prefilter superset)
 
