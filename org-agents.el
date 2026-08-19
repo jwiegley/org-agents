@@ -303,7 +303,8 @@ skipped instead of prompting."
 Mirrors `org-property-inherit-p', including its case-insensitive
 reading of a list.  An invalid setting of
 `org-use-property-inheritance' counts as inheriting: answering nil
-here pushes an equality test the database can only answer locally."
+here pushes a property conjunct the database cannot answer, which
+would narrow the candidate files wrongly."
   (pcase org-use-property-inheritance
     ('nil nil)
     ('t t)
@@ -312,13 +313,21 @@ here pushes an equality test the database can only answer locally."
     (_ t)))
 
 (defun org-agents--property-pushable-p (name)
-  "Non-nil when NAME is an ordinary drawer property.
+  "Non-nil when NAME is an ordinary drawer property that cannot inherit.
 `org-entry-get' answers a special property such as CATEGORY or
 DEADLINE from the entry's structure or its file, where the database
 holds no property row at all, so pushing one as a property test would
-drop true matches."
+drop true matches.
+
+An inheriting name is unsafe for the same reason, and not only for
+equality: the value may come from a file-level `#+PROPERTY:' line or
+from `org-global-properties', neither of which creates a property row
+in any file.  Existence is then false of every row in a file whose
+entries all match, so even the weaker conjunct would drop the file
+from the candidate set."
   (and (stringp name)
-       (not (member-ignore-case name (cons "CATEGORY" org-special-properties)))))
+       (not (member-ignore-case name (cons "CATEGORY" org-special-properties)))
+       (not (org-agents--property-inherits-p name))))
 
 (defun org-agents--date-arg-ok-p (plist)
   "Non-nil when PLIST holds only :from/:to/:on with CLI-safe values."
@@ -345,15 +354,11 @@ drop true matches."
              ;; reads this entry's own drawer, as the database rows do.
              (`(property ,(and name (pred org-agents--property-pushable-p)))
               `(property ,name))
+             ;; Equality: both sides compare the entry's own value, and
+             ;; a pushable name is one that cannot have inherited it.
              (`(property ,(and name (pred org-agents--property-pushable-p))
                          ,(and val (pred stringp)))
-              (if (org-agents--property-inherits-p name)
-                  ;; An inherited value sits on an ancestor, which has no
-                  ;; row of its own — but it is in the same file, so
-                  ;; existence still selects the file.
-                  `(property ,name)
-                ;; Equality: both sides compare the entry's own value.
-                `(property ,name ,val)))
+              `(property ,name ,val))
              (_ nil))))
    (cons 'property-ts
          (lambda (form)

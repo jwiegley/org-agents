@@ -179,14 +179,21 @@
 
 (ert-deftest org-agents-test-skeleton-property-equality-respects-inheritance ()
   (let ((org-use-property-inheritance '("OVERLAY")))
+    ;; A name that cannot inherit pushes as before.
     (should (equal (org-agents--skeleton '(property "STYLE" "habit"))
                    "(property \"STYLE\" \"habit\")"))
-    ;; Inheriting names: only existence is safe.
-    (should (equal (org-agents--skeleton '(property "OVERLAY" "x"))
-                   "(property \"OVERLAY\")"))
+    (should (equal (org-agents--skeleton '(property "STYLE"))
+                   "(property \"STYLE\")"))
+    ;; An inheriting name pushes nothing, not even existence: the value
+    ;; may come from a file-level #+PROPERTY: line or from
+    ;; `org-global-properties', neither of which creates a property row
+    ;; in any file, so the file would be dropped from the candidates.
+    (should (null (org-agents--skeleton '(property "OVERLAY" "x"))))
+    (should (null (org-agents--skeleton '(property "OVERLAY"))))
+    (should (null (org-agents--skeleton '(property-ts "OVERLAY" :to today))))
     (let ((org-use-property-inheritance t))
-      (should (equal (org-agents--skeleton '(property "STYLE" "habit"))
-                     "(property \"STYLE\")")))))
+      (should (null (org-agents--skeleton '(property "STYLE" "habit"))))
+      (should (null (org-agents--skeleton '(property-ts "STYLE" :to today)))))))
 
 (ert-deftest org-agents-test-skeleton-nested-queries-residual ()
   (should (null (org-agents--skeleton '(parent (property "X")))))
