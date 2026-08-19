@@ -169,5 +169,101 @@ With NUMERIC non-nil, coerce a property's string value to a number."
    ;; Residual Lisp: rewrite refs with coercion.
    (t (org-agents--expand-residual form nil))))
 
+;;;; Gate
+
+;; An org-ql query is Lisp, and org-ql evaluates residual Lisp at every
+;; candidate entry.  A query read out of an Org property is therefore
+;; code from a file, and every query passes this gate before it is
+;; evaluated.  Queries built only from org-ql predicates and
+;; combinators run unremarked; anything else needs the user's word for
+;; it, once, remembered by hash.
+
+(defcustom org-agents-safe-queries nil
+  "List of sha1 hashes of queries approved to run without prompting.
+Managed like `safe-local-variable-values': approving a query
+interactively offers to persist its hash here."
+  :type '(repeat string) :group 'org-agents)
+
+(defvar org-agents--session-approved (make-hash-table :test 'equal)
+  "Query hashes approved for this session only.")
+
+(defconst org-agents--cli-only-heads
+  '((headline . heading) (re . regexp) (p . priority))
+  "CLI grammar spellings that are not valid org-ql, with replacements.")
+
+(defun org-agents--structurally-safe-p (form)
+  "Non-nil if FORM consists solely of known predicates and combinators."
+  (cond
+   ((not (consp form)) t)                  ; literals as arguments
+   ((memq (car form) org-agents--boolean-heads)
+    (cl-every #'org-agents--structurally-safe-p (cdr form)))
+   ((memq (car form) org-agents--nested-query-heads)
+    (cl-every #'org-agents--structurally-safe-p (cdr form)))
+   ((org-agents--known-predicate-p (car form)) t)
+   (t nil)))
+
+(defun org-agents--leftover-ref (form)
+  "Return the first $ref symbol anywhere in FORM, or nil if there is none."
+  (cond ((org-agents--ref-p form) form)
+        ((consp form) (or (org-agents--leftover-ref (car form))
+                          (org-agents--leftover-ref (cdr form))))))
+
+(defun org-agents--check-cli-spelling (form)
+  "Signal `user-error' if FORM uses a CLI-only predicate spelling."
+  (when (consp form)
+    (when-let* ((fix (alist-get (car form) org-agents--cli-only-heads)))
+      (user-error "org-agents: `%s' is CLI-only syntax; use `%s'"
+                  (car form) fix))
+    (when (memq (car form)
+                (append org-agents--boolean-heads
+                        org-agents--nested-query-heads))
+      (mapc #'org-agents--check-cli-spelling (cdr form)))))
+
+(defun org-agents--check-spelling (form)
+  "Signal `user-error' if FORM cannot be evaluated as written.
+FORM has already been through `org-agents--expand', so a surviving
+$ref sits in a position the expander has no reading for, and would
+otherwise reach org-ql as a void variable at match time."
+  (org-agents--check-cli-spelling form)
+  (when-let* ((ref (org-agents--leftover-ref form)))
+    (user-error "org-agents: no expansion for `%s' in `%S'" ref form)))
+
+(defun org-agents--query-hash (query)
+  "Return the hash under which QUERY is approved.
+Printing is unabbreviated: a truncated query would hash as its own
+prefix, so one approval would answer for every query sharing it."
+  (let ((print-level nil)
+        (print-length nil))
+    (sha1 (prin1-to-string query))))
+
+(defun org-agents--gate (query &optional context)
+  "Return non-nil when QUERY may be evaluated.
+Structurally safe queries always pass.  Unsafe queries pass when
+`org-ql-ask-unsafe-queries' is nil, when previously approved, or when
+the user confirms; in `noninteractive' (or CONTEXT `batch') they are
+skipped instead of prompting."
+  (org-agents--check-spelling query)
+  (or (org-agents--structurally-safe-p query)
+      (not org-ql-ask-unsafe-queries)
+      (let ((hash (org-agents--query-hash query)))
+        (or (gethash hash org-agents--session-approved)
+            (member hash org-agents-safe-queries)
+            (if (or noninteractive (eq context 'batch))
+                (progn
+                  (message "org-agents: skipping unapproved query %S" query)
+                  nil)
+              (when (yes-or-no-p
+                     (format "Query contains arbitrary Lisp: %S — run it? "
+                             query))
+                (puthash hash t org-agents--session-approved)
+                ;; Only offer to persist where customize has a file to
+                ;; write; without one `customize-save-variable' errors.
+                (when (and (or (bound-and-true-p custom-file) user-init-file)
+                           (yes-or-no-p "Remember this approval permanently? "))
+                  (customize-save-variable
+                   'org-agents-safe-queries
+                   (cons hash org-agents-safe-queries)))
+                t))))))
+
 (provide 'org-agents)
 ;;; org-agents.el ends here

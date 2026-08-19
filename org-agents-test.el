@@ -9,6 +9,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'ert)
 (require 'org-agents)
 
@@ -45,6 +46,53 @@
 (ert-deftest org-agents-test-expand-passthrough ()
   (should (equal (org-agents--expand '(and (todo "TODO") (tags "urgent")))
                  '(and (todo "TODO") (tags "urgent")))))
+
+(ert-deftest org-agents-test-gate-structural-safe-no-prompt ()
+  (cl-letf (((symbol-function 'yes-or-no-p)
+             (lambda (&rest _) (error "must not prompt"))))
+    (should (org-agents--gate '(and (todo "TODO") (property "URL"))))))
+
+(ert-deftest org-agents-test-gate-refuses-bare-call ()
+  "An unapproved arbitrary call is never evaluated, even inside (and ...)."
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive t))
+    (should-not (org-agents--gate '(and (todo) (shell-command "touch /tmp/pwned"))))))
+
+(ert-deftest org-agents-test-gate-residual-needs-approval-then-passes ()
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        ;; Take the prompting path rather than the batch skip.
+        (noninteractive nil)
+        (query '(and (todo) (string-match "x" (or (org-entry-get nil "URL") "")))))
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+      (should (org-agents--gate query)))
+    ;; Second call: memoized, no prompt.
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "must not re-prompt"))))
+      (should (org-agents--gate query)))))
+
+(ert-deftest org-agents-test-gate-rejects-cli-only-spelling ()
+  (should-error (org-agents--gate '(headline "foo")) :type 'user-error))
+
+(ert-deftest org-agents-test-gate-rejects-leftover-ref ()
+  (should-error (org-agents--gate '(property "K" $VALUE)) :type 'user-error))
+
+(ert-deftest org-agents-test-gate-hash-resists-print-truncation ()
+  "Two queries differing past `print-length' must not share an approval."
+  (let ((print-length 2)
+        (print-level 2))
+    (should-not (equal (org-agents--query-hash
+                        '(and (todo) (tags "a") (shell-command "safe")))
+                       (org-agents--query-hash
+                        '(and (todo) (tags "a") (shell-command "pwned")))))))
+
+(ert-deftest org-agents-test-gate-master-switch-off ()
+  (let ((org-ql-ask-unsafe-queries nil)
+        (org-agents--session-approved (make-hash-table :test 'equal)))
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "must not prompt"))))
+      (should (org-agents--gate '(ignore))))))
 
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here
