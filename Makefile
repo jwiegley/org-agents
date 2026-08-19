@@ -37,7 +37,18 @@ FIND_EMACS = for c in /nix/store/*emacs-mac-macport-with-packages-*/bin/emacs; d
 
 # Every Emacs-running recipe begins with this.  It leaves the interpreter in
 # $$emacs and fails with one clear line if there is none.
-EMACS_OR_DIE = emacs=$${EMACS:-$$($(FIND_EMACS))}; emacs=$${emacs:-emacs}; \
+#
+# The command substitution is a statement of its own, NOT spelled
+# `$${EMACS:-$$(...)}'.  macOS's /bin/sh is bash 3.2.57, which cannot parse a
+# `$(...)' holding a `for ... done' inside a `$${var:-...}' expansion, and
+# fails with "syntax error near unexpected token `done'" before Emacs runs --
+# even when EMACS is set on the command line, because the expansion is parsed
+# either way.  Reproduced: GNU Make defaults SHELL to /bin/sh, so `make test'
+# died for anyone whose PATH does not supply a newer bash.  Keep the two steps
+# separate, and skip the search entirely when EMACS is already set.
+EMACS_OR_DIE = emacs="$$EMACS"; \
+	[ -n "$$emacs" ] || emacs=$$($(FIND_EMACS)); \
+	emacs=$${emacs:-emacs}; \
 	command -v "$$emacs" >/dev/null 2>&1 || \
 	  { echo "no usable Emacs found; run again with EMACS=/path/to/emacs" >&2; exit 1; };
 
