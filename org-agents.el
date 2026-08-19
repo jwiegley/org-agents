@@ -716,8 +716,8 @@ marker rather than let this comparison quietly stop being made."
   "Return ELEMENT's headline marker, if it still names a live buffer.
 org-ql sets `:org-hd-marker' when selecting `element-with-markers'.
 By the time a render reaches a match the marker may be detached -- its
-buffer killed, its file reverted -- and a detached marker has no
-position to read a heading at."
+buffer killed -- and a detached marker has no position to read a
+heading at."
   (when-let* ((m (org-element-property :org-hd-marker element)))
     (and (marker-buffer m) m)))
 
@@ -733,7 +733,10 @@ is worse than text saying there is none."
         (with-current-buffer (marker-buffer m)
           (org-with-wide-buffer
            (goto-char m)
-           (let ((file (buffer-file-name))
+           ;; The base buffer's file, as `org-id' itself reads it: an
+           ;; indirect buffer visits nothing, and a match reached
+           ;; through one would have no file to fall back on.
+           (let ((file (buffer-file-name (buffer-base-buffer)))
                  (id (org-id-get)))
              (setq title (org-get-heading t t t t)
                    target
@@ -822,7 +825,11 @@ whose `AGENT_MATCH' says anything other than `t'."
         (let ((beg (point))
               (end (save-excursion (org-end-of-subtree t t) (point))))
           (when (equal (org-entry-get nil "AGENT_MATCH") "t")
-            (let ((heading (org-get-heading t t t t)))
+            ;; A COMMENT keyword is kept: `org-agents--mark-stale'
+            ;; retitles through `org-edit-headline', which replaces the
+            ;; whole title group, and the keyword lives in that group.
+            ;; Read without it, a stale mark would uncomment the alias.
+            (let ((heading (org-get-heading t t t nil)))
               (push (list beg end
                           (org-agents--child-pristine-p)
                           (org-agents--alias-target heading)
@@ -883,7 +890,10 @@ the agent's own buffer, where an edit would move it."
               (pristine (delete-region beg end))
               ;; An alias whose heading holds no link cannot be compared
               ;; against this round's matches at all, so it is left as
-              ;; it stands rather than marked on a guess.
+              ;; it stands rather than marked on a guess.  It joins no
+              ;; target to `kept' either, so pass 2 writes a fresh alias
+              ;; for the match it stood for: a duplicate, accepted, the
+              ;; price of not reading a mangled link as any match at all.
               ((null target))
               (t (push target kept)
                  (goto-char beg)

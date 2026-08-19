@@ -739,11 +739,48 @@ which `org-link-heading-search-string' supplies itself."
             (kill-buffer buf))))
       (delete-directory dir t))))
 
+(ert-deftest org-agents-test-link-in-indirect-buffer ()
+  "A match reached through an indirect buffer still links to its file.
+`buffer-file-name' answers nil for an indirect buffer, and with neither
+an ID nor a file there is nothing to link to, so the match would render
+as plain text instead.  The file is the base buffer's, which is how
+`org-id' reads it too."
+  (let ((dir (make-temp-file "org-agents-indirect" t))
+        (org-element-use-cache nil)
+        (org-id-locations (make-hash-table :test #'equal))
+        (org-id-files nil))
+    (unwind-protect
+        (let* ((f (expand-file-name "x.org" dir))
+               (base (progn (with-temp-file f (insert "* TODO No id here\n"))
+                            (find-file-noselect f)))
+               (indirect (make-indirect-buffer base "org-agents-indirect-x" t)))
+          (unwind-protect
+              (let ((element
+                     (org-element-create
+                      'headline
+                      (list :raw-value "No id here"
+                            :org-hd-marker
+                            (with-current-buffer indirect
+                              (goto-char (point-min))
+                              (point-marker))))))
+                (should (equal (org-agents--alias-target
+                                (org-agents--link-to element))
+                               (concat "file:" f "::"
+                                       (org-link-heading-search-string
+                                        "No id here")))))
+            (kill-buffer indirect)))
+      (dolist (buf (buffer-list))
+        (when-let* ((bf (buffer-file-name buf)))
+          (when (string-prefix-p (file-name-as-directory dir) bf)
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf))))
+      (delete-directory dir t))))
+
 (ert-deftest org-agents-test-link-unresolved-match ()
   "A match whose marker names no buffer is rendered as plain text.
-A killed buffer or a reverted file detaches the marker org-ql handed
-us, and there is no heading left to build a link at.  A link that does
-not resolve is worse than text saying there is none."
+Killing the buffer detaches the marker org-ql handed us, and there is
+no heading left to build a link at.  A link that does not resolve is
+worse than text saying there is none."
   (let ((ghost (org-element-create
                 'headline (list :raw-value "Vanished entry"
                                 :org-hd-marker (make-marker)))))
@@ -806,6 +843,34 @@ not resolve is worse than text saying there is none."
       ;; And the returning match is still not duplicated.
       (should (= 1 (cl-count-if (lambda (l) (string-match-p "Fix widget" l))
                                 (split-string (buffer-string) "\n")))))))
+
+(ert-deftest org-agents-test-children-stale-preserves-comment-keyword ()
+  "Marking an alias stale must not quietly uncomment it.
+`org-edit-headline' replaces the heading's title group, and a COMMENT
+keyword sits inside that group, so a title read without the keyword
+would drop it -- uncommenting, on the user's behalf, an alias they
+commented out."
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent)))
+      (org-agents--render-children agent (org-agents--collect agent))
+      ;; Comment the alias out and annotate it, so this update keeps it.
+      (goto-char (point-min))
+      (search-forward "Fix widget")
+      (org-back-to-heading t)
+      (org-toggle-comment)
+      (org-end-of-subtree t t)
+      (insert "*** mine\n")
+      (goto-char (point-min))
+      (org-agents--render-children agent nil)
+      (let ((line (org-agents-test--alias-line "Fix widget")))
+        (should (string-prefix-p "** COMMENT " line))
+        (should (string-suffix-p " (stale)" line))
+        ;; And the keyword survives the round trip back to unstale.
+        (goto-char (point-min))
+        (org-agents--render-children agent (org-agents--collect agent))
+        (let ((back (org-agents-test--alias-line "Fix widget")))
+          (should (string-prefix-p "** COMMENT " back))
+          (should-not (string-suffix-p " (stale)" back)))))))
 
 (ert-deftest org-agents-test-children-idempotent ()
   "A second update over the same matches leaves the buffer as it was."
