@@ -994,5 +994,246 @@ and `org-back-to-heading' would signal a plain error over it, which
         (should-error (org-agents--render-children agent nil) :type 'user-error)
         (should (equal before (buffer-string)))))))
 
+;;;; Dynamic block
+
+(defmacro org-agents-test--with-dblock-agent (view extra &rest body)
+  "Run BODY at an empty `org-agents' block under an agent rendering VIEW.
+EXTRA is appended to the agent's property drawer, as text.  Point is at
+the block's `#+BEGIN:' line, where `org-dblock-update' expects it, and
+the corpus is the one `org-agents-test--with-corpus' provides."
+  (declare (indent 2))
+  `(org-agents-test--with-corpus
+     (with-current-buffer (find-file-noselect agent-file)
+       (goto-char (point-max))
+       (insert "\n* Block agent\n:PROPERTIES:\n"
+               ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+               ":AGENT_SCOPE: (\"" a "\" \"" b "\")\n"
+               ":AGENT_VIEW: " ,view "\n" ,extra ":END:\n\n"
+               "#+BEGIN: org-agents\n#+END:\n")
+       (re-search-backward "#\\+BEGIN: org-agents")
+       ,@body)))
+
+(defun org-agents-test--dblock-body ()
+  "The body of the `org-agents' block point is in, as a string."
+  (save-excursion
+    (goto-char (point-min))
+    (re-search-forward "#\\+BEGIN: org-agents.*\n")
+    (buffer-substring-no-properties
+     (point) (progn (re-search-forward "^[ \t]*#\\+END:") (match-beginning 0)))))
+
+(ert-deftest org-agents-test-dblock-list ()
+  (org-agents-test--with-dblock-agent "list" ":AGENT_FORMAT: NEXT_REVIEW\n"
+    (org-dblock-update)
+    (should (string-match-p "^- \\[\\[id:11111111-.*Fix widget\\]\\]  \\[2020-01-01 Wed\\]"
+                            (buffer-string)))
+    ;; The count the update commands report is this render's, and only a
+    ;; render that succeeded has one.
+    (should (= 1 org-agents--last-count))))
+
+(ert-deftest org-agents-test-dblock-table ()
+  (org-agents-test--with-dblock-agent "table"
+      ":AGENT_COLUMNS: ITEM_BY_ID NEXT_REVIEW\n"
+    (org-dblock-update)
+    (let ((s (buffer-string)))
+      (should (string-match-p "| *ITEM_BY_ID *| *NEXT_REVIEW *|" s))
+      (should (string-match-p "Fix widget" s))
+      ;; The table is aligned in the buffer, so the rule written `|-|'
+      ;; has been widened to the columns it separates.
+      (should (string-match-p "|---" s))
+      ;; And the block still ends where it did: aligning the table left
+      ;; the newline that separates its last row from `#+END:'.
+      (should (string-suffix-p "|\n" (org-agents-test--dblock-body)))
+      (should (= 1 org-agents--last-count)))))
+
+(ert-deftest org-agents-test-dblock-error-restores-content ()
+  "A failed render puts back the body Org deleted before calling it.
+`org-prepare-dblock' empties the block first, so a writer that let a
+failure out would leave nothing behind -- and under
+`org-update-all-dblocks', which reports the error and moves on, nothing
+would put it back."
+  (org-agents-test--with-dblock-agent "list" ""
+    ;; Seed the block with prior content, then force a failure.
+    (org-dblock-update)
+    (let ((before (buffer-string)))
+      (cl-letf (((symbol-function 'org-agents--collect)
+                 (lambda (&rest _) (error "boom"))))
+        (org-dblock-update)
+        (should (equal (buffer-string) before))
+        ;; A failed render reports no count at all, rather than the count
+        ;; of the render before it.
+        (should (null org-agents--last-count))
+        ;; The same holds on the other path into the writer.
+        (org-update-all-dblocks)
+        (should (equal (buffer-string) before))
+        (should (null org-agents--last-count))))))
+
+(ert-deftest org-agents-test-dblock-no-matches-counts-none ()
+  "A render that matched nothing empties the block and counts none.
+Zero is not nil: a nil count is how a failed render is recognized, and a
+query that matched nothing has not failed."
+  (org-agents-test--with-dblock-agent "list" ""
+    (goto-char (point-min))
+    (search-forward "* Block agent")
+    (org-entry-put nil "AGENT_QUERY" "(heading \"no such heading\")")
+    (re-search-forward "#\\+BEGIN: org-agents")
+    (beginning-of-line)
+    (org-dblock-update)
+    (should (equal "\n" (org-agents-test--dblock-body)))
+    (should (= 0 org-agents--last-count))))
+
+(ert-deftest org-agents-test-dblock-table-escapes-cell-separator ()
+  "A title holding `|' may not break the row it is rendered in."
+  (org-agents-test--with-dblock-agent "table"
+      ":AGENT_COLUMNS: ITEM_BY_ID NEXT_REVIEW\n"
+    (write-region "* TODO Pipe | title\n:PROPERTIES:\n:NEXT_REVIEW: [2020-01-02 Thu]\n:END:\n"
+                  nil a t 'quiet)
+    (org-dblock-update)
+    (let ((line (org-agents-test--alias-line "Pipe")))
+      (should (string-match-p "vert{}" line))
+      ;; Two columns, so three bars: the escaped one is text, not a cell
+      ;; boundary.
+      (should (= 3 (cl-count ?| line))))))
+
+(ert-deftest org-agents-test-dblock-table-sorts-then-limits ()
+  "A row sort orders every match before `:AGENT_LIMIT:' cuts any of them.
+`org-agents--collect' cannot cut to the limit first: it does not sort by
+a rendered column at all, so it would keep whichever matches came first
+and the sort would order only those."
+  (org-agents-test--with-dblock-agent "table"
+      (concat ":AGENT_COLUMNS: ITEM_BY_ID NEXT_REVIEW\n"
+              ":AGENT_SORT: (ts-column 2)\n:AGENT_LIMIT: 1\n")
+    ;; Later in the file than `Fix widget', but earlier in time.
+    (write-region "* TODO Early item\n:PROPERTIES:\n:NEXT_REVIEW: [2019-01-01 Tue]\n:END:\n"
+                  nil a t 'quiet)
+    (org-dblock-update)
+    (let ((s (buffer-string)))
+      (should (string-match-p "Early item" s))
+      (should-not (string-match-p "Fix widget" s))
+      (should (= 1 org-agents--last-count)))))
+
+(ert-deftest org-agents-test-dblock-inline-params-override ()
+  "A block's own parameters override the properties of its agent."
+  (org-agents-test--with-dblock-agent "list" ""
+    (end-of-line)
+    (insert " :view table :columns \"ITEM_BY_ID NEXT_REVIEW\"")
+    (beginning-of-line)
+    (org-dblock-update)
+    (let ((s (buffer-string)))
+      (should (string-match-p "| *ITEM_BY_ID *| *NEXT_REVIEW *|" s))
+      (should-not (string-match-p "^- " s)))))
+
+(ert-deftest org-agents-test-dblock-standalone-expands-inline-query ()
+  "A block with its own query needs no agent entry, and is expanded.
+The `$PROP' layer is the query language whether the query comes from a
+property drawer or from the block header; unexpanded, `$NEXT_REVIEW'
+would reach org-ql as a void variable."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-max))
+      (insert "\n* Notes\n\n#+BEGIN: org-agents :query (and (todo) $NEXT_REVIEW)"
+              " :scope (\"" a "\") :format \"NEXT_REVIEW\"\n#+END:\n")
+      (re-search-backward "#\\+BEGIN: org-agents")
+      (org-dblock-update)
+      (should (string-match-p "^- \\[\\[id:11111111-.*\\[2020-01-01 Wed\\]"
+                              (buffer-string)))
+      (should (= 1 org-agents--last-count)))))
+
+(ert-deftest org-agents-test-dblock-standalone-gates-inline-query ()
+  "A block header is a file's text like a property drawer, and is gated.
+The tripwire records any evaluation the gate was supposed to prevent."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-max))
+      (insert "\n* Notes\n\n#+BEGIN: org-agents"
+              " :query (and (todo) (tags (org-agents-test--tripwire)))"
+              " :scope (\"" a "\")\n#+END:\n")
+      (re-search-backward "#\\+BEGIN: org-agents")
+      (let ((org-agents--session-approved (make-hash-table :test 'equal))
+            (org-agents-safe-queries nil)
+            (noninteractive t)
+            (org-agents-test--tripwire-count 0))
+        (org-dblock-update)
+        (should (= 0 org-agents-test--tripwire-count))
+        (should (null org-agents--last-count))
+        (should (equal "" (string-trim (org-agents-test--dblock-body))))))))
+
+(ert-deftest org-agents-test-dblock-without-a-query-is-diagnosed ()
+  "A block under no agent, supplying no query, has nothing to render.
+It says so and leaves the body it was given, rather than emptying the
+block over a question the user was never asked."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-max))
+      (insert "\n* Notes\n\n#+BEGIN: org-agents\nhand written\n#+END:\n")
+      (re-search-backward "#\\+BEGIN: org-agents")
+      (org-dblock-update)
+      (should (equal "hand written\n" (org-agents-test--dblock-body)))
+      (should (null org-agents--last-count)))))
+
+(ert-deftest org-agents-test-dblock-unresolved-match-renders-plain ()
+  "A match that cannot be located has no entry to read a column at.
+It is rendered as its recorded heading, marked `(?)', and its other
+cells are empty.  `AGENT_VIEW' is the column here because the block's
+own entry carries one: a detached marker leaves point where it stands,
+so a cell read without checking the marker would answer with the
+agent's own property and call it the match's."
+  (org-agents-test--with-dblock-agent "table"
+      ":AGENT_COLUMNS: ITEM_BY_ID AGENT_VIEW\n"
+    (cl-letf (((symbol-function 'org-agents--collect)
+               (lambda (&rest _)
+                 (list (org-element-create
+                        'headline (list :raw-value "Vanished entry"
+                                        :org-hd-marker (make-marker)))))))
+      (org-dblock-update)
+      (let ((line (org-agents-test--alias-line "Vanished")))
+        (should (string-match-p (regexp-quote "Vanished entry (?)") line))
+        (should (= 3 (cl-count ?| line)))
+        (should (string-blank-p (nth 2 (split-string line "|")))))
+      (should (= 1 org-agents--last-count)))))
+
+(ert-deftest org-agents-test-dblock-list-format-absent-adds-nothing ()
+  "Properties the match does not carry add nothing, not even a separator.
+`org-agents--format-suffix' joins the values it read, so two properties
+neither of which is there read as the separator between them."
+  (org-agents-test--with-dblock-agent "list"
+      ":AGENT_FORMAT: NO_SUCH_A NO_SUCH_B\n"
+    (org-dblock-update)
+    (should (string-suffix-p "]]" (org-agents-test--alias-line "Fix widget")))))
+
+(ert-deftest org-agents-test-table-cell ()
+  "A cell may not carry a bar that would read as a cell boundary."
+  (should (equal "a \\vert{} b" (org-agents--table-cell "a | b")))
+  (should (equal "" (org-agents--table-cell nil))))
+
+(ert-deftest org-agents-test-sort-rows ()
+  "How a table's own sorts order rendered rows, and what they refuse."
+  (let ((rows '(("b" "[2020-01-02 Thu]") ("a" "[2020-01-01 Wed]") ("c" "")))
+        (columns '("X" "Y")))
+    ;; A column sort compares the rendered cells as strings.
+    (should (equal '("a" "b" "c")
+                   (mapcar #'car (org-agents--sort-rows
+                                  (copy-sequence rows) '(column 1) columns))))
+    ;; A timestamp column reads them as times instead, and a cell that
+    ;; names no time sorts after every cell that does: an entry with no
+    ;; date is not an entry dated the epoch.
+    (should (equal '("a" "b" "c")
+                   (mapcar #'car (org-agents--sort-rows
+                                  (copy-sequence rows) '(ts-column 2) columns))))
+    ;; Any other sort is org-ql's, and leaves the rows as they came.
+    (should (equal '("b" "a" "c")
+                   (mapcar #'car (org-agents--sort-rows
+                                  (copy-sequence rows) 'date columns))))
+    (should (equal '("b" "a" "c")
+                   (mapcar #'car (org-agents--sort-rows
+                                  (copy-sequence rows) nil columns))))
+    ;; A column that is not there is diagnosed, rather than reaching
+    ;; `string<' as the nil `nth' would answer.
+    (should-error (org-agents--sort-rows rows '(column 3) columns)
+                  :type 'user-error)
+    (should-error (org-agents--sort-rows rows '(column 0) columns)
+                  :type 'user-error)
+    (should-error (org-agents--sort-rows rows '(ts-column "2") columns)
+                  :type 'user-error)))
+
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here

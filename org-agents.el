@@ -504,8 +504,8 @@ Any other bare value names a directory, relative to `org-directory'.")
 
 (defconst org-agents--element-sorts '(date todo priority reverse)
   "The `:AGENT_SORT:' methods org-ql can sort matched elements by.
-A table's `(column N)' or `(ts-column N)' sorts rendered rows of
-strings instead, so the renderer -- not org-ql -- answers for those.")
+The `org-agents--row-sorts' forms sort rendered rows of strings
+instead, so the renderer -- not org-ql -- answers for those.")
 
 (defun org-agents--element-sort (sort)
   "Return SORT if org-ql can sort elements by it, else nil.
@@ -915,6 +915,228 @@ the agent's own buffer, where an edit would move it."
                  (insert "  " extra))
                (insert "\n:PROPERTIES:\n:AGENT_MATCH: t\n:END:")))))))
     (length matches)))
+
+;;;; Dynamic block
+
+;; The list and table views live in a dynamic block, so they write only
+;; between its delimiters and never touch the outline around them.
+;; `org-prepare-dblock' deletes the previous body before calling the
+;; writer and hands it over as `:content': everything a render needs is
+;; therefore computed before anything is written, and a render that
+;; fails puts that body back rather than leaving the block empty.
+
+(defconst org-agents--row-sorts '(column ts-column)
+  "The `:AGENT_SORT:' heads that order rendered table rows.
+Their argument is a column number, 1-indexed over `:AGENT_COLUMNS:'.
+org-ql answers for the methods in `org-agents--element-sorts' instead,
+which order matched elements, before any of them is rendered.")
+
+(defvar org-agents--last-count nil
+  "How many rows or items the most recent dblock render wrote.
+Nil until a render succeeds: `org-agents-update' writes
+`:AGENT_MATCHED:' from this once `org-update-dblock' returns, and a
+render that failed must not be reported with the count of an older one.")
+
+(defun org-agents--table-cell (s)
+  "Escape S for use inside an Org table cell.
+A bar in the text would read as the boundary of a cell that is not
+there, and the row would be read as one column wider than the table.
+The escape covers a link's description as well as a property value: a
+broken link is a link that goes nowhere, while a broken row misaligns
+every column after it."
+  (replace-regexp-in-string "|" "\\\\vert{}" (or s "")))
+
+(defun org-agents--table-columns (agent)
+  "The column names AGENT's table renders, from `:AGENT_COLUMNS:'.
+The link column alone by default, which is the one column no property
+can supply."
+  (split-string (or (plist-get agent :columns) "ITEM_BY_ID")))
+
+(defun org-agents--table-row (element columns)
+  "The escaped cells rendering ELEMENT over the COLUMNS name list.
+`ITEM_BY_ID' is the link to the match, wherever in COLUMNS it is named;
+every other name is read as a property at the match's own heading.  A
+match that cannot be located has no entry to read one at, so those
+cells are empty, as `org-agents--format-suffix' answers nothing for such
+a match either.  The marker is what says so: `org-with-point-at' leaves
+point where it stands for a marker naming no buffer, and would answer
+with the properties of whatever entry the block itself sits in."
+  (let ((link (org-agents--link-to element))
+        (marker (org-agents--live-marker element)))
+    (mapcar (lambda (column)
+              (org-agents--table-cell
+               (cond ((equal column "ITEM_BY_ID") link)
+                     ((null marker) "")
+                     (t (org-with-point-at marker
+                          (org-entry-get nil column))))))
+            columns)))
+
+(defun org-agents--sort-column (sort columns)
+  "Zero-based index into COLUMNS named by row SORT, or nil for any other.
+A number naming no column is diagnosed here: `:AGENT_SORT:' is text
+from a file like every other agent property, and `nth' would otherwise
+answer nil and reach the comparison as a wrong type."
+  (when (memq (car-safe sort) org-agents--row-sorts)
+    (let ((n (cadr sort)))
+      (unless (and (integerp n) (<= 1 n (length columns)))
+        (user-error "org-agents: :AGENT_SORT: no column %S among %d columns"
+                    n (length columns)))
+      (1- n))))
+
+(defun org-agents--sort-rows (rows sort columns)
+  "Sort table ROWS by row SORT over COLUMNS, or return them as they came.
+`(column N)' compares the rendered cells as strings; `(ts-column N)'
+reads them as timestamps, and a cell naming no time sorts after every
+cell that does -- an entry with no date is not an entry dated the epoch."
+  (if-let* ((i (org-agents--sort-column sort columns)))
+      (if (eq (car-safe sort) 'ts-column)
+          (sort rows
+                (lambda (x y)
+                  (let ((tx (ignore-errors
+                              (org-time-string-to-seconds (nth i x))))
+                        (ty (ignore-errors
+                              (org-time-string-to-seconds (nth i y)))))
+                    (cond ((and tx ty) (< tx ty))
+                          (tx t)))))
+        (sort rows (lambda (x y) (string< (nth i x) (nth i y)))))
+    rows))
+
+(defun org-agents--table-rows (agent matches)
+  "The sorted, limited rows rendering MATCHES for AGENT.
+`:AGENT_LIMIT:' is applied here, after the sort, because a row sort is
+this renderer's own: `org-agents--collect' cannot cut to the limit
+before ordering rows it knows nothing about.  A limit it has already
+applied cuts nothing further."
+  (let* ((columns (org-agents--table-columns agent))
+         (limit (plist-get agent :limit))
+         (rows (org-agents--sort-rows
+                (mapcar (lambda (element)
+                          (org-agents--table-row element columns))
+                        matches)
+                (plist-get agent :sort) columns)))
+    (if limit (take limit rows) rows)))
+
+(defun org-agents--table-text (columns rows)
+  "The Org table naming COLUMNS over ROWS, as a string.
+The rule is written `|-|' and no cell is padded: the writer aligns the
+table once it is in the buffer, which is where a width can be measured
+at all.  There is no final newline, because `org-prepare-dblock' has
+already opened the line that ends the body."
+  (mapconcat (lambda (row)
+               (if (eq row 'hline)
+                   "|-|"
+                 (concat "| " (string-join row " | ") " |")))
+             (append (list (mapcar #'org-agents--table-cell columns) 'hline)
+                     rows)
+             "\n"))
+
+(defun org-agents--list-text (agent matches)
+  "The plain list rendering MATCHES for AGENT, as a string.
+Each item is the link to a match followed by the `:AGENT_FORMAT:'
+properties it carries; properties it carries none of add nothing, not
+even the space that would have separated them.  There is no final
+newline, because `org-prepare-dblock' has already opened the line that
+ends the body."
+  (mapconcat
+   (lambda (element)
+     (let ((suffix (org-string-nw-p
+                    (org-agents--format-suffix
+                     element (plist-get agent :format)))))
+       (concat "- " (org-agents--link-to element)
+               (and suffix (concat "  " suffix)))))
+   matches "\n"))
+
+(defun org-agents--dblock-query (params)
+  "The expanded query PARAMS supply inline, or nil when they supply none.
+A block's `:query' is read where a property drawer's would be, so it
+meets the same expander -- and, in `org-agents--collect', the same gate.
+It may be written as a string or as the form itself, since Org has read
+the block's parameters as Lisp before this function sees them."
+  (when-let* ((query (plist-get params :query)))
+    (org-agents--expand
+     (if (stringp query) (org-agents--read-sexp "query" query) query))))
+
+(defun org-agents--dblock-agent (params)
+  "The agent a dynamic block renders: its entry's, overridden by PARAMS.
+Point is inside the block, so the enclosing heading is the entry the
+block was written under, and an entry carrying an `:AGENT_QUERY:' is
+read as any agent is.  A block supplying its own `:query' needs no such
+entry and renders standalone, over the agenda as a list until its own
+parameters say otherwise.  A block with neither has nothing to render,
+and says so rather than emptying itself over it."
+  (let ((agent
+         (or (save-excursion
+               (and (not (org-before-first-heading-p))
+                    (progn (org-back-to-heading t)
+                           (org-agents--entry-get "AGENT_QUERY"))
+                    (org-agents--read-agent)))
+             (list :query nil :view 'list :scope 'agenda :sort nil
+                   :limit nil :columns nil :format nil
+                   ;; A block is not a headline, so there is nothing here
+                   ;; for the self-skip in `org-agents--collect' to
+                   ;; recognize: no query of its own can match it.
+                   :marker (point-marker))))
+        (query (org-agents--dblock-query params)))
+    (when query (setq agent (plist-put agent :query query)))
+    ;; A block's parameters override the entry's properties name by name,
+    ;; so one agent may carry several blocks, each its own view of it.
+    (dolist (key '(:view :scope :sort :limit :columns :format))
+      (when-let* ((value (plist-get params key)))
+        (setq agent (plist-put agent key value))))
+    (unless (plist-get agent :query)
+      (user-error "org-agents: block has no :query and no enclosing agent"))
+    agent))
+
+;;;###autoload
+(defun org-dblock-write:org-agents (params)
+  "Write the list or table view of the agent this dynamic block belongs to.
+PARAMS are the block's own parameters, which override the `AGENT_*'
+properties of the entry it sits under; a block with an inline `:query'
+renders without one.
+
+Everything is computed before anything is written.  `org-prepare-dblock'
+has already deleted the body this render replaces, so a failure part way
+through the work would leave the block empty: instead the failure is
+reported and that body goes back as it was."
+  (setq org-agents--last-count nil)
+  (let* ((restored nil)
+         (body
+          (condition-case err
+              (let* ((agent (org-agents--dblock-agent params))
+                     ;; Any view but `table' renders as a list: a block
+                     ;; cannot write the child headings `children' names.
+                     (table (eq (plist-get agent :view) 'table))
+                     ;; A row sort is this renderer's own, so the matches
+                     ;; must arrive unlimited for it to order: cut first,
+                     ;; they would be an arbitrary subset of themselves.
+                     (row-sort (and table
+                                    (memq (car-safe (plist-get agent :sort))
+                                          org-agents--row-sorts)))
+                     (matches (org-agents--collect
+                               (if row-sort
+                                   (plist-put (copy-sequence agent) :limit nil)
+                                 agent)))
+                     (rows (and table (org-agents--table-rows agent matches)))
+                     (text (if table
+                               (org-agents--table-text
+                                (org-agents--table-columns agent) rows)
+                             (org-agents--list-text agent matches))))
+                (setq org-agents--last-count
+                      (if table (length rows) (length matches)))
+                text)
+            (error
+             (setq restored t)
+             (message "org-agents: dblock update failed: %s"
+                      (error-message-string err))
+             ;; `org-prepare-dblock' opened the line whose newline ends
+             ;; the body, and the saved body carries one of its own.
+             (string-remove-suffix "\n" (or (plist-get params :content) ""))))))
+    (unless (string-empty-p body)
+      (save-excursion (insert body))
+      ;; Only a table this render built is aligned: a body put back is
+      ;; the text that was there, and goes back exactly as it was.
+      (when (and (not restored) (string-prefix-p "|" body))
+        (org-table-align)))))
 
 (provide 'org-agents)
 ;;; org-agents.el ends here
