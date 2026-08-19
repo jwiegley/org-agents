@@ -297,11 +297,13 @@ leftover-reference check names them."
   (should (equal (org-agents--skeleton '(scheduled)) "(scheduled)")))
 
 (ert-deftest org-agents-test-absolute-date ()
-  "A relative date resolves to a local calendar date, exactly as org-ql does.
-The arithmetic is `ts-adjust', which is what org-ql uses itself, and not
-seconds: on the day before a daylight-saving change `(time-add now 86400)'
-lands on a different calendar day, and the prefilter would be a day out
-exactly when the query crosses the change."
+  "A relative date resolves to a local calendar date.
+This test does NOT establish that the arithmetic is calendar arithmetic:
+it computes what it expects with `ts-adjust', the same call the code under
+test makes, so it cannot tell that implementation from any other that
+agrees with it today.  What has teeth for the daylight-saving property is
+`org-agents-test-absolute-date-crosses-a-daylight-saving-change', which
+names a fixed instant and a literal answer."
   (should (equal (org-agents--absolute-date 'today)
                  (ts-format "%Y-%m-%d" (ts-now))))
   ;; Pinned a second way, through Emacs rather than through `ts', so that
@@ -319,6 +321,44 @@ exactly when the query crosses the change."
   (should (equal "2026-12-31" (org-agents--absolute-date "2026-12-31")))
   (dolist (v '("2026-02-30" "2026-13-45" "tomorrow" "" nil 1.5 (7)))
     (should (null (org-agents--absolute-date v)))))
+
+(ert-deftest org-agents-test-absolute-date-crosses-a-daylight-saving-change ()
+  "The day arithmetic is CALENDAR arithmetic, and this is what proves it.
+org-ql advances a relative date with `ts-adjust', which moves the day field
+and keeps the wall-clock time; seconds arithmetic moves a fixed 86400 and
+therefore lands an hour late across a spring-forward -- which on the last
+half hour of the previous day is a different calendar DAY.  The prefilter
+would then bound by a day org-ql did not, exactly when a query crosses the
+change.
+
+Two things make this discriminating where the test above is not.  The
+expectation is the literal string, not a value computed with `ts-adjust':
+an expectation built the same way as the implementation agrees with it by
+construction, whatever either does.  And the reference instant is named
+rather than taken from the clock, because the local zone cannot be moved
+inside a running Emacs -- measured: neither a `process-environment'
+let-binding nor `setenv \"TZ\"' moves what `format-time-string' reports.
+
+Skipped where the local zone has no such transition, so that it is honest
+elsewhere rather than merely green."
+  (skip-unless (/= (car (current-time-zone
+                         (encode-time (list 0 0 12 7 3 2026 nil -1 nil))))
+                   (car (current-time-zone
+                         (encode-time (list 0 0 12 8 3 2026 nil -1 nil))))))
+  (let ((eve (ts-parse "2026-03-07 23:30:00")))
+    ;; Literal answers.  One calendar day after the 7th is the 8th, however
+    ;; many hours that night turns out to hold.
+    (should (equal "2026-03-08" (org-agents--absolute-date 1 eve)))
+    (should (equal "2026-03-07" (org-agents--absolute-date 0 eve)))
+    (should (equal "2026-03-07" (org-agents--absolute-date 'today eve)))
+    (should (equal "2026-03-09" (org-agents--absolute-date 2 eve)))
+    (should (equal "2026-03-06" (org-agents--absolute-date -1 eve)))
+    ;; And the defect this stands guard over, spelled out rather than
+    ;; alluded to: from that instant, seconds arithmetic is a day late.
+    (should (equal "2026-03-09"
+                   (format-time-string "%Y-%m-%d" (time-add (ts-unix eve) 86400))))
+    ;; The reference instant is not consumed, so a caller may reuse it.
+    (should (equal "2026-03-08" (org-agents--absolute-date 1 eve)))))
 
 (ert-deftest org-agents-test-skeleton-relative-dates-become-absolute ()
   "Every relative bound leaves the splitter as an absolute local date.

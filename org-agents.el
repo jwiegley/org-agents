@@ -184,6 +184,13 @@
 ;; `:NAME+:' one is an expected failure that records the org-jw parser
 ;; defect behind it, and the third beside the other update commands.
 ;;
+;; This file and org-db-cli.el are kept warning-free under the byte
+;; compiler, and tools/org-agents-byte-compile-gate.sh is what says so: it
+;; builds the two repo-local dependencies first, because a checkout with no
+;; .elc loads them as source and reports their own `(require 'cl)' against
+;; the require lines here, then compiles these two and fails on any warning
+;; at all.
+;;
 ;; See docs/superpowers/specs/2026-08-18-org-agents-design.md for the
 ;; full design, including the evaluation gate, the push-down table with
 ;; the divergence evidence for each row, and the renderers.
@@ -542,8 +549,12 @@ Only a date that survives the round trip is read alike by both sides."
                    (encode-time
                     (parse-time-string (concat v " 00:00:00"))))))))
 
-(defun org-agents--absolute-date (value)
+(defun org-agents--absolute-date (value &optional now)
   "VALUE as an absolute local `YYYY-MM-DD' string, or nil if it is no date.
+NOW is the `ts' instant a relative VALUE is resolved against, defaulting to
+`(ts-now)'.  It is there so that a test can name a particular instant: the
+daylight-saving hazard described below cannot be exercised at all without
+one, because the local zone cannot be moved inside a running Emacs.
 `today' and an integer day offset are resolved HERE, in local time, rather
 than pushed for the database to resolve for itself.  That is what keeps
 the two engines from disagreeing: the database resolves a relative value
@@ -564,13 +575,17 @@ so the arithmetic is identical by construction rather than by
 reimplementation.  Seconds arithmetic would not do: on the day before a
 daylight-saving change `(time-add now 86400)' lands on a different
 calendar day than `ts-adjust' does, and the prefilter would be a day out
-exactly when the query crosses the change."
-  (cond
-   ((eq value 'today) (ts-format "%Y-%m-%d" (ts-now)))
-   ((integerp value) (ts-format "%Y-%m-%d" (ts-adjust 'day value (ts-now))))
-   ;; Already absolute: kept as written, so its calendar-validity round
-   ;; trip still answers for it.
-   ((org-agents--date-string-p value) value)))
+exactly when the query crosses the change.  Do not \"simplify\" this to
+seconds; `org-agents-test-absolute-date-crosses-a-daylight-saving-change'
+is there to catch it, and was written because a mutation to seconds passed
+the whole suite without it."
+  (let ((now (or now (ts-now))))
+    (cond
+     ((eq value 'today) (ts-format "%Y-%m-%d" now))
+     ((integerp value) (ts-format "%Y-%m-%d" (ts-adjust 'day value now)))
+     ;; Already absolute: kept as written, so its calendar-validity round
+     ;; trip still answers for it.
+     ((org-agents--date-string-p value) value))))
 
 (defun org-agents--push-planning (form)
   "Push planning FORM with every date argument resolved to a local date.
