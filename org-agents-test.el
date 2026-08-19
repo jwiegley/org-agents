@@ -57,6 +57,39 @@
   ;; A non-special bare ref is still a property test.
   (should (equal (org-agents--expand '$URL) '(property "URL"))))
 
+(ert-deftest org-agents-test-expand-special-in-numeric-position ()
+  "A special manages its own type, so numeric position adds no coercion.
+`org-current-level' answers with a number already, and wrapping it in
+`string-to-number' would read every level as zero."
+  (should (equal (org-agents--expand '(> $LEVEL 2))
+                 '(> (org-current-level) 2))))
+
+(ert-deftest org-agents-test-expand-inherited-value-and-numeric ()
+  "The star travels into value and numeric position, not just boolean."
+  (should (equal (org-agents--expand '(string-match "x" $OWNER*))
+                 '(string-match "x" (or (org-entry-get nil "OWNER" t) ""))))
+  (should (equal (org-agents--expand '(> $REVIEWS* 3))
+                 '(> (string-to-number (or (org-entry-get nil "REVIEWS" t) "0"))
+                     3))))
+
+(ert-deftest org-agents-test-expand-degenerate-refs-stay-symbols ()
+  "`$' and `$*' name no property, and are left for the gate to refuse.
+Read as references they would reach `org-entry-get' as the empty name,
+which answers nil at every entry -- an agent that matches nothing, and
+nothing said about why.  Left as the symbols they are, the gate's
+leftover-reference check names them."
+  (should (null (org-agents--ref-p '$)))
+  (should (null (org-agents--ref-p '$*)))
+  (dolist (form '($ $* (property $*) (and (todo) $*) (string-match "x" $)))
+    (should (equal (org-agents--expand form) form))
+    (let ((err (should-error (org-agents--gate (org-agents--expand form))
+                             :type 'user-error)))
+      (should (string-match-p "no expansion for"
+                              (error-message-string err)))))
+  ;; An ordinary reference is unaffected, star and all.
+  (should (equal '("URL" . nil) (org-agents--ref-p '$URL)))
+  (should (equal '("URL" . t) (org-agents--ref-p '$URL*))))
+
 (ert-deftest org-agents-test-expand-passthrough ()
   (should (equal (org-agents--expand '(and (todo "TODO") (tags "urgent")))
                  '(and (todo "TODO") (tags "urgent")))))
@@ -399,6 +432,32 @@ afterwards, because the files they visit are about to be deleted."
       (goto-char (point-min))
       (should-error (org-agents--read-agent) :type 'user-error))))
 
+(ert-deftest org-agents-test-read-agent-refuses-an-unknown-view ()
+  "A view naming no renderer is refused, not rendered as a list.
+Every view but `table' renders as a list, so `tabel' interned unremarked
+would render a list and read exactly like a table view that happened to
+come out flat."
+  (org-agents-test--in-agent
+    (dolist (view '("children" "list" "table"))
+      (org-entry-put nil "AGENT_VIEW" view)
+      (should (eq (intern view) (plist-get (org-agents--read-agent) :view))))
+    ;; A view is matched as written, so a different case is a different
+    ;; view -- `table' is the only spelling the table renderer answers to.
+    (dolist (bad '("tabel" "Table" "columnview" "children list"))
+      (org-entry-put nil "AGENT_VIEW" bad)
+      (let ((err (should-error (org-agents--read-agent) :type 'user-error)))
+        (should (string-match-p "AGENT_VIEW" (error-message-string err)))))
+    ;; A view no renderer answers to leaves no symbol behind either.
+    (org-entry-put nil "AGENT_VIEW" "org-agents-test--never-a-view")
+    (should-error (org-agents--read-agent) :type 'user-error)
+    (should-not (intern-soft "org-agents-test--never-a-view"))
+    ;; `:AGENT_VIEW: nil' never reaches this package: Org reads the text
+    ;; `nil' in a property value as no value at all unless asked for it
+    ;; literally, so such an agent takes the `children' default.
+    (org-entry-put nil "AGENT_VIEW" "nil")
+    (should (null (org-entry-get nil "AGENT_VIEW")))
+    (should (eq 'children (plist-get (org-agents--read-agent) :view)))))
+
 (ert-deftest org-agents-test-read-agent-scope-spellings ()
   "The three corpus names are symbols; any other bare value is a directory.
 Interning it too would leave the `path' conjunct and the directory
@@ -455,6 +514,22 @@ reaches `read-from-string' as an end of file."
   (should-error (org-agents--scope-base-files '(path "x")) :type 'user-error)
   (should-error (org-agents--scope-base-files 42) :type 'user-error))
 
+(ert-deftest org-agents-test-scope-base-files-refuses-a-missing-directory ()
+  "A directory that is not there is one agent's mistyped scope.
+`directory-files-recursively' signals `file-missing', which is what this
+package raises for a bug of its own: `org-agents-update' would let it
+through to the debugger rather than report it against the agent whose
+property it came from."
+  (org-agents-test--with-corpus
+    (let ((err (should-error (org-agents--scope-base-files "no-such-subdir")
+                            :type 'user-error)))
+      (should (string-match-p "no-such-subdir" (error-message-string err))))
+    ;; A directory that is there still answers with the files below it.
+    (make-directory (expand-file-name "sub" dir))
+    (with-temp-file (expand-file-name "sub/s.org" dir) (insert "* TODO S\n"))
+    (should (equal (list (expand-file-name "sub/s.org" dir))
+                   (org-agents--scope-base-files "sub")))))
+
 (ert-deftest org-agents-test-scope-base-files-branches ()
   "What each scope names, over a corpus with an archive in it."
   (org-agents-test--with-corpus
@@ -484,6 +559,24 @@ reaches `read-from-string' as an end of file."
       ;; `agenda' defers to `org-agenda-files' whatever the corpus holds.
       (let ((org-agenda-files (list a)))
         (should (equal (list a) (org-agents--scope-base-files 'agenda)))))))
+
+(ert-deftest org-agents-test-needs-prefilter-p ()
+  "Which scopes may only be resolved through the database.
+`agenda' and an explicit file list name their files and are read live;
+the corpus names and any directory promise nothing about how much they
+hold.  The absolute-directory row is the one worth pinning: such a scope
+needs the prefilter and pushes no `path' conjunct to earn one with, so
+the two answers have to be read together."
+  (dolist (scope '(active all "sub" "sub/" "a/b" "/Users/johnw/org/sub"
+                   "~/org/sub"))
+    (should (org-agents--needs-prefilter-p scope)))
+  (dolist (scope '(agenda ("a.org") ("a.org" "b.org") nil))
+    (should-not (org-agents--needs-prefilter-p scope)))
+  ;; An absolute directory needs the prefilter and pushes nothing.
+  (should (org-agents--needs-prefilter-p "/Users/johnw/org/sub"))
+  (should (null (org-agents--scope-conjunct "/Users/johnw/org/sub")))
+  ;; A relative one needs it too, and does push a conjunct.
+  (should (equal '(path "sub/") (org-agents--scope-conjunct "sub"))))
 
 (ert-deftest org-agents-test-scope-conjunct ()
   "Only a directory scope earns a path conjunct, and it travels as plain text."
@@ -576,6 +669,26 @@ itself as one of its own matches.  Say so instead."
   (org-agents-test--in-agent
     (let ((agent (plist-put (org-agents--read-agent) :marker nil)))
       (should-error (org-agents--collect agent) :type 'user-error))))
+
+(ert-deftest org-agents-test-collect-requires-a-live-marker ()
+  "A detached marker is no better than none, and must be said to be.
+`org-agents--self-match-p' compares the agent's buffer against each
+match's; against a detached marker's nil buffer it answers nil for every
+match, so the agent renders itself as one of its own matches -- and where
+the match's marker is detached too, `=' is reached with a nil position
+and signals `wrong-type-argument', naming neither the agent nor the
+property that was wrong."
+  (org-agents-test--in-agent
+    (let ((agent (plist-put (org-agents--read-agent) :query
+                            '(property "AGENT_QUERY"))))
+      (setq agent (plist-put agent :scope (list agent-file)))
+      ;; Live: the agent is skipped, and its own query matches nothing else.
+      (should (null (org-agents--collect agent)))
+      ;; Detached: refused outright rather than answered with the agent.
+      (let ((detached (plist-put (copy-sequence agent) :marker (make-marker))))
+        (let ((err (should-error (org-agents--collect detached)
+                                 :type 'user-error)))
+          (should (string-match-p "live marker" (error-message-string err))))))))
 
 (ert-deftest org-agents-test-collect-corpus-scope-needs-a-skeleton ()
   "A query with nothing to push must not open the whole corpus either."
@@ -1175,6 +1288,25 @@ the corpus is the one `org-agents-test--with-corpus' provides."
       (should (string-suffix-p "|\n" (org-agents-test--dblock-body)))
       (should (= 1 org-agents--last-count)))))
 
+(ert-deftest org-agents-test-dblock-alignment-failure-keeps-the-table ()
+  "An alignment that fails leaves the table unaligned, not the run broken.
+The rows are in the buffer before `org-table-align' is called, so the
+block is never left empty by one -- but escaping, the error would reach
+`org-update-dblock' as this render's failure and stop
+`org-agents-update-all' at the agent it happened in."
+  (org-agents-test--with-dblock-agent "table" ":AGENT_COLUMNS: ITEM_BY_ID\n"
+    (cl-letf (((symbol-function 'org-table-align)
+               (lambda (&rest _) (error "alignment boom"))))
+      (org-dblock-update))
+    ;; The render counted, so it did not fail ...
+    (should (= 1 org-agents--last-count))
+    (should (null org-agents--last-error))
+    ;; ... and the rows are there, merely unaligned: the rule is still the
+    ;; `|-|' the writer wrote rather than the widened one.
+    (let ((body (org-agents-test--dblock-body)))
+      (should (string-match-p "Fix widget" body))
+      (should (string-match-p "^|-|$" body)))))
+
 (ert-deftest org-agents-test-dblock-error-restores-content ()
   "A failed render puts back the body Org deleted before calling it.
 `org-prepare-dblock' empties the block first, so a writer that let a
@@ -1279,6 +1411,30 @@ is not `table', so it would quietly degrade to a list and read out of
       (should-not (plist-get (org-agents--dblock-agent
                               (list :name "org-agents" key nil))
                              key)))))
+
+(ert-deftest org-agents-test-dblock-refuses-a-mistyped-parameter ()
+  "A block's parameters are Lisp, so they can be of the wrong type.
+The drawer could only ever have said `table'; a block can say
+`:view \"table\"', which is not the symbol and would quietly render a
+list.  `:limit \"5\"' is the same slip read the other way, and reaches
+`take' as a wrong type where the writer reports a render that failed
+rather than a parameter that is wrong."
+  (org-agents-test--with-dblock-agent "list" ""
+    (dolist (bad '((:view "table") (:view table-ish) (:view 3)
+                   (:limit "5") (:limit 2.5) (:limit -1)
+                   (:columns ITEM_BY_ID) (:format 7)))
+      (let ((err (should-error (org-agents--dblock-agent
+                                (append '(:name "org-agents") bad))
+                               :type 'user-error)))
+        (should (string-match-p (regexp-quote (symbol-name (car bad)))
+                                (error-message-string err)))))
+    ;; The well-typed spellings of the same parameters still pass.
+    (dolist (good '((:view table) (:view children) (:limit 5) (:limit 0)
+                    (:columns "ITEM_BY_ID NEXT_REVIEW") (:format "NEXT_REVIEW")))
+      (should (equal (cadr good)
+                     (plist-get (org-agents--dblock-agent
+                                 (append '(:name "org-agents") good))
+                                (car good)))))))
 
 (ert-deftest org-agents-test-dblock-nil-scope-empties-nothing ()
   "A refused parameter leaves the block as it was, rather than emptying it.

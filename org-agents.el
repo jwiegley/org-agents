@@ -100,14 +100,27 @@ denotes the name string, not the value.")
     ("FILE" . (buffer-file-name)))
   "Accessor forms for $SPECIAL references.")
 
+(defun org-agents--ref-name-p (form)
+  "Non-nil if FORM is a symbol written as a `$' reference, readable or not.
+`org-agents--ref-p' answers only for a reference it can read a property
+name out of.  The gate has to refuse the rest as well: `$' and `$*' name
+no property, and either would reach org-ql as a void variable at match
+time."
+  (and (symbolp form) form (string-prefix-p "$" (symbol-name form))))
+
 (defun org-agents--ref-p (form)
-  "If FORM is a $ref symbol, return (NAME . INHERITP); else nil."
-  (when (and (symbolp form)
-             (string-prefix-p "$" (symbol-name form))
+  "If FORM is a $ref symbol naming a property, return (NAME . INHERITP).
+Else nil, which is also the answer for `$' and `$*': neither names a
+property, and reading `$*' as one would hand `org-entry-get' the empty
+name, which answers nil at every entry.  Left as the symbols they are,
+they reach `org-agents--check-spelling', which says which reference it
+could not read."
+  (when (and (org-agents--ref-name-p form)
              (> (length (symbol-name form)) 1))
     (let* ((name (substring (symbol-name form) 1))
-           (inherit (string-suffix-p "*" name)))
-      (cons (if inherit (substring name 0 -1) name) inherit))))
+           (inherit (string-suffix-p "*" name))
+           (bare (if inherit (substring name 0 -1) name)))
+      (unless (string-empty-p bare) (cons bare inherit)))))
 
 (defun org-agents--known-predicate-p (head)
   "Non-nil if HEAD names an org-ql predicate (built-in or user-defined)."
@@ -235,8 +248,11 @@ written."
    (t nil)))
 
 (defun org-agents--leftover-ref (form)
-  "Return the first $ref symbol anywhere in FORM, or nil if there is none."
-  (cond ((org-agents--ref-p form) form)
+  "Return the first `$' reference symbol anywhere in FORM, or nil for none.
+Anything written as a reference counts, not only what the expander can
+read one out of: a `$' or a `$*' the expander left alone is exactly the
+case that needs saying, since org-ql would reach it as a void variable."
+  (cond ((org-agents--ref-name-p form) form)
         ((consp form) (or (org-agents--leftover-ref (car form))
                           (org-agents--leftover-ref (cdr form))))))
 
@@ -503,6 +519,13 @@ A list of files and directories, or the symbol `agenda'."
   "The `:AGENT_SCOPE:' values read as symbols.
 Any other bare value names a directory, relative to `org-directory'.")
 
+(defconst org-agents--known-views '(children list table)
+  "The `:AGENT_VIEW:' values that name a renderer.
+Every view but `table' renders as a list, so an unknown one would render
+the wrong view rather than none: `tabel' would quietly come out as a
+list, and a view this package simply does not have would look exactly
+like a view whose renderer did nothing.")
+
 (defconst org-agents--element-sorts '(date todo priority reverse)
   "The `:AGENT_SORT:' methods org-ql can sort matched elements by.
 The `org-agents--row-sorts' forms sort rendered rows of strings
@@ -564,6 +587,19 @@ else aborts the whole run."
    ((member value org-agents--scope-names) (intern value))
    (t value)))
 
+(defun org-agents--read-view (value)
+  "Read the `:AGENT_VIEW:' property VALUE, which may be nil.
+A view naming no renderer is refused rather than interned and rendered:
+`org-dblock-write:org-agents' reads anything that is not `table' as a
+list, so a misspelling would render a view the agent did not ask for and
+say nothing about it.  Compared as text, so that a value no renderer
+answers to leaves no symbol behind either."
+  (let ((name (or value "children")))
+    (unless (member name (mapcar #'symbol-name org-agents--known-views))
+      (user-error "org-agents: :AGENT_VIEW: `%s' is not one of %s" name
+                  (mapconcat #'symbol-name org-agents--known-views ", ")))
+    (intern name)))
+
 (defun org-agents--read-limit (value)
   "Read the `:AGENT_LIMIT:' property VALUE, which may be nil.
 A limit that is not a count is refused: `string-to-number' reads one as
@@ -580,7 +616,7 @@ whose query matched nothing."
     (unless q (user-error "No :AGENT_QUERY: at point"))
     (let ((query (org-agents--read-sexp "AGENT_QUERY" q)))
       (list :query (org-agents--expand query)
-            :view (intern (or (org-agents--entry-get "AGENT_VIEW") "children"))
+            :view (org-agents--read-view (org-agents--entry-get "AGENT_VIEW"))
             :scope (org-agents--read-scope (org-agents--entry-get "AGENT_SCOPE"))
             :sort (when-let* ((s (org-agents--entry-get "AGENT_SORT")))
                     (org-agents--read-sexp "AGENT_SORT" s))
@@ -604,8 +640,17 @@ whose query matched nothing."
               org-directory "\\.org\\'" nil
               (lambda (d) (not (string-match-p "/archive\\'" d)))))
     ('all (directory-files-recursively org-directory "\\.org\\'"))
-    ((pred stringp) (directory-files-recursively
-                     (expand-file-name scope org-directory) "\\.org\\'"))
+    ((pred stringp)
+     (let ((path (expand-file-name scope org-directory)))
+       ;; A directory that is not there is a mistyped scope, and a
+       ;; mistyped scope is one agent's problem: `file-missing' out of
+       ;; `directory-files-recursively' is what this package raises for a
+       ;; bug of its own, and `org-agents-update' lets that through to the
+       ;; debugger rather than reporting it against the agent.
+       (unless (file-directory-p path)
+         (user-error "org-agents: scope `%s' names no directory (%s)"
+                     scope (abbreviate-file-name path)))
+       (directory-files-recursively path "\\.org\\'")))
     ;; A list of file names, and nothing else: anything further along
     ;; would reach `expand-file-name' as a wrong type and signal there,
     ;; rather than being named as the bad scope it is.
@@ -693,10 +738,16 @@ marker rather than let this comparison quietly stop being made."
   "Return AGENT's sorted, limited matches as headlines with markers."
   (unless (org-agents--gate (plist-get agent :query))
     (user-error "org-agents: query not approved"))
-  ;; Without a marker the self-skip cannot be made, and the agent
-  ;; renders itself as one of its own matches.
-  (unless (markerp (plist-get agent :marker))
-    (user-error "org-agents: agent has no marker"))
+  ;; Without a marker naming a live buffer the self-skip cannot be made,
+  ;; and the agent renders itself as one of its own matches.  A detached
+  ;; marker is no better than none: `org-agents--self-match-p' would
+  ;; compare nil against each match's buffer and answer nil every time,
+  ;; and where the match's own marker is detached too the comparison
+  ;; reaches `=' as a wrong type, out of a `when-let*' body that names
+  ;; neither the agent nor what went wrong with it.
+  (let ((marker (plist-get agent :marker)))
+    (unless (and (markerp marker) (marker-buffer marker))
+      (user-error "org-agents: agent has no live marker")))
   (let* ((query (plist-get agent :query))
          (self (plist-get agent :marker))
          (sort (plist-get agent :sort))
@@ -1080,6 +1131,34 @@ the block's parameters as Lisp before this function sees them."
     (org-agents--expand
      (if (stringp query) (org-agents--read-sexp "query" query) query))))
 
+(defun org-agents--check-dblock-param (key value)
+  "Signal a `user-error' when a block's KEY parameter may not be VALUE.
+Org reads a block's parameters as Lisp, so a block can say things a
+property drawer never could.  `:view \"table\"' is the plain case: a
+string is not the symbol `table', so the block would quietly render a
+list.  `:limit \"5\"' is the same mistake the other way round -- it
+reaches `take' as a wrong type, where the writer catches it and reports a
+render that failed rather than the parameter that is wrong.
+
+`:scope' and `:sort' answer for themselves further along, and are not
+repeated here: `org-agents--scope-base-files' names a scope it cannot
+resolve, and `org-agents--check-row-sort' a row sort in a view that has
+no rows to order."
+  (pcase key
+    (:view
+     (unless (memq value org-agents--known-views)
+       (user-error "org-agents: a block's `:view' must be one of %s, not %S"
+                   (mapconcat #'symbol-name org-agents--known-views ", ")
+                   value)))
+    (:limit
+     (unless (or (null value) (natnump value))
+       (user-error "org-agents: a block's `:limit' must be a count, not %S"
+                   value)))
+    ((or :columns :format)
+     (unless (or (null value) (stringp value))
+       (user-error "org-agents: a block's `%s' must be a string, not %S"
+                   key value)))))
+
 (defun org-agents--dblock-agent (params)
   "The agent a dynamic block renders: its entry's, overridden by PARAMS.
 Point is inside the block, so the enclosing heading is the entry the
@@ -1118,6 +1197,11 @@ and says so rather than emptying itself over it."
           ;; `org-agents--check-row-sort' as "the view is `nil'".
           (when (and (null value) (memq key '(:view :scope)))
             (user-error "org-agents: a block's `%s' may not be nil" key))
+          ;; A parameter that cannot be used is diagnosed here, as an
+          ;; agent entry's properties are: the block would otherwise
+          ;; render the wrong view, or fail somewhere further along where
+          ;; the reason is no longer the parameter's name.
+          (org-agents--check-dblock-param key value)
           (setq agent (plist-put agent key value)))))
     (unless (plist-get agent :query)
       (user-error "org-agents: block has no :query and no enclosing agent"))
@@ -1206,7 +1290,16 @@ interrupts the update it interrupted."
       ;; Only a table this render built is aligned: a body put back is
       ;; the text that was there, and goes back exactly as it was.
       (when (and (not restored) (string-prefix-p "|" body))
-        (org-table-align)))
+        ;; The table is in the buffer already, so an alignment that fails
+        ;; leaves the block unaligned rather than empty -- and that is
+        ;; worth less than the run it would otherwise take down: escaping
+        ;; here, it reaches `org-update-dblock' as this render's failure,
+        ;; and `org-agents-update-all' would stop at the agent it happened
+        ;; in.  The handler is deliberately not widened over the render
+        ;; above, which stays interruptible.
+        (condition-case err (org-table-align)
+          (error (message "org-agents: table alignment failed: %s"
+                          (error-message-string err))))))
     ;; The interrupt still interrupts, but not before the body it
     ;; interrupted is back in the block.
     (when interrupted (signal 'quit nil))))
