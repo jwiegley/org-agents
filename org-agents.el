@@ -524,15 +524,54 @@ skipped instead of prompting."
 ;; which names the fixture file it loses under the mutation it guards
 ;; against, and docs/design.md.
 
-(defconst org-agents--literal-regexp "[][*+?^$\\.{}|]"
-  "Characters that make a string a regexp rather than a literal.")
+(defun org-agents--heading-literals-p (strings)
+  "Non-nil when every string in non-empty STRINGS may be sought in a raw line.
+A `heading' argument is ALWAYS a literal: org-ql's normalizer is
+`(heading-regexp ,@(mapcar #\\='regexp-quote args))', which quotes every
+argument unconditionally, so there is no such thing as a `heading'
+argument that is a regexp.  Testing for regexp syntax here would be
+testing a property org-ql guarantees, and the emitter escapes the whole
+Rust metacharacter set anyway -- it carries `a.b+c(d)[e]' correctly on
+the property-value path.  This predicate therefore refuses ONE
+character, and refuses it for a reason that has nothing to do with
+regexps.
 
-(defun org-agents--literal-strings-p (strings)
-  "Non-nil when STRINGS is a non-empty list of literals, no regexp among them."
+The reason is `]'.  org-ql matches each literal against
+`(org-get-heading t t)' while the emitter searches the raw heading LINE,
+so pushing a literal is sound exactly when a literal org-ql matched is
+also in the raw line.  `org-get-heading' does not return a slice of the
+line: it reassembles it from `org-complex-heading-regexp''s groups,
+`mapconcat'ed with a single space.  With NO-TAGS and NO-TODO the result
+is the priority cookie, then one space, then the title.  Every separator
+the regexp allows before the todo, priority and title groups is ` +' --
+literal SPACES, never a tab -- so each group is preceded in the line by
+at least one real space, and the only substring of the reassembled
+heading that the line need not spell is one that crosses the junction
+between the cookie and the title.  The cookie is
+`\\[#\\(?:[A-Z]\\|[0-9]\\|[1-5][0-9]\\|6[0-4]\\)\\]', which always ends
+in `]', so every such substring holds a `]' -- while a substring that
+begins at the injected space is spelled by the line, the run of spaces
+there being non-empty.
+
+Measured, not merely argued.  Over 10,368 generated heading lines --
+crossing star depth, one-and-two-space indents, TODO/DONE/COMMENT
+keywords, present and absent priority cookies, five whitespace runs
+before the title including tab-bearing ones, four titles, three trailing
+runs and tags -- every one of the 482,148 substrings of
+`(org-get-heading t t)' holding no `]' is a case-insensitive substring of
+its raw line: zero violations.  The witness for why the guard cannot
+simply be dropped is `* [#A]   Review', whose heading is `[#A] Review':
+the literal `[#A] Review' is matched by org-ql and appears nowhere in
+the line.
+
+What this replaced refused `] [ * + ? ^ $ \\ . { } |', of which only `]'
+carries an argument.  Measured over the author's own corpus, that cost
+narrowing on about one heading title in four -- 9,883 of 40,891
+distinct titles -- for a whole-corpus scan the package measures in
+minutes against seconds prefiltered."
   (and strings
        (cl-every (lambda (s)
-                   (and (stringp s)
-                        (not (string-match-p org-agents--literal-regexp s))))
+                   (and (stringp s) (not (string-search "]" s))))
                  strings)))
 
 ;; A note on org-ql's `property', because its docstring reads the other
@@ -680,18 +719,20 @@ test would push it and lose the file."
    (cons 'heading
          (lambda (form)
            (pcase form
-             ;; org-ql normalizes `heading' to `heading-regexp' with each
-             ;; argument `regexp-quote'd, and matches every one of them
-             ;; against `(org-get-heading t t)' with `case-fold-search'
-             ;; bound to t.  That cleaned title is a verbatim substring
-             ;; of the raw heading line, except for a substring spanning
-             ;; the junction between a priority cookie and the title --
-             ;; and every one of those holds the `]' that
-             ;; `org-agents--literal-strings-p' refuses.  So a literal
-             ;; org-ql matched is in the raw line, which begins with `*'
-             ;; at column 0, which is what the pattern anchors on.  Only
-             ;; literals: a regexp is neither.
-             (`(heading . ,(and strs (pred org-agents--literal-strings-p)))
+             ;; org-ql normalizes `heading' to `heading-regexp' with
+             ;; every argument `regexp-quote'd -- so a `heading'
+             ;; argument is always a literal, never a regexp -- and
+             ;; matches each of them against `(org-get-heading t t)'
+             ;; with `case-fold-search' bound to t.  That reassembled
+             ;; title is spelled by the raw heading line except across
+             ;; the junction between a priority cookie and the title,
+             ;; and every substring crossing that junction holds the
+             ;; `]' which `org-agents--heading-literals-p' refuses --
+             ;; see its docstring for the argument and the measurement.
+             ;; So a literal org-ql matched is in the raw line, which
+             ;; begins with `*' at column 0, which is what the pattern
+             ;; anchors on.
+             (`(heading . ,(and strs (pred org-agents--heading-literals-p)))
               `(heading ,@strs))
              (_ nil)))))
   "Alist of predicate head to superset-safe abstract conjunct, or nil.")

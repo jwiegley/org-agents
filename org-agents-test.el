@@ -261,7 +261,43 @@ leftover-reference check names them."
                  '((heading "Review"))))
   (should (equal (org-agents--prefilter-conjuncts '(heading "Review" "widget"))
                  '((heading "Review" "widget"))))
-  (should (null (org-agents--prefilter-conjuncts '(heading "Rev.*iew")))))
+  ;; Regexp syntax is NOT what disqualifies a heading literal, because
+  ;; org-ql leaves no such thing: see
+  ;; `org-agents-test-heading-arguments-are-always-literals'.  Each of
+  ;; these is sought as text on both sides.
+  (should (equal (org-agents--prefilter-conjuncts '(heading "Rev.*iew"))
+                 '((heading "Rev.*iew"))))
+  (should (equal (org-agents--prefilter-conjuncts '(heading "Ship it {maybe}"))
+                 '((heading "Ship it {maybe}"))))
+  (should (equal (org-agents--prefilter-conjuncts '(heading "a\\b|c^d$e+f?g*h"))
+                 '((heading "a\\b|c^d$e+f?g*h"))))
+  ;; `]' alone is refused, and for the priority-cookie reason
+  ;; `org-agents--heading-literals-p' gives rather than for any regexp
+  ;; reason.  `[' on its own is fine.
+  (should (null (org-agents--prefilter-conjuncts '(heading "[#A] Review"))))
+  (should (null (org-agents--prefilter-conjuncts
+                 '(heading "Review" "spans ] the junction"))))
+  (should (equal (org-agents--prefilter-conjuncts '(heading "[#A Review"))
+                 '((heading "[#A Review"))))
+  ;; A non-string, and the empty argument list, push nothing.
+  (should (null (org-agents--prefilter-conjuncts '(heading 5))))
+  (should (null (org-agents--prefilter-conjuncts '(heading)))))
+
+(ert-deftest org-agents-test-heading-arguments-are-always-literals ()
+  "Pin org-ql's `heading' normalizer, which is what makes the guard sound.
+`org-agents--heading-literals-p' refuses `]' and nothing else -- notably
+not regexp syntax -- and that is only correct while org-ql keeps
+`regexp-quote'ing every `heading' argument.  The day it stops, a
+`heading' argument becomes a regexp whose matches org-agents cannot
+enumerate from the raw line, and this test is what fails loudly instead
+of an agent quietly losing files."
+  (should (equal (org-ql--normalize-query '(heading "a.b" "c+d"))
+                 '(heading-regexp "a\\.b" "c\\+d")))
+  ;; The whole metacharacter set, in one argument, unconditionally
+  ;; quoted: there is no arity or option under which `heading' takes a
+  ;; regexp.
+  (should (equal (org-ql--normalize-query '(heading "x*y?z[1]"))
+                 (list 'heading-regexp (regexp-quote "x*y?z[1]")))))
 
 (ert-deftest org-agents-test-conjuncts-planning-drops-every-bound ()
   "The head alone decides a planning conjunct, whatever the bounds say.
@@ -3280,9 +3316,23 @@ nothing ends the walk: there is nothing left to intersect."
     ("head-paren.org" . "\
 * TODO Review (draft) of plans
 ")
-    ;; Regexp metacharacters the splitter refuses to push at all.
+    ;; Regexp metacharacters, which org-ql `regexp-quote's and the
+    ;; emitter escapes for ripgrep, so the literal is sought as text on
+    ;; both sides.
     ("head-regexp.org" . "\
 * Rev.*iew of plans
+* Ship it {maybe} or not
+")
+    ;; The ONE heading shape whose reassembled title is not spelled by
+    ;; the raw line: a priority cookie followed by more than one space.
+    ;; MEASURED: `(org-get-heading t t)' here is `[#A] Collapsed review'
+    ;; -- `org-get-heading' `mapconcat's the regexp's groups with a
+    ;; single space rather than slicing the line -- so org-ql matches the
+    ;; literal `[#A] Collapsed' which appears nowhere in the file.  This
+    ;; is the witness for the `]' that `org-agents--heading-literals-p'
+    ;; refuses, and it is why that guard cannot simply be dropped.
+    ("head-collapse.org" . "\
+* [#A]   Collapsed review
 ")
     ;; The three planning keywords, a leap day, and a repeater.
     ("plan.org" . "\
@@ -3437,10 +3487,10 @@ Body with a NUL: \0 and more text.
     (".gitignore" . "gitignored.org\ngitignored-dir/\n"))
   "Fixture files for the soundness suite: relative name . contents.")
 
-(defconst org-agents-test--rg-corpus-count 30
+(defconst org-agents-test--rg-corpus-count 31
   "How many `.org' files `org-agents-test--with-rg-corpus' reliably shows.
-Twenty-nine from the manifest, plus the latin-1 file the macro builds.
-`link.org' is a thirty-first that is deliberately NOT counted: see the
+Thirty from the manifest, plus the latin-1 file the macro builds.
+`link.org' is a thirty-second that is deliberately NOT counted: see the
 macro for the platform quirk that makes its presence in the base file set
 intermittent, and why that costs the suite nothing.
 
@@ -3762,11 +3812,13 @@ why the planning patterns are deliberately NOT anchored."
                         cands))))))
 
 (ert-deftest org-agents-test-rg-covers-a-heading-literal ()
-  "The cleaned title org-ql compares against is a substring of the raw line.
+  "The title org-ql compares against is spelled by the raw heading line.
 `org-get-heading' with `no-tags' and `no-todo' returns the title, or the
 priority cookie joined to it by exactly one space -- and every substring
-spanning that junction holds the `]' that `org-agents--literal-strings-p'
-already refuses."
+spanning that junction holds the `]' that
+`org-agents--heading-literals-p' refuses.  See
+`org-agents-test-rg-refuses-a-heading-across-a-priority-cookie' for the
+file that guard saves."
   (org-agents-test--with-rg-corpus
     (let ((cands (org-agents-test--should-cover
                   '(and (heading "Review widget") (todo)) paths dir)))
@@ -3790,12 +3842,82 @@ there is no configuration under which it is case-sensitive."
       (should (member (file-truename (funcall F "head-case.org")) cands)))))
 
 (ert-deftest org-agents-test-rg-covers-a-heading-holding-regexp-syntax ()
-  "`(' is not in `org-agents--literal-regexp', so the splitter pushes it."
+  "Regexp syntax in a heading literal is pushed, and narrows correctly.
+org-ql `regexp-quote's every `heading' argument and the emitter escapes
+the Rust metacharacter set, so both sides seek the same TEXT.  The
+splitter used to refuse `. + * ? ^ $ [ ] { } | \\' outright, which cost
+narrowing on about one of the author's heading titles in four -- and the
+`(' case below shows the emitter was already trusted with exactly this."
   (org-agents-test--with-rg-corpus
     (let ((cands (org-agents-test--should-cover '(heading "Review (draft)")
                                                 paths dir)))
       (should (equal cands
-                     (list (file-truename (funcall F "head-paren.org"))))))))
+                     (list (file-truename (funcall F "head-paren.org"))))))
+    ;; `.' and `*', which used to push nothing at all.  Narrowed to the
+    ;; one file, so the literal really was sought as text: a pattern
+    ;; where `.' meant "any character" would also match `Review' lines.
+    (let ((cands (org-agents-test--should-cover '(heading "Rev.*iew")
+                                                paths dir)))
+      (should (equal cands
+                     (list (file-truename (funcall F "head-regexp.org"))))))
+    ;; Braces, which are a repetition operator to ripgrep.
+    (let ((cands (org-agents-test--should-cover '(heading "Ship it {maybe}")
+                                                paths dir)))
+      (should (equal cands
+                     (list (file-truename (funcall F "head-regexp.org"))))))))
+
+(ert-deftest org-agents-test-rg-refuses-a-heading-across-a-priority-cookie ()
+  "The one heading literal that must NOT be pushed, and the file it loses.
+`org-get-heading' reassembles the title from `org-complex-heading-regexp''s
+groups joined by a single space rather than slicing the line, so for
+`* [#A]   Collapsed review' it answers `[#A] Collapsed review' -- a
+string the file does not spell.  org-ql matches the literal
+`[#A] Collapsed'; ripgrep, searching the raw line, cannot.
+
+So the splitter pushes nothing for it, and this test asserts all four
+legs: the raw line does not spell the reassembled title, org-ql matches
+the literal anyway, the splitter declines, and the pattern the emitter
+WOULD produce finds no file.  Together they make the guard load-bearing
+rather than decorative -- relax `org-agents--heading-literals-p' to
+accept `]' and this becomes a silent lost match.
+
+The org-ql leg needs a word, because it is where the trap is.  org-ql
+gives `heading-regexp' a PREAMBLE -- `bol (1+ \"*\") (1+ blank) (0+ nonl)
+REGEXP', an Emacs-side search of the raw LINE -- and where the query
+planner uses it, org-ql agrees with the raw line and misses this entry
+too.  So a bare `(heading \"[#A] Collapsed\")' answers nothing and would
+make this test pass for entirely the wrong reason.  Whether the preamble
+is used is a property of the whole query: `(and (level 1) (heading ...))'
+does not get one, the body runs alone, and org-ql matches the
+reassembled title.  MEASURED, all four shapes: `(heading L)' and
+`(and (heading L) (todo))' answer 0, while `(and (level 1) (heading L))'
+and `(or (heading L) (heading \"zzz-nope\"))' answer 1.  A prefilter may
+not depend on a query-planner optimization, so the guard has to hold for
+the shape where the preamble is absent."
+  (org-agents-test--with-rg-corpus
+    (let* ((literal "[#A] Collapsed")
+           (file (funcall F "head-collapse.org")))
+      ;; The mechanism itself: `org-get-heading' reassembles rather than
+      ;; slices, so the title it answers is not in the file.
+      (with-current-buffer (find-file-noselect file)
+        (goto-char (point-min))
+        (let ((heading (org-get-heading t t)))
+          (should (equal heading "[#A] Collapsed review"))
+          (should (string-search literal heading))
+          (should-not (string-search heading (buffer-string)))))
+      ;; org-ql matches it, in the query shape that gets no preamble.
+      (should (equal (org-agents-test--live-files
+                      (list 'and '(level 1) (list 'heading literal)) paths)
+                     (list (file-truename file))))
+      ;; The splitter declines, so the scope is scanned live and correct.
+      (should (null (org-agents--prefilter-conjuncts (list 'heading literal))))
+      ;; And had it been pushed, the file would have been lost: the
+      ;; pattern is well formed, ripgrep runs it, and it answers empty.
+      (let* ((patterns (org-agents--rg-patterns (list 'heading literal)))
+             (answer (org-agents--rg-run (car patterns) dir)))
+        (should (= 1 (length patterns)))
+        (should (listp answer))
+        (should (null answer))))))
 
 (ert-deftest org-agents-test-rg-covers-a-heading-in-a-non-utf-8-file ()
   "The test nobody would think to write, and it fails on a real corpus.
@@ -3916,7 +4038,12 @@ its witness through org-ql -- so the guard costs breadth, not answers."
   (org-agents-test--with-rg-corpus
     (dolist (query '((todo) (todo "TODO") (done) (tags "work")
                      (category "AnyCat") (ts :on "2024-02-29")
-                     (heading "Rev.*iew") (property "CATEGORY" "work")
+                     ;; `]' is the one character a heading literal may
+                     ;; not hold; regexp syntax is pushed, and
+                     ;; `org-agents-test-rg-refuses-a-heading-across-a-priority-cookie'
+                     ;; is why this one is not.
+                     (and (level 1) (heading "[#A] Collapsed"))
+                     (property "CATEGORY" "work")
                      (property-ts "DEADLINE" :to today)
                      (parent (property "NEXT_REVIEW"))
                      (or (property "NEXT_REVIEW") (todo))
@@ -3924,7 +4051,8 @@ its witness through org-ql -- so the guard costs breadth, not answers."
       (should (null (org-agents--prefilter-conjuncts query))))
     ;; And the residual queries really do match, so the rows above are
     ;; refusing something that exists.
-    (dolist (query '((todo) (heading "Rev.*iew") (ts :on "2024-02-29")))
+    (dolist (query '((todo) (ts :on "2024-02-29")
+                     (and (level 1) (heading "[#A] Collapsed"))))
       (should (org-agents-test--live-files query paths)))))
 
 (ert-deftest org-agents-test-rg-scope-files-narrows-a-directory-scope ()
