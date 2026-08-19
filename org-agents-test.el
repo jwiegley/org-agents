@@ -2390,6 +2390,35 @@ in it, so the scratch database's name must contain \"org_agents_test\""
          (format "%s predates the `file' JSON field (no OrgziDBziRender \
 symbol); rebuild with `cabal build org-jw'" (plist-get env :bin)))))))
 
+(defun org-agents-test--db-files (skeleton)
+  "Candidate file truenames for SKELETON, through the real CLI."
+  (mapcar #'file-truename (org-db-cli-query-files skeleton)))
+
+(defun org-agents-test--live-files (query paths)
+  "Truenames of the files org-ql actually matches for QUERY over PATHS.
+`delq' first: a match carrying no marker answers nil, and a nil among the
+file names would fail a later comparison over a nil rather than a file."
+  (delete-dups
+   (mapcar #'file-truename
+           (delq nil (org-ql-select paths query :action '(buffer-file-name))))))
+
+(defun org-agents-test--all-paths (files)
+  "Every fixture path in FILES, as `org-agents-test--with-db-corpus' binds it."
+  (mapcar #'cdr files))
+
+(defun org-agents-test--should-be-superset (query skeleton paths)
+  "Assert SKELETON's candidate set covers every file org-ql matches for QUERY.
+Never `equal': the contract is a superset, and two of the fixtures below
+depend on the prefilter being legitimately wider than org-ql.  Both sides
+are asserted non-empty, so a fixture that quietly stopped matching cannot
+make the relation hold for want of anything to relate."
+  (let ((live (org-agents-test--live-files query paths))
+        (cands (org-agents-test--db-files skeleton)))
+    (should live)
+    (should cands)
+    (dolist (f live)
+      (should (member f cands)))))
+
 (defmacro org-agents-test--with-db-corpus (&rest body)
   "Store the differential fixture corpus into the scratch DB and run BODY.
 Binds `env' (the plist `org-agents-test--db-env' answers with), `dir'
@@ -2494,35 +2523,6 @@ store did not reach this database"))
                (with-current-buffer buf (set-buffer-modified-p nil))
                (kill-buffer buf))))
          (delete-directory dir t)))))
-
-(defun org-agents-test--db-files (skeleton)
-  "Candidate file truenames for SKELETON, through the real CLI."
-  (mapcar #'file-truename (org-db-cli-query-files skeleton)))
-
-(defun org-agents-test--live-files (query paths)
-  "Truenames of the files org-ql actually matches for QUERY over PATHS.
-`delq' first: a match carrying no marker answers nil, and a nil among the
-file names would fail a later comparison over a nil rather than a file."
-  (delete-dups
-   (mapcar #'file-truename
-           (delq nil (org-ql-select paths query :action '(buffer-file-name))))))
-
-(defun org-agents-test--all-paths (files)
-  "Every fixture path in FILES, as `org-agents-test--with-db-corpus' binds it."
-  (mapcar #'cdr files))
-
-(defun org-agents-test--should-be-superset (query skeleton paths)
-  "Assert SKELETON's candidate set covers every file org-ql matches for QUERY.
-Never `equal': the contract is a superset, and two of the fixtures below
-depend on the prefilter being legitimately wider than org-ql.  Both sides
-are asserted non-empty, so a fixture that quietly stopped matching cannot
-make the relation hold for want of anything to relate."
-  (let ((live (org-agents-test--live-files query paths))
-        (cands (org-agents-test--db-files skeleton)))
-    (should live)
-    (should cands)
-    (dolist (f live)
-      (should (member f cands)))))
 
 ;;; Positive rows: one test per row of `org-agents--pushdown-fns'.
 

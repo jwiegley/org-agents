@@ -51,9 +51,130 @@
 ;; optional candidate-file prefilter that makes whole-corpus agents
 ;; affordable.
 ;;
+;; The agent properties:
+;;
+;;   :AGENT_QUERY:   the query.  Required; the property is what makes an
+;;                   entry an agent.
+;;   :AGENT_VIEW:    `children' (the default), `list', or `table'.  Any
+;;                   other value is refused rather than rendered.
+;;   :AGENT_SCOPE:   `agenda' (the default), `active', `all', a directory
+;;                   relative to `org-directory', or a read-able list of
+;;                   file names.
+;;   :AGENT_SORT:    `date', `todo', `priority', `reverse', or a list of
+;;                   those, which org-ql applies to the matched entries;
+;;                   or `(column N)' / `(ts-column N)', which order the
+;;                   rows of a table view and are refused in any other.
+;;   :AGENT_LIMIT:   a count.  Applied after the sort.
+;;   :AGENT_COLUMNS: whitespace-separated column names for a table view.
+;;                   `ITEM_BY_ID' is the link to the match; every other
+;;                   name is read as a property at the match.
+;;   :AGENT_FORMAT:  whitespace-separated property names, shown after the
+;;                   link in the children and list views.
+;;   :AGENT_MATCH:   written by this package on a generated alias, never
+;;                   by hand.  See the alias contract below.
+;;   :AGENT_MATCHED: written by this package after an update: how many
+;;                   entries matched, and when.
+;;
+;; An Org property value is a single line.  A query too long for one line
+;; cannot be continued onto the next -- and must not be written with a
+;; `:AGENT_QUERY+:' continuation either, because the Haskell parser
+;; behind the database prefilter cannot read a `+' in a property name and
+;; discards the WHOLE drawer it appears in, taking every other property
+;; of that entry with it.  Keep the query on one line, or name a shorter
+;; one and let a residual predicate do the rest.
+;;
+;; Org reads the value `nil' as no value at all, so `:AGENT_VIEW: nil'
+;; is an agent with no view rather than an error, and takes the default.
+;;
+;; The alias contract, and its sharp edges:
+;;
+;; In the children view each match becomes a child "alias" heading
+;; carrying `:AGENT_MATCH: t'.  An alias holding nothing but that drawer
+;; is *pristine* and belongs to this package: every update deletes it and
+;; writes it again.  The moment anything is written under it, it is the
+;; user's: no update deletes it, and a match that is gone marks it
+;; `(stale)' instead.  A child that never carried `:AGENT_MATCH: t' is
+;; not this package's to touch at all.
+;;
+;; Four consequences worth knowing before relying on it:
+;;
+;;   - Because a pristine alias is deleted rather than edited, extra
+;;     drawer properties or tags added to a body-less alias are
+;;     discarded.  Write a line under the alias and they are kept along
+;;     with it.
+;;   - A preserved alias keeps the description and format suffix it was
+;;     written with.  Only the stale mark changes, so an alias whose
+;;     match has since been renamed goes on showing the old title.
+;;   - An alias is recognized by the target it links to.  So a match that
+;;     gains an `:ID:' between updates is a different target: the old
+;;     alias is marked stale and a new one is written beside it.
+;;   - Two matches with no ID and identical headings in one file share
+;;     one `file:...::*' target, so a single alias may stand for both
+;;     while `:AGENT_MATCHED:' counts two.  Give them IDs to tell them
+;;     apart.
+;;
+;; An alias whose link the user has mangled past reading is left alone
+;; and a fresh alias is written beside it, rather than guessing which
+;; match it stood for.
+;;
+;; `:AGENT_MATCHED:', and what writing it costs:
+;;
+;; Recording the result on the agent has three effects that are accepted
+;; rather than avoided:
+;;
+;;   - It modifies the buffer.  An update leaves its files modified and
+;;     unsaved, so the result can be read over -- and undone -- first.
+;;   - Its timestamp is inactive, and therefore visible to a query:
+;;     `(ts-inactive :from ...)' over a corpus holding agents will match
+;;     the agents themselves.
+;;   - It changes the entry's content, so `org db sync' sees the agent as
+;;     changed on every update: its children are stored again and its
+;;     title re-embedded.
+;;
+;; Scope, and why a corpus scope needs the database:
+;;
+;; `agenda' and an explicit list of files name the files they will open,
+;; and are evaluated live.  `active', `all' and any directory do not:
+;; nothing about naming a directory bounds how much it holds, and reading
+;; one live means opening however many files it turns out to contain.  So
+;; those scopes are resolved through the `org db query' prefilter, and an
+;; agent using one *errors* when no prefilter is available rather than
+;; walking the corpus.  (A file-count ceiling, above which a live walk is
+;; refused and below which it is allowed, is the obvious way to soften
+;; this and is not implemented.)
+;;
+;; The bridge cannot distinguish "the database failed to answer" from
+;; "the database answered, and no file matches", so an agent over a
+;; corpus scope whose query genuinely matches nothing reports a missing
+;; prefilter.  A needless error, never a wrong answer.
+;;
+;; Only conjuncts whose database answer is provably a superset of org-ql's
+;; are pushed into the prefilter; everything else stays residual and is
+;; applied by org-ql.  A broad `org-use-property-inheritance' -- `t' most
+;; of all -- makes no property conjunct pushable, so a property-only
+;; agent falls back to its scope's whole file set: still correct, and
+;; much slower.  The prefilter's value depends on keeping inheritance
+;; narrow.
+;;
+;; Known limitations:
+;;
+;;   - `today' and integer day offsets are pushed verbatim, and the
+;;     database resolves them against the UTC day while org-ql uses the
+;;     local one.  Where the two differ -- the local evening west of UTC,
+;;     the local morning east of it -- a `scheduled'/`deadline'/`closed'
+;;     bound written as `today' can drop a true match.  Write an absolute
+;;     `"YYYY-MM-DD"' where that matters.
+;;   - An entry whose only value for a property comes from `:NAME+:'
+;;     accumulation has no property rows in the database at all, so a
+;;     `property' conjunct over such a name may drop it from the
+;;     candidate set.
+;;
+;; Both are covered by tests in the differential section of
+;; org-agents-test.el, which record them rather than hide them.
+;;
 ;; See docs/superpowers/specs/2026-08-18-org-agents-design.md for the
-;; full design, including the agent-entry property vocabulary, the
-;; evaluation gate, scope resolution, and the renderers.
+;; full design, including the evaluation gate, the push-down table with
+;; the divergence evidence for each row, and the renderers.
 
 ;;; Code:
 
@@ -65,6 +186,12 @@
 (require 'org-ql-search)                ; `org-agents-preview' delegates to it
 (require 'org-ql-ext)
 (require 'org-db-cli)
+
+;; `org-ql-select' expands into a call to this, which org-ql does not
+;; autoload: without the declaration the compiler reports it as possibly
+;; undefined at runtime, over a call site that is org-ql's own and not
+;; this file's.
+(declare-function org-ql--normalize-query "org-ql")
 
 (defgroup org-agents nil
   "Tinderbox-style persistent queries for Org-mode."
@@ -203,7 +330,13 @@ With NUMERIC non-nil, coerce a property's string value to a number."
 (defcustom org-agents-safe-queries nil
   "List of sha1 hashes of queries approved to run without prompting.
 Managed like `safe-local-variable-values': approving a query
-interactively offers to persist its hash here."
+interactively offers to persist its hash here.
+
+Persisting goes through `customize-save-variable', which writes to
+`custom-file' or, without one, to `user-init-file'.  Where the real init
+is an Org file that is tangled, `user-init-file' is the tangled output,
+and the saved approval will be overwritten the next time it is generated.
+Set `custom-file' to a file of its own to keep approvals."
   :type '(repeat string) :group 'org-agents)
 
 (defvar org-agents--session-approved (make-hash-table :test 'equal)
@@ -342,6 +475,15 @@ skipped instead of prompting."
                         (not (string-match-p org-agents--literal-regexp s))))
                  strings)))
 
+;; A note on org-ql's `property', because its docstring reads the other
+;; way and the mistake is easy to make twice.  The docstring says the
+;; inheritance default is `org-use-property-inheritance'; the normalizer
+;; applies that default only to a `property' form that carries an extra
+;; plist.  The plain `(property NAME)' and `(property NAME VALUE)' forms
+;; -- the only two this splitter pushes -- leave `inherit' at its nil
+;; default and read the entry's own drawer, which is exactly what the
+;; database stores.  Measured twice.  Do not write "plain forms inherit"
+;; anywhere: it is false.
 (defun org-agents--property-inherits-p (name)
   "Non-nil when property NAME might be inherited at match time.
 Mirrors `org-property-inherit-p', including its case-insensitive
@@ -1218,7 +1360,15 @@ With DEDENT the block's own indentation comes off as well:
 a body put back carrying the indentation it was found with would gain it
 twice over -- once more on every failed render.  Without DEDENT, which
 is the quit the writer signals again rather than returning from, nothing
-will indent anything, and the text goes back exactly as it was found."
+will indent anything, and the text goes back exactly as it was found.
+
+The round trip is byte-exact for a body a successful render wrote, which
+is the case that matters: a failed render leaves the block as the last
+good one left it.  It is not byte-exact for a body edited by hand.  A
+trailing blank line is lost, because the newline `org-prepare-dblock'
+opened stands in for the last one; and a hand-indented line normalizes to
+the block's own indentation column, because that is what the indent pass
+applies to every line alike."
   (let ((content (or (plist-get params :content) ""))
         (column (plist-get params :indentation-column)))
     (string-remove-suffix

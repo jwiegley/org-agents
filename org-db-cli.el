@@ -128,7 +128,15 @@ too."
 
 (defun org-db-cli-query-files (skeleton)
   "Run `db query --ql SKELETON'; return sorted unique absolute files.
-Return nil if the CLI is unconfigured, fails, or yields no file fields."
+Return nil if the CLI is unconfigured, fails, or yields no file fields.
+
+The `file' field the CLI writes is already absolute and canonicalized --
+the store records `canonicalizePath' of each file it reads -- so what
+comes back names a file by its truename and not by whatever spelling a
+caller reached it through.  A caller intersecting these names with its own
+must therefore compare truenames on both sides: where `org-directory' is
+itself a symlink, the two spellings of one file have nothing in common
+under `equal'.  `org-agents--same-files' is where that is done."
   (when (and skeleton (org-db-cli-available-p))
     (let* ((output (org-db-cli--run
                     (list "--config" (expand-file-name org-db-cli-config-file)
