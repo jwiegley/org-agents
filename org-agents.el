@@ -58,10 +58,11 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'subr-x)
 (require 'org)
 (require 'org-ql)
 (require 'org-ql-ext)
-;; org-db-cli is required from Task 6 onward.
+(require 'org-db-cli)
 
 (defgroup org-agents nil
   "Tinderbox-style persistent queries for Org-mode."
@@ -399,8 +400,9 @@ Only a date that survives the round trip is read alike by both sides."
              (`(property ,(and name (pred org-agents--property-pushable-p)))
               `(property ,name))
              ;; Equality: both sides compare the entry's own value.  A
-             ;; form carrying `:inherit' does inherit, and has an arity
-             ;; neither pattern matches, so it pushes nothing at all.
+             ;; form carrying `:inherit' says for itself whether to
+             ;; inherit, and has an arity neither pattern matches, so it
+             ;; pushes nothing at all.
              (`(property ,(and name (pred org-agents--property-pushable-p))
                          ,(and val (pred stringp)))
               (if (string-match-p "[[:space:]]" val)
@@ -469,6 +471,206 @@ already known to the caller and does not earn a query."
       (prin1-to-string
        (org-agents--plain-strings
         (if (cdr all) (cons 'and all) (car all)))))))
+
+;;;; Collection
+
+;; Reading an agent turns the entry's `AGENT_*' properties into a plist,
+;; and collecting runs the resulting query.  Every one of those
+;; properties is text out of a file, so a value that cannot be used is
+;; diagnosed here rather than left to fail, or to quietly do nothing, at
+;; match time.
+
+(defcustom org-agents-exclude '(not (property "AGENT_MATCH"))
+  "Conjunct appended to every agent query and to previews.
+Keeps agents from matching generated aliases.  Appended last so cheap
+predicates short-circuit first; applied only on the Emacs side, never
+in the database skeleton.  Set to nil to match aliases like any other
+entry."
+  :type 'sexp :group 'org-agents)
+
+(defcustom org-agents-files '("~/org/agents.org")
+  "Where `org-agents-update-all' looks for agents.
+A list of files and directories, or the symbol `agenda'."
+  :type '(choice (const agenda) (repeat file)) :group 'org-agents)
+
+(defconst org-agents--corpus-scopes '(active all)
+  "Scopes naming so much of the corpus that they require a prefilter.")
+
+(defconst org-agents--scope-names '("agenda" "active" "all")
+  "The `:AGENT_SCOPE:' values that name a corpus rather than a directory.")
+
+(defconst org-agents--element-sorts '(date todo priority reverse)
+  "The `:AGENT_SORT:' methods org-ql can sort matched elements by.
+A table's `(column N)' or `(ts-column N)' sorts rendered rows of
+strings instead, so the renderer -- not org-ql -- answers for those.")
+
+(defun org-agents--element-sort (sort)
+  "Return SORT if org-ql can sort elements by it, else nil.
+One method or a list of them, since `reverse' is only meaningful
+alongside another; a table's sort form is neither, and handing it to
+org-ql would raise an error over a view that is not org-ql's business."
+  (and sort (cl-subsetp (ensure-list sort) org-agents--element-sorts) sort))
+
+(defun org-agents--entry-get (property)
+  "Return PROPERTY of the entry at point, or nil when it has no value.
+A property line written with nothing after it reads as the empty
+string, which `read-from-string' cannot read at all and which
+`expand-file-name' resolves to the whole of `org-directory'.  Written
+but empty and not written at all mean the same thing here."
+  (when-let* ((value (org-entry-get nil property)))
+    (unless (string-blank-p value) value)))
+
+(defun org-agents--read-scope (value)
+  "Read the `:AGENT_SCOPE:' property VALUE, which may be nil."
+  (cond
+   ((null value) 'agenda)
+   ((string-prefix-p "(" value) (car (read-from-string value)))
+   ;; Only the three corpus names are symbols.  Interning every bare
+   ;; value would leave no way to write the directory scope the design
+   ;; calls for, and no `stringp' scope could ever reach
+   ;; `org-agents--scope-conjunct'.
+   ((member value org-agents--scope-names) (intern value))
+   (t value)))
+
+(defun org-agents--read-limit (value)
+  "Read the `:AGENT_LIMIT:' property VALUE, which may be nil.
+A limit that is not a count is refused: `string-to-number' reads one as
+zero, and an agent that renders nothing looks exactly like an agent
+whose query matched nothing."
+  (when value
+    (unless (string-match-p "\\`[0-9]+\\'" value)
+      (user-error "org-agents: :AGENT_LIMIT: must be a count, not `%s'" value))
+    (string-to-number value)))
+
+(defun org-agents--read-agent ()
+  "Read the agent entry at point into a plist."
+  (let ((q (org-agents--entry-get "AGENT_QUERY")))
+    (unless q (user-error "No :AGENT_QUERY: at point"))
+    (let ((query (condition-case err (car (read-from-string q))
+                   (error (user-error "org-agents: unreadable query %s: %s"
+                                      q (error-message-string err))))))
+      (list :query (org-agents--expand query)
+            :view (intern (or (org-agents--entry-get "AGENT_VIEW") "children"))
+            :scope (org-agents--read-scope (org-agents--entry-get "AGENT_SCOPE"))
+            :sort (when-let* ((s (org-agents--entry-get "AGENT_SORT")))
+                    (car (read-from-string s)))
+            :limit (org-agents--read-limit (org-agents--entry-get "AGENT_LIMIT"))
+            :columns (org-agents--entry-get "AGENT_COLUMNS")
+            :format (org-agents--entry-get "AGENT_FORMAT")
+            :marker (save-excursion
+                      ;; The agent's own headline, not wherever point
+                      ;; happened to sit: `org-agents--self-match-p'
+                      ;; compares this position against the headline
+                      ;; positions org-ql reports.
+                      (unless (org-before-first-heading-p)
+                        (org-back-to-heading t))
+                      (point-marker))))))
+
+(defun org-agents--scope-base-files (scope)
+  "Files named by SCOPE, before any prefilter."
+  (pcase scope
+    ('agenda (org-agenda-files))
+    ('active (directory-files-recursively
+              org-directory "\\.org\\'" nil
+              (lambda (d) (not (string-match-p "/archive\\'" d)))))
+    ('all (directory-files-recursively org-directory "\\.org\\'"))
+    ((pred stringp) (directory-files-recursively
+                     (expand-file-name scope org-directory) "\\.org\\'"))
+    ;; A list of file names, and nothing else: anything further along
+    ;; would reach `expand-file-name' as a wrong type and signal there,
+    ;; rather than being named as the bad scope it is.
+    ((and (pred listp) (guard (cl-every #'stringp scope)))
+     (mapcar #'expand-file-name scope))
+    (_ (user-error "org-agents: bad scope %S" scope))))
+
+(defun org-agents--corpus-scope-p (scope)
+  "Non-nil when SCOPE may only be resolved through the database prefilter."
+  (memq scope org-agents--corpus-scopes))
+
+(defun org-agents--scope-conjunct (scope)
+  "CLI path conjunct for directory SCOPE, else nil.
+The conjunct is this package's contract with the CLI: a path prefix
+relative to the corpus root.  An absolute directory is no such prefix,
+so it pushes nothing and narrows the candidates by `base' alone, as any
+other unpushable conjunct does.  The directory travels as plain text: a
+scope lifted out of a buffer carries text properties, which `prin1'
+would write into the skeleton in a form the CLI's reader cannot parse."
+  (when (and (stringp scope) (not (file-name-absolute-p scope)))
+    `(path ,(file-name-as-directory (substring-no-properties scope)))))
+
+(defun org-agents--same-files (base candidates)
+  "Return the members of BASE that CANDIDATES names too.
+Names are compared as truenames: the database answers with canonical
+absolute paths, while BASE is reached through `org-directory', commonly
+itself a symlink, so under `equal' the two spellings of one file have
+nothing in common and every agent would match nothing.  BASE's own
+spellings are what is returned, because those are the names the user
+reads and the links that will be followed."
+  (let ((wanted (make-hash-table :test #'equal)))
+    (dolist (candidate candidates)
+      (puthash (file-truename candidate) t wanted))
+    (cl-remove-if-not (lambda (file) (gethash (file-truename file) wanted))
+                      base)))
+
+(defun org-agents--scope-files (agent)
+  "Resolve AGENT's scope to files, applying the DB prefilter when possible."
+  (let* ((scope (plist-get agent :scope))
+         (skeleton (org-agents--skeleton (plist-get agent :query)
+                                         (org-agents--scope-conjunct scope)))
+         (base (org-agents--scope-base-files scope))
+         (candidates (and skeleton
+                          (org-db-cli-available-p)
+                          (org-db-cli-query-files skeleton))))
+    (cond
+     (candidates (org-agents--same-files base candidates))
+     ;; No candidates, and a scope too large to read live.  The bridge
+     ;; returns nil for a failure and for a genuinely empty answer
+     ;; alike, so an agent that matches nothing at all is reported here
+     ;; as a missing prefilter -- a needless error, but never a wrong
+     ;; answer, and the alternative is opening the whole corpus.
+     ((org-agents--corpus-scope-p scope)
+      (user-error
+       "org-agents: scope `%s' needs the database prefilter (skeleton %s, cli %s)"
+       scope (if skeleton "ok" "empty")
+       (if (org-db-cli-available-p) "failed" "unconfigured")))
+     (t base))))
+
+(defun org-agents--self-match-p (element marker)
+  "Non-nil when ELEMENT is the very entry MARKER points at.
+org-ql sets `:org-hd-marker' to the headline's `:begin', and resolves a
+file to a buffer already visiting it -- by truename, so a scope that
+names the agent's file by another spelling still yields the same buffer.
+An agent matched by its own query is therefore recognized by position."
+  (when-let* ((m (and marker (org-element-property :org-hd-marker element))))
+    (and (eq (marker-buffer m) (marker-buffer marker))
+         (= (marker-position m) (marker-position marker)))))
+
+(defun org-agents--collect (agent)
+  "Return AGENT's sorted, limited matches as headlines with markers."
+  (unless (org-agents--gate (plist-get agent :query))
+    (user-error "org-agents: query not approved"))
+  (let* ((query (plist-get agent :query))
+         (self (plist-get agent :marker))
+         (sort (plist-get agent :sort))
+         (limit (plist-get agent :limit))
+         (files (org-agents--scope-files agent))
+         (matches
+          ;; Handed no files, `org-ql-select' searches the current
+          ;; buffer, which for an agent is the file it lives in: a scope
+          ;; that resolved to nothing must select nothing.
+          (and files
+               (org-ql-select files
+                 (if org-agents-exclude
+                     `(and ,query ,org-agents-exclude)
+                   ;; nil conjoined here is a clause that never matches,
+                   ;; which is not what turning the exclusion off means.
+                   query)
+                 :action 'element-with-markers
+                 :sort (org-agents--element-sort sort))))
+         (matches (cl-remove-if (lambda (element)
+                                  (org-agents--self-match-p element self))
+                                matches)))
+    (if limit (take limit matches) matches)))
 
 (provide 'org-agents)
 ;;; org-agents.el ends here

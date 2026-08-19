@@ -317,5 +317,277 @@
                     '(and (property "A") (property "B") (property "C")))
                    "(and (property \"A\") (property \"B\") (property \"C\"))"))))
 
+;;;; Collection
+
+(defmacro org-agents-test--with-corpus (&rest body)
+  "Run BODY with `dir' bound to a temp corpus of two org files and
+`agent-file' bound to a file containing one agent entry.
+`a' and `b' name the corpus files, whose absolute paths the agent
+entry's `:AGENT_SCOPE:' lists.  The database bridge is left
+unconfigured and property inheritance off, so a test that wants either
+must arrange it; buffers visiting the corpus are killed afterwards,
+because the files they visit are about to be deleted."
+  (declare (indent 0))
+  `(let* ((dir (make-temp-file "org-agents-corpus" t))
+          (a (expand-file-name "a.org" dir))
+          (b (expand-file-name "b.org" dir))
+          (agent-file (expand-file-name "agents.org" dir))
+          (org-db-cli-config-file nil)
+          (org-db-cli-db-url nil)
+          (org-use-property-inheritance nil)
+          (org-element-use-cache nil))
+     (unwind-protect
+         (progn
+           (with-temp-file a
+             (insert "* TODO Fix widget\n:PROPERTIES:\n:ID: 11111111-1111-1111-1111-111111111111\n:NEXT_REVIEW: [2020-01-01 Wed]\n:END:\n"
+                     "* DONE Old thing\n:PROPERTIES:\n:NEXT_REVIEW: [2020-01-01 Wed]\n:END:\n"))
+           (with-temp-file b
+             (insert "* TODO No review property here\n"))
+           (with-temp-file agent-file
+             (insert "* Review agent\n:PROPERTIES:\n:AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n:AGENT_SCOPE: (\"" a "\" \"" b "\")\n:END:\n"))
+           ,@body)
+       (dolist (buf (buffer-list))
+         (when-let* ((f (buffer-file-name buf)))
+           (when (string-prefix-p (file-name-as-directory dir) f)
+             (with-current-buffer buf (set-buffer-modified-p nil))
+             (kill-buffer buf))))
+       (delete-directory dir t))))
+
+(defmacro org-agents-test--in-agent (&rest body)
+  "Run BODY in the agent buffer of `org-agents-test--with-corpus', at its start."
+  (declare (indent 0))
+  `(org-agents-test--with-corpus
+     (with-current-buffer (find-file-noselect agent-file)
+       (goto-char (point-min))
+       ,@body)))
+
+(ert-deftest org-agents-test-read-agent ()
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent)))
+      (should (equal (plist-get agent :query)
+                     '(and (todo) (property "NEXT_REVIEW"))))
+      (should (eq (plist-get agent :view) 'children))
+      (should (markerp (plist-get agent :marker))))))
+
+(ert-deftest org-agents-test-read-agent-rejects-unusable-properties ()
+  "Everything an agent entry supplies is text from a file."
+  (org-agents-test--in-agent
+    (org-entry-put nil "AGENT_QUERY" "(and (todo")
+    (should-error (org-agents--read-agent) :type 'user-error)
+    (org-entry-put nil "AGENT_QUERY" "(todo)")
+    (org-entry-put nil "AGENT_LIMIT" "soon")
+    (should-error (org-agents--read-agent) :type 'user-error)
+    (org-entry-put nil "AGENT_LIMIT" "3")
+    (should (= 3 (plist-get (org-agents--read-agent) :limit))))
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect b)
+      (goto-char (point-min))
+      (should-error (org-agents--read-agent) :type 'user-error))))
+
+(ert-deftest org-agents-test-read-agent-scope-spellings ()
+  "The three corpus names are symbols; any other bare value is a directory.
+Interning it too would leave the `path' conjunct and the directory
+branch of `org-agents--scope-base-files' unreachable."
+  (org-agents-test--in-agent
+    (org-entry-put nil "AGENT_SCOPE" "active")
+    (should (eq 'active (plist-get (org-agents--read-agent) :scope)))
+    (org-entry-put nil "AGENT_SCOPE" "positron")
+    (should (equal "positron" (plist-get (org-agents--read-agent) :scope)))
+    (org-entry-put nil "AGENT_SCOPE" "(\"x.org\")")
+    (should (equal '("x.org") (plist-get (org-agents--read-agent) :scope)))
+    (org-entry-delete nil "AGENT_SCOPE")
+    (should (eq 'agenda (plist-get (org-agents--read-agent) :scope)))))
+
+(ert-deftest org-agents-test-read-agent-blank-properties-read-as-absent ()
+  "A property line with nothing after it does not supply a value.
+Read as one, an empty scope resolves to the whole of `org-directory'
+without the prefilter a corpus that size requires, and an empty sort
+reaches `read-from-string' as an end of file."
+  (org-agents-test--with-corpus
+    (with-temp-file agent-file
+      (insert "* Review agent\n:PROPERTIES:\n:AGENT_QUERY: (todo)\n"
+              ":AGENT_SCOPE:\n:AGENT_SORT:\n:AGENT_LIMIT:\n:AGENT_VIEW:\n"
+              ":AGENT_COLUMNS:\n:END:\n"))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let ((agent (org-agents--read-agent)))
+        (should (eq 'agenda (plist-get agent :scope)))
+        (should (eq 'children (plist-get agent :view)))
+        (should (null (plist-get agent :sort)))
+        (should (null (plist-get agent :limit)))
+        (should (null (plist-get agent :columns)))))))
+
+(ert-deftest org-agents-test-read-agent-marker-anchors-on-the-headline ()
+  "The marker names the agent's own headline, not wherever point sat.
+`org-agents--collect' compares it against each match's
+`:org-hd-marker', which org-ql sets to the headline's `:begin'."
+  (org-agents-test--in-agent
+    (goto-char (point-max))
+    (should (= 1 (marker-position (plist-get (org-agents--read-agent) :marker))))))
+
+(ert-deftest org-agents-test-scope-base-files-rejects-bad-scope ()
+  (should-error (org-agents--scope-base-files '(path "x")) :type 'user-error)
+  (should-error (org-agents--scope-base-files 42) :type 'user-error))
+
+(ert-deftest org-agents-test-scope-conjunct ()
+  "Only a directory scope earns a path conjunct, and it travels as plain text."
+  (should (equal (org-agents--scope-conjunct "positron") '(path "positron/")))
+  (should (equal (org-agents--scope-conjunct "positron/") '(path "positron/")))
+  (should (null (org-agents--scope-conjunct 'active)))
+  (should (null (org-agents--scope-conjunct '("a.org"))))
+  ;; The conjunct is a prefix relative to the corpus root, which an
+  ;; absolute directory is not, so it pushes nothing rather than asking
+  ;; the database a question in terms it does not share.
+  (should (null (org-agents--scope-conjunct "/Users/johnw/elsewhere")))
+  (let ((conjunct (org-agents--scope-conjunct (propertize "positron" 'face 'bold))))
+    (should (equal conjunct '(path "positron/")))
+    (should (null (text-properties-at 0 (cadr conjunct))))))
+
+(ert-deftest org-agents-test-scope-files-intersects-by-truename ()
+  "The database canonicalizes; `org-directory' is commonly a symlink.
+Compared with `equal' the two spellings have nothing in common, and the
+agent would silently match nothing at all."
+  (org-agents-test--with-corpus
+    (let ((link (expand-file-name "link-a.org" dir)))
+      (make-symbolic-link "a.org" link)
+      (with-current-buffer (find-file-noselect agent-file)
+        (goto-char (point-min))
+        (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
+          (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
+                    ((symbol-function 'org-db-cli-query-files) (lambda (_) (list a)))
+                    ((symbol-function 'org-agents--scope-base-files)
+                     (lambda (_scope) (list link b))))
+            ;; The base spelling is what is returned: it is the name the
+            ;; user reads and the link that will be followed.
+            (should (equal (list link) (org-agents--scope-files agent)))))))))
+
+(ert-deftest org-agents-test-collect-applies-exclusion-and-todo ()
+  (org-agents-test--in-agent
+    (let* ((agent (org-agents--read-agent))
+           (matches (org-agents--collect agent)))
+      (should (= 1 (length matches)))
+      (should (equal (org-element-property :raw-value (car matches))
+                     "Fix widget")))))
+
+(ert-deftest org-agents-test-collect-skips-generated-aliases ()
+  "An agent must not consume another agent's output -- unless asked to."
+  (org-agents-test--with-corpus
+    (with-temp-buffer
+      (insert "* TODO Generated alias\n:PROPERTIES:\n:AGENT_MATCH: t\n"
+              ":NEXT_REVIEW: [2020-01-01 Wed]\n:END:\n")
+      (append-to-file (point-min) (point-max) a))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let ((agent (org-agents--read-agent)))
+        (should (= 1 (length (org-agents--collect agent))))
+        ;; nil turns the exclusion off; conjoined into the query it would
+        ;; instead be a clause that never matches.
+        (let ((org-agents-exclude nil))
+          (should (= 2 (length (org-agents--collect agent)))))))))
+
+(ert-deftest org-agents-test-collect-skips-the-agent-itself ()
+  "An agent that matches its own query does not render itself."
+  (org-agents-test--in-agent
+    (goto-char (point-max))
+    (let ((agent (org-agents--read-agent)))
+      (setq agent (plist-put agent :scope (list agent-file)))
+      (setq agent (plist-put agent :query '(property "AGENT_QUERY")))
+      (should (null (org-agents--collect agent))))))
+
+(ert-deftest org-agents-test-collect-corpus-scope-needs-prefilter ()
+  (org-agents-test--in-agent
+    (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
+      (cl-letf (((symbol-function 'org-db-cli-available-p) #'ignore))
+        (should-error (org-agents--collect agent) :type 'user-error)))))
+
+(ert-deftest org-agents-test-collect-corpus-scope-needs-a-skeleton ()
+  "A query with nothing to push must not open the whole corpus either."
+  (org-agents-test--in-agent
+    (let ((agent (plist-put (org-agents--read-agent) :scope 'all)))
+      (setq agent (plist-put agent :query '(todo)))
+      (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
+                ((symbol-function 'org-db-cli-query-files)
+                 (lambda (_) (error "must not be called without a skeleton"))))
+        (should-error (org-agents--collect agent) :type 'user-error)))))
+
+(ert-deftest org-agents-test-collect-prefilter-intersects ()
+  "A corpus scope narrows to the candidate files, and only those are read."
+  (org-agents-test--with-corpus
+    (let ((link (expand-file-name "link-a.org" dir))
+          (queried nil))
+      (make-symbolic-link "a.org" link)
+      (with-current-buffer (find-file-noselect agent-file)
+        (goto-char (point-min))
+        (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
+          (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
+                    ((symbol-function 'org-db-cli-query-files)
+                     (lambda (skel) (setq queried skel) (list a)))
+                    ((symbol-function 'org-agents--scope-base-files)
+                     (lambda (_scope) (list link b))))
+            (let ((matches (org-agents--collect agent)))
+              (should (string-match-p "NEXT_REVIEW" queried))
+              (should (= 1 (length matches)))
+              (should (equal "Fix widget"
+                             (org-element-property :raw-value (car matches)))))))))))
+
+(ert-deftest org-agents-test-collect-empty-prefilter-selects-nothing ()
+  "A prefilter that rules out every file selects nothing.
+Handed no files at all, `org-ql-select' searches the current buffer,
+which for an agent is the file the agent itself lives in."
+  (org-agents-test--with-corpus
+    (with-temp-buffer
+      (insert "* TODO Decoy beside the agent\n")
+      (append-to-file (point-min) (point-max) agent-file))
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (let ((agent (plist-put (org-agents--read-agent)
+                              :query '(heading "Decoy"))))
+        (cl-letf (((symbol-function 'org-db-cli-available-p) (lambda () t))
+                  ((symbol-function 'org-db-cli-query-files)
+                   (lambda (_) (list (expand-file-name "elsewhere.org" dir)))))
+          (should (null (org-agents--scope-files agent)))
+          (should (null (org-agents--collect agent))))))))
+
+(ert-deftest org-agents-test-collect-refuses-unapproved-query ()
+  (org-agents-test--in-agent
+    (let ((org-agents--session-approved (make-hash-table :test 'equal))
+          (org-agents-safe-queries nil)
+          (noninteractive t)
+          (agent (org-agents--read-agent)))
+      (setq agent (plist-put agent :query '(and (todo) (shell-command "x"))))
+      (should-error (org-agents--collect agent) :type 'user-error))))
+
+(ert-deftest org-agents-test-collect-honors-limit ()
+  (org-agents-test--in-agent
+    ;; Both entries of a.org carry NEXT_REVIEW; only one of them is a TODO.
+    (let ((agent (plist-put (org-agents--read-agent)
+                            :query '(property "NEXT_REVIEW"))))
+      (should (= 2 (length (org-agents--collect agent))))
+      (should (= 1 (length (org-agents--collect (plist-put agent :limit 1)))))
+      (should (= 2 (length (org-agents--collect (plist-put agent :limit 9)))))
+      (should (null (org-agents--collect (plist-put agent :limit 0)))))))
+
+(ert-deftest org-agents-test-element-sort ()
+  "org-ql sorts elements; a table view sorts rendered rows of strings."
+  (should (eq 'date (org-agents--element-sort 'date)))
+  ;; `reverse' means nothing on its own, so a list of methods passes too.
+  (should (equal '(date reverse) (org-agents--element-sort '(date reverse))))
+  (should (null (org-agents--element-sort nil)))
+  (should (null (org-agents--element-sort '(ts-column 2))))
+  (should (null (org-agents--element-sort '(column 2))))
+  (should (null (org-agents--element-sort 'bogus))))
+
+(ert-deftest org-agents-test-collect-passes-only-element-sorters ()
+  "A sort org-ql does not know would raise an error out of `org-ql-select'."
+  (org-agents-test--in-agent
+    (let ((agent (org-agents--read-agent)))
+      (should (= 1 (length (org-agents--collect (plist-put agent :sort 'date)))))
+      (should (= 1 (length (org-agents--collect
+                            (plist-put agent :sort '(date reverse))))))
+      (should (= 1 (length (org-agents--collect
+                            (plist-put agent :sort '(ts-column 2))))))
+      (should (= 1 (length (org-agents--collect
+                            (plist-put agent :sort 'bogus))))))))
+
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here
