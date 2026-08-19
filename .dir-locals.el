@@ -4,11 +4,11 @@
 ;; Three settings, all of them already `safe-local-variable' so that
 ;; visiting a file here asks nothing:
 ;;
-;;   indent-tabs-mode  The four sources contain no tab character at all.
+;;   indent-tabs-mode  The two sources contain no tab character at all.
 ;;                     Emacs Lisp mode does not set this and the global
 ;;                     default is t, so a re-indented defun is the one
 ;;                     realistic way tabs would arrive.
-;;   fill-column       The commentary in both sources wraps at 72.  M-q
+;;   fill-column       The commentary in org-agents.el wraps at 72.  M-q
 ;;                     inside a docstring uses
 ;;                     `emacs-lisp-docstring-fill-column' (65) instead, so
 ;;                     this cannot produce the >80-column docstring line

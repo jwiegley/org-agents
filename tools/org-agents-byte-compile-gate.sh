@@ -1,9 +1,9 @@
 #!/bin/sh
 # org-agents-byte-compile-gate.sh --- assert a warning-free byte-compile
 #
-# Compiles org-db-cli.el and org-agents.el and fails unless the byte
-# compiler reports ZERO warnings for them.  Run it from anywhere; it finds
-# its own repository root.
+# Compiles org-agents.el and fails unless the byte compiler reports ZERO
+# warnings for it.  Run it from anywhere; it finds its own repository
+# root.
 #
 # The two repo-local dependencies.  org-agents.el requires `org-ql-ext',
 # which requires `org-ext'.  Neither is part of this repository -- both are
@@ -30,9 +30,9 @@
 # temporary directory instead, which is placed FIRST on the load path so
 # that it is the copy `require' finds, and is removed on exit.
 #
-# The two gated files ARE compiled in place, and only the .elc this run
-# creates are removed afterwards.  In a checkout where one of them was
-# already built, it is load-bearing for someone else.
+# The gated file IS compiled in place, and its .elc is removed afterwards
+# only if this run created it.  In a checkout where it was already built,
+# that .elc is load-bearing for someone else.
 #
 # Usage:
 #   tools/org-agents-byte-compile-gate.sh
@@ -56,7 +56,7 @@ deps_dir=${ORG_AGENTS_DEPS_DIR-$(CDPATH= cd -- "$root/.." && pwd)}
 # In order: org-ql-ext requires org-ext, so org-ext must be built first or
 # it is loaded as source while the second is compiled.
 deps='org-ext.el org-ql-ext.el'
-gated='org-db-cli.el org-agents.el'
+gated='org-agents.el'
 
 emacs=${EMACS-}
 if [ -z "$emacs" ]; then

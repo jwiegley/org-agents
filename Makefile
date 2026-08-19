@@ -20,13 +20,7 @@ DEPS_DIR ?= $(realpath $(ROOT)/..)
 
 LOAD     := -L . -L "$(DEPS_DIR)"
 
-# Loaded in this order so that a failure to find a dependency is reported
-# against the small file first.
-LOADTESTS := -l org-db-cli-test.el -l org-agents-test.el
-
-# The regexp that separates the differential suite -- the only tests that
-# need a PostgreSQL database and the org-jw CLI -- from everything else.
-DIFF := org-agents-test-diff
+LOADTESTS := -l org-agents-test.el
 
 # EMACS is exported so that the recipes below and the gate script both see
 # whatever the caller set.  Exporting an undefined make variable exports it
@@ -47,20 +41,14 @@ EMACS_OR_DIE = emacs=$${EMACS:-$$($(FIND_EMACS))}; emacs=$${emacs:-emacs}; \
 	command -v "$$emacs" >/dev/null 2>&1 || \
 	  { echo "no usable Emacs found; run again with EMACS=/path/to/emacs" >&2; exit 1; };
 
-# The four variables the differential suite needs.  Named here so that
-# `make test-db' can say which one is missing instead of skipping silently.
-DIFF_ENV = ORG_AGENTS_TEST_DB_URL ORG_AGENTS_TEST_CONFIG ORG_AGENTS_TEST_KEYWORDS ORG_AGENTS_TEST_ORG_EXE
-
-.PHONY: help test test-fast test-db test-one gate check clean
+.PHONY: help test test-one gate check clean
 
 help:
 	@echo 'org-agents targets (DEPS_DIR=$(DEPS_DIR))'
 	@echo
-	@echo '  make test       both ERT suites; the 20 database tests SKIP'
-	@echo '                  unless their environment is set (see test-db)'
-	@echo '  make test-fast  the same, minus the database suite, which is'
-	@echo '                  then not run even if the environment is set'
-	@echo '  make test-db    ONLY the database suite, and say what is missing'
+	@echo '  make test       the ERT suite.  The soundness tests SKIP'
+	@echo '                  where ripgrep is not on PATH; everything'
+	@echo '                  else, patterns included, always runs'
 	@echo '  make test-one T=REGEXP   the tests whose names match REGEXP'
 	@echo '  make gate       byte-compile, and fail on any warning at all'
 	@echo '  make check      gate, then test'
@@ -71,40 +59,16 @@ help:
 # `ert-run-tests-batch-and-exit' exits nonzero on any unexpected result, so
 # this target is usable as a gate.  A test marked `:expected-result :failed'
 # counts as a pass when it fails, and a skipped test counts as neither.
+#
+# The soundness suite needs ripgrep, and `skip-unless' is honest but
+# silent -- silence is what let the suite this one replaces rot unrun for
+# want of a database.  So say it once, loudly, where ripgrep is missing.
 test:
+	@command -v rg >/dev/null 2>&1 || \
+	  echo "org-agents: no ripgrep on PATH; the soundness tests will SKIP" >&2
 	@cd $(ROOT) || exit 1; $(EMACS_OR_DIE) \
 	  "$$emacs" -batch $(LOAD) $(LOADTESTS) \
 	    --eval '(ert-run-tests-batch-and-exit)'
-
-test-fast:
-	@cd $(ROOT) || exit 1; $(EMACS_OR_DIE) \
-	  "$$emacs" -batch $(LOAD) $(LOADTESTS) \
-	    --eval '(ert-run-tests-batch-and-exit (quote (not "$(DIFF)")))'
-
-# The suite skips itself when its environment is incomplete, which is right
-# for `make test' and unhelpful here: somebody who asked for the database
-# tests wants to know why they did not run.  So this reports the missing
-# variables and then runs the suite anyway, rather than second-guessing it.
-#
-# ORG_AGENTS_TEST_DB_URL must name a SCRATCH database whose name contains
-# "org_agents_test": every run of this suite drops every data table in the
-# database it is pointed at, and the suite refuses any other DSN.
-# ORG_AGENTS_TEST_ORG_EXE must be a `cabal build'-ed org-jw `org' carrying
-# the `file' field in `db query --format json'; the `org' on PATH does not
-# have it, and without it every candidate set comes back empty, which looks
-# exactly like a sound prefilter.  ORG_AGENTS_TEST_ORG_BIN is read as an
-# alternative spelling by the suite, but this check names only the first.
-test-db:
-	@missing=''; for v in $(DIFF_ENV); do \
-	  eval "val=\$$$$v"; [ -n "$$val" ] || missing="$$missing $$v"; \
-	done; \
-	if [ -n "$$missing" ]; then \
-	  echo "org-agents: the differential suite will SKIP; unset:$$missing" >&2; \
-	  echo "org-agents: see the Differential section of org-agents-test.el" >&2; \
-	fi; \
-	cd $(ROOT) || exit 1; $(EMACS_OR_DIE) \
-	  "$$emacs" -batch $(LOAD) -l org-agents-test.el \
-	    --eval '(ert-run-tests-batch-and-exit "$(DIFF)")'
 
 test-one:
 	@test -n "$(T)" || { echo 'usage: make test-one T=REGEXP' >&2; exit 1; }
