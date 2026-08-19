@@ -1,5 +1,13 @@
 # Org Agents: Tinderbox-Style Persistent Queries for Org-mode
 
+> **Superseded in part, 2026-08-19.** The database prefilter (§"The Database
+> Prefilter") and `org-db-cli.el` were removed; ripgrep is the only prefilter,
+> and it is documented in README.md §"The ripgrep prefilter" and in the
+> Commentary and Prefilter sections of `org-agents.el`. Everything else here
+> describes the shipped design. The soundness requirement this document states
+> is unchanged by the removal — only the counterparty it is discharged against
+> is different.
+
 **Status:** Revision 3 — reconciled with the implementation (ten tasks and twelve review rounds of 2026-08-18); reshaped in revision 2 by the seven-pass review (see `2026-08-18-org-agents-design-review.md`)
 **Date:** 2026-08-18
 **Sources pinned at:** dot-emacs `b869cdacc`, org-jw `4047166`, org-ql `20250421.133` (0.9-pre per its manual), Org 9.8.7

@@ -46,10 +46,9 @@
 ;; $FILE reference the entry itself rather than a property.
 ;;
 ;; Evaluation is always performed by org-ql against live buffers, so
-;; there is exactly one evaluation engine and one answer.  The
-;; PostgreSQL database maintained by `org db' serves only as an
-;; optional candidate-file prefilter that makes whole-corpus agents
-;; affordable.
+;; there is exactly one evaluation engine and one answer.  ripgrep
+;; serves only as an optional candidate-FILE prefilter, which is what
+;; makes a whole-corpus agent affordable.
 ;;
 ;; The agent properties:
 ;;
@@ -75,13 +74,15 @@
 ;;   :AGENT_MATCHED: written by this package after an update: how many
 ;;                   entries matched, and when.
 ;;
-;; An Org property value is a single line.  A query too long for one line
-;; cannot be continued onto the next -- and must not be written with a
-;; `:AGENT_QUERY+:' continuation either, because the Haskell parser
-;; behind the database prefilter cannot read a `+' in a property name and
-;; discards the WHOLE drawer it appears in, taking every other property
-;; of that entry with it.  Keep the query on one line, or name a shorter
-;; one and let a residual predicate do the rest.
+;; An Org property value is a single line.  Keep the query on one line,
+;; or name a shorter one and let a residual predicate do the rest.  A
+;; `:AGENT_QUERY+:' continuation is read by `org-entry-get', which joins
+;; the pieces with `org--property-get-separator' -- a space unless
+;; `org-property-separators' says otherwise -- so a query split at a
+;; whitespace boundary does read back correctly.  It is still a bad idea:
+;; split anywhere else and the pieces join into a different sexp, or into
+;; one that will not read at all, and nothing about the drawer says which
+;; happened.
 ;;
 ;; Org reads the value `nil' as no value at all, so `:AGENT_VIEW: nil'
 ;; is an agent with no view rather than an error, and takes the default.
@@ -127,9 +128,9 @@
 ;;   - Its timestamp is inactive, and therefore visible to a query:
 ;;     `(ts-inactive :from ...)' over a corpus holding agents will match
 ;;     the agents themselves.
-;;   - It changes the entry's content, so `org db sync' sees the agent as
-;;     changed on every update: its children are stored again and its
-;;     title re-embedded.
+;;   - It leaves an inactive timestamp in the file, so a version-control
+;;     diff of a saved update shows the stamp even where the render
+;;     itself did not move.
 ;;
 ;; Updating on save:
 ;;
@@ -138,34 +139,43 @@
 ;; lives in: `org-agents-mode' updates a buffer's agents before each save,
 ;; and `global-org-agents-mode' turns it on in every Org buffer whose text
 ;; mentions `:AGENT_QUERY:'.  Three deliberate refusals keep a save cheap.
-;; No save contacts the database at all, whatever the `org-db-cli-*' options
-;; say, because the bridge has no timeout and the prefilter can only narrow
-;; a file set, never change an answer.  An agent whose scope needs that
-;; prefilter is therefore named and left for `org-agents-update'.  And an
+;; No save spawns a prefilter, whatever `org-agents-prefilter' says: a
+;; prefilter can only narrow a file set and never change an answer, so an
+;; agent updated without one matches what it would have matched anyway.  An
+;; agent whose scope needs a prefilter is named and left for
+;; `org-agents-update' -- there is no bound on what one of those would
+;; open, and a save is a keystroke.  And an
 ;; update that renders what was already there puts the buffer back as it
 ;; was, stamps and all -- so a file whose agents found nothing new reaches
 ;; disk byte-identical, which is the one thing that makes writing
 ;; `:AGENT_MATCHED:' on every save affordable.  A C-g during such an update
 ;; aborts the save along with it.
 ;;
-;; Scope, and why a corpus scope needs the database:
+;; Scope, and why an unbounded one is worth narrowing:
 ;;
 ;; `agenda' and an explicit list of files name the files they will open,
-;; and are evaluated live.  `active', `all' and any directory do not:
-;; nothing about naming a directory bounds how much it holds, and reading
-;; one live means opening however many files it turns out to contain.  So
-;; those scopes are resolved through the `org db query' prefilter, and an
-;; agent using one *errors* when no prefilter is available rather than
-;; walking the corpus.  (A file-count ceiling, above which a live walk is
-;; refused and below which it is allowed, is the obvious way to soften
-;; this and is not implemented.)
+;; and are evaluated live -- a prefilter there is pure overhead, measured
+;; at 0.10 to 0.45 seconds of subprocess against an 0.018-second update.
+;; `active', `all' and any directory name nothing: nothing about naming a
+;; directory bounds how much it holds, and reading one live means opening
+;; however many files it turns out to contain.  Measured over a
+;; 3,669-file corpus: a `(and (todo) (property "NEXT_REVIEW"))' agent
+;; narrows to 314 files in 0.09 seconds of ripgrep and finishes in 12
+;; seconds; unnarrowed, the same query had not finished after nine
+;; minutes.  So those scopes are narrowed with ripgrep, and where they
+;; cannot be -- no ripgrep, or a query with nothing to push -- they are
+;; scanned live with one message naming the file count, unless
+;; `org-agents-prefilter' is `require', which refuses instead.  (A
+;; file-count ceiling, above which a live walk is refused and below which
+;; it is allowed, is the obvious way to sharpen this and is not
+;; implemented.)
 ;;
-;; The bridge cannot distinguish "the database failed to answer" from
-;; "the database answered, and no file matches", so an agent over a
-;; corpus scope whose query genuinely matches nothing reports a missing
-;; prefilter.  A needless error, never a wrong answer.
+;; ripgrep answers "no file matches" and "I could not answer" with
+;; different exit statuses, so an agent over a corpus scope whose query
+;; genuinely matches nothing renders zero matches rather than reporting a
+;; broken prefilter.
 ;;
-;; Only conjuncts whose database answer is provably a superset of org-ql's
+;; Only conjuncts whose ripgrep answer is provably a superset of org-ql's
 ;; are pushed into the prefilter; everything else stays residual and is
 ;; applied by org-ql.  A broad `org-use-property-inheritance' -- `t' most
 ;; of all -- makes no property conjunct pushable, so a property-only
@@ -175,19 +185,15 @@
 ;;
 ;; Known limitations:
 ;;
-;;   - A relative date in a planning bound -- `today', or an integer day
-;;     offset -- is resolved to an absolute local date when the query is
-;;     pushed, rather than sent for the database to resolve.  The database
-;;     would resolve it against the UTC day and org-ql against the local
-;;     one, so naming the day is what keeps the two from disagreeing.  A
-;;     skeleton therefore always carries a `"YYYY-MM-DD"', whatever the
-;;     agent wrote.  One consequence worth knowing: the day is fixed when
-;;     the query is built, so an update running across local midnight uses
-;;     the day it started on.
-;;   - An entry whose only value for a property comes from `:NAME+:'
-;;     accumulation has no property rows in the database at all, so a
-;;     `property' conjunct over such a name may drop it from the
-;;     candidate set.
+;;   - A literal is pushed only when every character in it is printable
+;;     ASCII.  ripgrep decodes as UTF-8 while Emacs may decode an Org
+;;     file as latin-1, so a non-ASCII literal is a pattern that could
+;;     match less than org-ql does -- and `--encoding' is one global
+;;     setting, which a mixed corpus cannot use.  Such a conjunct is left
+;;     residual, which costs breadth and never an answer.
+;;   - A planning bound is never pushed, only the presence of the stamp:
+;;     ripgrep cannot compare dates.  org-ql applies the bound, so this
+;;     costs candidate files and no matches.
 ;;   - One agent may carry several blocks, each its own view of it, but an
 ;;     update that was not asked for from inside a particular one writes
 ;;     only the FIRST: `org-agents-update' with point outside a block, and
@@ -197,20 +203,18 @@
 ;;     every block in the buffer.
 ;;
 ;; Each is covered by a test in org-agents-test.el rather than only
-;; described here: the first two in the differential section, where the
-;; `:NAME+:' one is an expected failure that records the org-jw parser
-;; defect behind it, and the third beside the other update commands.
+;; described here: the first two in the Prefilter section, beside the
+;; soundness suite, and the third beside the other update commands.
 ;;
-;; This file and org-db-cli.el are kept warning-free under the byte
-;; compiler, and tools/org-agents-byte-compile-gate.sh is what says so: it
-;; builds the two repo-local dependencies first, because a checkout with no
-;; .elc loads them as source and reports their own `(require 'cl)' against
-;; the require lines here, then compiles these two and fails on any warning
-;; at all.
+;; This file is kept warning-free under the byte compiler, and
+;; tools/org-agents-byte-compile-gate.sh is what says so: it builds the two
+;; repo-local dependencies first, because a checkout with no .elc loads
+;; them as source and reports their own `(require 'cl)' against the require
+;; lines here, then compiles this one and fails on any warning at all.
 ;;
-;; See docs/superpowers/specs/2026-08-18-org-agents-design.md for the
-;; full design, including the evaluation gate, the push-down table with
-;; the divergence evidence for each row, and the renderers.
+;; See docs/design.md for the full design, including the evaluation gate,
+;; the push-down table with the soundness argument for each row, and the
+;; renderers.
 
 ;;; Code:
 

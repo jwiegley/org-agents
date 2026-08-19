@@ -7,9 +7,14 @@ docstring or a design note: everything was read out of the shipped source or
 measured by running it, and where a previously believed fact turned out to be
 wrong the correction is recorded rather than the belief.
 
+> **§5 is historical, 2026-08-19.** It records the org-jw CLI, parser and
+> PostgreSQL database, which this package no longer uses: ripgrep replaced them
+> as the candidate-file prefilter. §§1-4 and §6 remain current except where a
+> note below says otherwise.
+
 Read this before changing the splitter, the gate, the dynamic-block writer, or
-anything that talks to the database. Several entries exist because a plausible
-assumption was made first and cost a rewrite.
+the prefilter. Several entries exist because a plausible assumption was made
+first and cost a rewrite.
 
 ## Measurement baseline
 
@@ -555,16 +560,16 @@ already the idiom two calls away.
 
 ## 6. What is NOT established
 
-**N1. The superset property has never been evaluated against a database.** The
-20 differential tests in `org-agents-test.el` are designed, wired and
-self-verifying — they fail loudly on a mis-set DSN rather than skipping — but
-they have never run, because no PostgreSQL was reachable during development.
-Every green number in this project measures the Emacs half. Running that suite
-once against a scratch database is the highest-value unfinished action: both
-divergences the final review found (D3, D4) live exactly in the
-`--push-planning` ↔ `parseDateFilter` interaction, where neither side had a test,
-and `Query.hs` (889 lines) still has none of its own. Requirements and one-time
-setup are documented at `org-agents-test.el:2545-2591`.
+**N1. RESOLVED 2026-08-19, by removing the second engine.** This entry used to
+read: "The superset property has never been evaluated against a database" — 20
+differential tests designed, wired, self-verifying, and never once run, because
+no PostgreSQL was reachable during development. The prefilter is now ripgrep,
+so the property is provable in a plain `make test`: the same fixture corpus is
+handed to org-ql and to the prefilter in one Emacs, and the candidate set is
+asserted to cover org-ql's own answer. Twenty such tests exist and run, each
+naming the fixture file it loses under the mutation it guards against, and
+every one of those mutations was applied and watched to fail. What replaced the
+unproven argument is not a better argument; it is a suite that executes.
 
 **N2. `set-window-buffer` signalling on the minibuffer window is not
 reproducible.** `org-agents--update-dblock-in-window`'s docstring asserts it.
@@ -576,11 +581,15 @@ minibuffer. The guard is harmless and may well be right while a minibuffer is
 *active* — which batch cannot exercise — but treat the stated mechanism as
 unverified rather than as a fact to build on.
 
-**N3. D6's drawer collapse is verified in the parser source and in this
-project's fixture corpus (which the real Haskell parser read with no parse
-error), but its database consequence — zero `entry_properties` rows for the
-whole drawer — is inferred from D6 plus the store path, not observed in a
-database.** It is the subject of the one expected-failure test in the suite.
+**N3. MOOT 2026-08-19.** D6's drawer collapse was a defect in the org-jw
+parser, which this package no longer reads through, and the expected-failure
+test that recorded it is gone. What followed the old limitation through and
+survives it is a requirement on the NEW backend, now discharged: a
+line-oriented prefilter must admit the `:NAME+:` spelling, because
+`org-entry-get` answers from a `:NAME+:` line with no plain `:NAME:` line above
+it. The pattern is `^[ \t]*:NAME\+?:` and
+`org-agents-test-rg-covers-an-accumulated-property-name` is what says so — an
+ordinary passing test where there used to be an expected failure.
 
 **N4. `.elc` tracking (E6) was established from `.gitignore` only**, because no
 `git` command was run while writing this. A `git ls-files 'lisp/*.elc'` would

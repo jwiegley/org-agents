@@ -1,49 +1,21 @@
 #+title: org-agents: init.org snippet
 #+startup: showall
 
-Two =use-package= blocks, written in the style of the surrounding Org
-extensions in =~/org/init.org=, plus a first agent to try them on.
+One =use-package= block, written in the style of the surrounding Org
+extensions in =~/org/init.org=, plus a first agent to try it on.
 
-*Where they go.* Under =*** org-ql= (line 11513 today), immediately after
-=**** org-ql-semantic= (which ends at line 11592), as two more level-four
-siblings. That is the right neighbourhood on both counts: =org-agents=
-requires =org-ql= and =org-ql-ext= (its =property-ts= predicate is the one the
-examples below lean on), and =org-db-cli= talks to the very same PostgreSQL
-database =org-ql-semantic= does, by the very same =lookup-password= mechanism.
+*Where it goes.* Under =*** org-ql= (line 11513 today), immediately after
+=**** org-ql-semantic= (which ends at line 11592), as one more level-four
+sibling. That is the right neighbourhood: =org-agents= requires =org-ql= and
+=org-ql-ext=, whose =property-ts= predicate is the one the examples below
+lean on.
 
-* Paste-ready blocks
+There is nothing else to configure. The candidate-file prefilter is
+ripgrep, which needs no DSN, no config file and no credential: it is found
+on =exec-path= or it is not, and where it is not an unbounded scope is
+scanned live with one message saying so.
 
-**** org-db-cli
-
-The bridge to =org db= from my =org-jw= project. =org-agents= uses it for one
-thing only: asking the database which /files/ can possibly hold a match, so
-that a whole-corpus agent need not open the whole corpus. Every match is
-still decided by org-ql in Emacs, so the database can never change an
-answer — only the number of buffers it took to reach it.
-
-#+begin_src emacs-lisp
-(use-package org-db-cli
-  :after org
-  :custom
-  (org-db-cli-executable "org")
-  ;; Until the `file' field lands in the Nix build, the patched CLI is the
-  ;; one built in the worktree (`executable-find' does expand the tilde):
-  ;; (org-db-cli-executable
-  ;;  "~/src/org-jw/.worktrees/org-db-query-file-json/dist-newstyle/build/aarch64-osx/ghc-9.10.3/org-jw-0.0.1/x/org/build/org/org")
-  (org-db-cli-config-file "~/org/org.yaml")
-  ;; A relative `file' field resolves against `org-directory' when this is
-  ;; nil, which is what the files table holds for anything under ~/org.
-  ;; Set it only if the database was synced from somewhere else.
-  ;; (org-db-cli-files-directory "~/org/")
-  :config
-  ;; `setq' in `:config', not `:custom': a `:custom' form is evaluated as
-  ;; init.org loads, and this one reaches auth-source.  The block is
-  ;; deferred, so the lookup happens when org-agents first requires the
-  ;; feature.  Same database, same mechanism as `org-ql-semantic-db-url'.
-  (setq org-db-cli-db-url
-        (format "postgresql://johnw:%s@postgres.vulcan.lan:5432/org"
-                (lookup-password "postgres.vulcan.lan" "johnw" 5432))))
-#+end_src
+* Paste-ready block
 
 **** org-agents
 
@@ -96,10 +68,10 @@ to the position it appears in.
 =org-agents-mode= updates a buffer's agents in =before-save-hook=, so an agent
 is refreshed by the act of saving the file it lives in. A save whose render
 changes nothing writes no bytes — old =AGENT_MATCHED= stamps and all — and a
-save never contacts the database whatever =org-db-cli-*= says, so it cannot
-block on =postgres.vulcan.lan= being unreachable. Agents whose scope is
-=active=, =all= or a directory are named once and skipped, since those are the
-scopes that do need the database; =C-c n u= still refreshes them on demand.
+save spawns no subprocess whatever =org-agents-prefilter= says. Agents whose
+scope is =active=, =all= or a directory are named once and skipped: there is
+no bound on what one of those would open, and a save is a keystroke. =C-c n
+u= still refreshes them on demand.
 
 *The lazy way, and the one to prefer here.* Arm just the files that hold
 agents, with a file-local minor mode on the first line. Emacs appends the
@@ -148,7 +120,7 @@ updates the block at point.
 Put this in =~/org/agents.org= (which the =:custom= above registers), then
 update it with =C-c C-x Q=. It uses the default =children= view and the default
 =agenda= scope, so it searches the nine files in =org-agenda-files= and needs
-nothing from the database:
+no prefilter at all:
 
 #+begin_example
 * Reviews that have come due
@@ -205,22 +177,3 @@ table-only — a =children= or =list= view says so rather than sorting nothing.
 Written inside an agent entry instead, a block's parameters override that
 entry's =AGENT_*= properties name by name, so one agent can carry several
 views of itself.
-
-* Prerequisite: the patched =org= CLI
-
-The prefilter needs the =file= field that =db query --format json= only emits
-after the one-field org-jw patch (=Org.DB.Render.entryRowJson=); the =org= on
-PATH today has =--format json= but no =file=. Two consequences worth knowing:
-
-- Without the patch, =agenda=-scoped agents work exactly as shown above: the
-  bridge returns no candidates and evaluation falls back to the scope's own
-  files, live. Corpus scopes (=active=, =all=, a bare directory) refuse to run
-  rather than open thousands of buffers, with an error naming which half is
-  missing.
-- An /unpatched/ CLI still counts as available, so each such agent pays one
-  wasted round trip. To avoid even that until the patch is installed, leave
-  =org-db-cli-config-file= at =nil= (commented out) — =org-db-cli-available-p=
-  then reports the bridge as unconfigured and it is never called.
-
-Once the patch is in the Nix build, nothing changes but the speed: same
-query, same answer, fewer buffers opened to reach it.

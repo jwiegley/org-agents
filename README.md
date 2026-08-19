@@ -10,22 +10,15 @@ plain list, or as a table. Queries are [org-ql](https://github.com/alphapapa/org
 S-expressions with a compact `$PROP` property-reference layer on top.
 
 Evaluation is *always* org-ql, against live buffers. There is exactly one
-evaluation engine and therefore exactly one answer. The PostgreSQL
-database maintained by the `org db` CLI of
-[org-jw](https://github.com/jwiegley/org-jw) is an optional
+evaluation engine and therefore exactly one answer.
+[ripgrep](https://github.com/BurntSushi/ripgrep) is an optional
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-Two files make up the package:
-
-| File | What it is |
-| --- | --- |
-| `org-agents.el` | the package (~2000 lines) |
-| `org-db-cli.el` | the bridge to the `org db` CLI (~160 lines) |
-
-and two more test it: `org-agents-test.el` and `org-db-cli-test.el`, 176
-ERT tests between them. 20 of those need a database; see
-[Honest limitations](#honest-limitations) before you trust them.
+One file makes up the package, `org-agents.el` (~2,500 lines), and one
+tests it, `org-agents-test.el` — 193 ERT tests, all of which run in a
+plain `make test` with no external service. Those that exercise the
+prefilter end to end need `rg` on `PATH` and say so when it is missing.
 
 ## A worked example
 
@@ -43,7 +36,7 @@ Put this in a file, with point on the heading, and press whatever you bound
 ```
 
 It uses the default `children` view and the default `agenda` scope, so it
-searches `org-agenda-files` and needs nothing from the database. Afterwards
+searches `org-agenda-files` and needs no prefilter at all. Afterwards
 the entry has grown one child per match, and a status line of its own:
 
 ```org
@@ -98,10 +91,14 @@ from org-ql predicates, combinators and `$` references runs unremarked;
 anything else asks once, and remembers the answer by SHA-1 hash in
 `org-agents-safe-queries`.
 
-An Org property value is one line, and a query cannot be continued onto the
-next. Do **not** write `:AGENT_QUERY+:`: see limitation 2 below for what the
-`+` does. Keep the query on one line, or name a shorter one and let a
-residual predicate do the rest.
+An Org property value is one line. Keep the query on one line, or name a
+shorter one and let a residual predicate do the rest. A `:AGENT_QUERY+:`
+continuation *is* read — `org-entry-get` joins the pieces with
+`org--property-get-separator`, a space unless `org-property-separators`
+says otherwise — so a query split at a whitespace boundary reads back
+correctly. It is still a bad idea: split anywhere else and the pieces join
+into a different sexp, or into one that will not read at all, and nothing
+about the drawer says which happened.
 
 ## The property vocabulary
 
@@ -191,28 +188,23 @@ visit, agent or no agent.
 Three things are deliberately not done, and together they are what make the
 mode usable rather than a tax on saving.
 
-**A save never contacts the database, whatever `org-db-cli-*` is set to.**
-This needs saying separately from the rule below, because filtering on *scope*
-does not achieve it: `org-agents--scope-files` consults the bridge for any
-query with a pushable conjunct regardless of scope, and `org-db-cli--run` is a
-synchronous `call-process` with no timeout. So a plain `agenda` agent carrying
-a `(property "P")` conjunct would otherwise have every `C-x C-s` spawn a
-subprocess and block Emacs on whatever host the DSN names — commonly a remote
-one — for as long as TCP takes to give up. The save path therefore runs with
-the bridge bound unavailable. Nothing is lost by it: the prefilter only ever
-narrows the candidate file set and never changes an answer, so a surviving
-agent matches exactly what it would have matched, having opened more of its own
-named files to find out. The manual commands keep the prefilter, which is where
-waiting for it is something you chose to wait for.
+**A save spawns no prefilter, whatever `org-agents-prefilter` is set to.**
+`org-agents--scope-files` already declines one for every scope a save
+updates — `agenda` and an explicit file list name their files — so the
+binding on the save path is a belt rather than the rule. It is worth
+wearing: it makes "a save spawns no subprocess" a property of
+`org-agents--update-on-save` rather than something a reader has to derive
+from a rule stated two sections away. Nothing is lost by it, because the
+prefilter only ever narrows the candidate file set and never changes an
+answer. The manual commands keep it, which is where waiting for it is
+something you chose to wait for.
 
-**An agent whose scope needs the database prefilter is not updated on save.**
-`active`, `all` and a directory have no bound on what they would open, and are
-resolved through `org db query` rather than walked live. Updating one on save
-would mean waiting on the database — and, with the bridge bound unavailable as
-above, would simply fail. So those agents are dropped before the update and
-named once in the echo area, one message however many there are.
-`org-agents-update` still refreshes any of them on demand. There is no option
-to override this.
+**An agent whose scope needs a prefilter is not updated on save.**
+`active`, `all` and a directory have no bound on what they would open, and
+an update of one is work a keystroke should not be doing. So those agents
+are dropped before the update and named once in the echo area, one message
+however many there are. `org-agents-update` still refreshes any of them on
+demand. There is no option to override this.
 
 **A save whose render changes nothing changes no bytes.** `:AGENT_MATCHED:`
 records when an update ran, so stamping it on every save would rewrite the
@@ -246,12 +238,15 @@ holds an agent, and each of their saves then pays for the scan that finds none.
 * Emacs 29.1
 * [org-ql](https://github.com/alphapapa/org-ql) 0.8 — `org-ql` and
   `org-ql-search`, both of which ship together
-* [ts](https://github.com/alphapapa/ts.el) 0.2 — used directly, by
-  `org-agents--absolute-date`, so that a relative date is resolved with the
-  same `ts-adjust` org-ql resolves one with and the two cannot drift apart
 * Org itself, which is bundled. The package was developed against Org
   9.8.7; no lower bound has been established by testing, and none is
   declared.
+* [ripgrep](https://github.com/BurntSushi/ripgrep) 13 or later, and only
+  for the prefilter. Without it, `agenda` and file-list scopes work
+  exactly as they do with it, and an unbounded scope is scanned live with
+  one message saying so. The argument vector was verified against 15.2.0
+  and no other version; 13 is a round, safely old floor, named because the
+  prefilter passes `--crlf`.
 
 ### The two repo-local dependencies
 
@@ -281,21 +276,6 @@ Both files must be on `load-path`. Then, in the style of the surrounding
 Org extensions in the author's init:
 
 ```elisp
-(use-package org-db-cli
-  :after org
-  :custom
-  (org-db-cli-executable "org")
-  (org-db-cli-config-file "~/org/org.yaml")
-  ;; A relative `file' field resolves against `org-directory' when this is
-  ;; nil, which is what the files table holds for anything under ~/org.
-  ;; (org-db-cli-files-directory "~/org/")
-  :config
-  ;; `setq' in `:config', not `:custom': a `:custom' form is evaluated as
-  ;; init loads, and this one reaches auth-source.
-  (setq org-db-cli-db-url
-        (format "postgresql://USER:%s@HOST:5432/org"
-                (lookup-password "HOST" "USER" 5432))))
-
 (use-package org-agents
   :after (org-ql-ext)
   :commands (org-agents-update
@@ -314,10 +294,9 @@ Org extensions in the author's init:
   (org-agents-files '("~/org/agents.org")))
 ```
 
-The `org-db-cli` block is optional. Leave `org-db-cli-config-file` at `nil`
-and the bridge reports itself unconfigured and is never called; agents whose
-scope is `agenda` or an explicit file list go on working exactly as they do
-with it.
+Nothing else is needed. `org-agents-prefilter` defaults to `auto`, which
+uses `rg` from `exec-path` where it is found and scans live where it is
+not.
 
 ## Running the tests
 
@@ -327,47 +306,27 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # both suites: 176 tests, of which 20 skip (see below)
-make test-fast   # the same, minus the database suite, which is then not
-                 # run even if its environment is set
-make test-db     # ONLY the database suite, saying which variables are unset
+make test        # 193 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `176 tests, 156 results as expected, 0 unexpected, 20
-skipped` on a machine with no test database configured. That is the expected
-result, and the 20 skips are the subject of the first limitation below.
-
-The differential suite runs only when all four of these are set:
-
-| Variable | What it must be |
-| --- | --- |
-| `ORG_AGENTS_TEST_DB_URL` | DSN of a **scratch** database. Every run drops every data table in it, so the suite refuses any DSN whose name does not contain `org_agents_test`. |
-| `ORG_AGENTS_TEST_CONFIG` | org-jw YAML config, e.g. `~/org/org.yaml` |
-| `ORG_AGENTS_TEST_KEYWORDS` | keywords DOT file, e.g. `~/org/org.dot`. Required: the YAML declares empty keyword lists, so without it every entry stores with `keyword_value` NULL and `TODO` glued onto the front of its title. |
-| `ORG_AGENTS_TEST_ORG_EXE` | a `cabal build`-ed org-jw `org` carrying the `file` field in `db query --format json`. The `org` on PATH does **not** have it, and without the field every candidate set comes back empty — which looks exactly like a sound but narrow prefilter. `ORG_AGENTS_TEST_ORG_BIN` is read as an alternative spelling. |
-
-One-time operator setup, and the reason it is not automated: `db init`
-creates the two extensions best-effort, but they need a superuser.
-
-```sh
-createdb org_agents_test
-psql -d org_agents_test -c 'CREATE EXTENSION IF NOT EXISTS ltree;
-                            CREATE EXTENSION IF NOT EXISTS vector'
-```
-
-Absent, the whole section skips silently. Present but unusable, it fails
-loudly — a mis-set DSN that quietly disabled the suite would be worse than a
-red test.
+`make test` reports `193 tests, 193 results as expected, 0 unexpected` and
+takes about fifteen seconds. There is nothing to configure and nothing to
+set up. Where `rg` is not on `PATH`, `make test` prints one line saying so
+and the twenty soundness tests skip — `skip-unless` is honest but silent,
+and silence is precisely what let this suite's predecessor report green for
+months while proving nothing. The fourteen pattern, argument-vector and
+exit-status tests never skip: that is where every under-match measured
+while the prefilter was designed originates.
 
 ## The byte-compile gate
 
-`org-agents.el` and `org-db-cli.el` are kept warning-free under the byte
-compiler, and `tools/org-agents-byte-compile-gate.sh` is what says so. It
-compiles the two files and exits nonzero on any warning at all, including a
-docstring line over 80 columns.
+`org-agents.el` is kept warning-free under the byte compiler, and
+`tools/org-agents-byte-compile-gate.sh` is what says so. It compiles the
+file and exits nonzero on any warning at all, including a docstring line
+over 80 columns.
 
 It builds the two repo-local dependencies first, into a temporary directory
 placed ahead of everything on `load-path`. That is not tidiness: where no
@@ -383,96 +342,89 @@ is somebody else's live Emacs configuration.
 A full run takes about two and a half minutes, nearly all of it
 `org-agents.el`.
 
-## The database prefilter
+## The ripgrep prefilter
 
-`org-db-cli-query-files SKELETON` shells out to
+**The prefilter can only narrow which files org-ql then verifies. It can
+never change an answer.** Every match is still decided by org-ql, in Emacs,
+against the live buffer. What ripgrep produces is a set of candidate files,
+which is intersected with the files the agent's scope names so that org-ql
+opens fewer buffers.
 
-```
-org --config CFG db --db-url URL query --ql SKELETON --format json
-```
+Only a conjunct whose ripgrep answer is *provably a superset* of org-ql's is
+pushed; everything else stays residual and is applied by org-ql. Five
+shapes push today:
 
-and returns a sorted list of distinct absolute files, or `nil` — plus a
-message — on any failure. It never signals. (A `quit` from `C-g` during a
-synchronous run still escapes, as it must.)
+| Conjunct | Pattern | Why it is a superset |
+| --- | --- | --- |
+| `(property "P")` | `^[ \t]*:P\+?:` | A non-nil `org-entry-get` with `inherit` nil needs a drawer line matching `org-property-re` whose key upcases to `P` or `P+`. The `\+?` is required: an entry whose only line is `:P+: v` answers `"v"`. |
+| `(property "P" "v")` | `^[ \t]*:P\+?:[ \t]+v[ \t]*$` | `org-entry-get` joins `:P:` and each `:P+:` with `org--property-get-separator`, so a value that does not contain that separator came from exactly one line. A value that does — or an empty one, or an empty separator — downgrades to the existence pattern above. |
+| `(property-ts "P" …)` | as existence | A date match on the value implies the property is there. |
+| `scheduled` / `deadline` / `closed` | `SCHEDULED:[ \t]*<`, `DEADLINE:[ \t]*<`, `CLOSED:[ \t]*\[` | Every branch of `org-ql--predicate-ts` begins with a search for the keyword and the bracket, so org-ql cannot match without that text. Bounds are dropped, which drops a *conjunct* of org-ql's condition and never adds one. Deliberately unanchored: all three keywords may share one planning line, in any order. |
+| `(heading "lit" …)` | `^\*+(?-u:.)*lit`, one per literal, intersected | `org-get-heading t t` returns a verbatim substring of the raw heading line, except across the priority-cookie junction, and every substring spanning that holds a `]` which the literal guard already refuses. `(?-u:.)` rather than `.` because in ripgrep's Unicode mode `.` matches a codepoint and cannot cross an invalid UTF-8 byte. |
 
-What that list is used for, and the whole of it: intersecting it with the
-files the agent's scope names, so that org-ql opens fewer buffers. **The
-prefilter can only narrow which files org-ql then verifies. It can never
-change an answer.** Every match is still decided by org-ql, in Emacs,
-against the live buffer.
+`todo`, `tags`, `regexp`, `ts`, `category`, `priority`, `level` and `path`
+are all residual, and so is every conjunct under `or` or `not` and every
+nested query — by omission, which widens. A literal is pushed only when
+every character in it is printable ASCII: ripgrep decodes as UTF-8 while
+Emacs may decode a file as latin-1, and `--encoding` is one global setting
+that a mixed corpus cannot use.
 
-Only a conjunct whose database answer is *provably a superset* of org-ql's
-is pushed into the skeleton; everything else stays residual and is applied by
-org-ql. Six shapes push today: `(property "P")`, `(property "P" "v")` (as
-equality where the value has no whitespace, downgraded to existence where it
-does), `(property-ts $P …)` as existence, the three planning predicates
-`scheduled` / `deadline` / `closed`, and `(heading "literal")` where the
-string holds no regexp metacharacter. `todo`, `tags`, `regexp`, `ts`,
-`category`, `priority`, `level` and `path` are all residual, each for a
-divergence recorded in the design document.
-
-Two consequences worth knowing before you rely on it:
+Three consequences worth knowing before you rely on it:
 
 * A broad `org-use-property-inheritance` — `t` most of all — makes no
   property conjunct pushable, so a property-only agent falls back to its
   scope's whole file set. Still correct, and much slower. The prefilter's
   value depends on keeping inheritance narrow.
 * The scopes `active`, `all` and any directory do not name the files they
-  will open, and an agent using one **errors** when no prefilter is
-  available rather than walking the corpus. Since the bridge cannot
-  distinguish "the database failed to answer" from "the database answered,
-  and no file matches", such an agent whose query genuinely matches nothing
-  reports a missing prefilter. A needless error, never a wrong answer.
+  will open. Where one cannot be narrowed — no ripgrep, a query with
+  nothing to push, or `org-agents-prefilter` nil — it is scanned live and
+  one message says so, naming the file count. Set `org-agents-prefilter` to
+  `require` to be refused instead.
+* An over-match is a cost, not a fault. A `:P: v` line in ordinary body
+  prose, in no drawer, puts its file in the candidate set; org-ql then does
+  not match it, and the agent renders nothing for it.
 
-Staleness, stated plainly: a file whose contents changed since the last `org
-db sync` is still verified live if it is in the candidate set, but a file
-that *newly* satisfies a pushed conjunct since the last sync is missed until
-the next one. Freshness is your own `org db sync` cadence; this package does
-not wrap it.
+What this measures, on the author's 3,669-file corpus, for
+`(and (todo) (property "NEXT_REVIEW"))` over scope `all`:
+
+| | |
+| --- | --- |
+| `directory-files-recursively` over the corpus | 0.27 s, 3,669 files |
+| one ripgrep run | 0.09 s, 314 files |
+| the whole of `org-agents--scope-files` | 0.73 s |
+| org-ql over those 314 files | 12.1 s, 764 matches, 320 buffers |
+| org-ql over all 3,669 files, same query | did not finish in nine minutes |
+
+There is no staleness window. ripgrep reads the bytes on disk as they are
+now, so a file that *newly* satisfies a pushed conjunct is in the candidate
+set immediately. There is nothing to sync and no cadence to keep.
 
 ## Honest limitations
 
-### 1. The superset property is designed and self-checking, but unproven
+### 1. An accumulated property value is compared by existence, not by value
 
-The 20 tests of the differential suite exist to prove the one property the
-prefilter must have: for every row of the push-down table, the candidate
-file set the database answers with is a superset of the files org-ql
-actually matches. No unit test over a skeleton string can establish that;
-only running both engines over one corpus can.
+`org-entry-get` joins `:TOKENS: alpha` and `:TOKENS+: beta` into
+`"alpha beta"`, a string that appears on **no single line of the file**. No
+line-oriented matcher can find it, ripgrep included. So a `(property "P"
+"v")` conjunct whose value could have been assembled that way — one that
+contains `org--property-get-separator` for `P`, or where that separator is
+empty — is downgraded to the existence pattern, which is wider and
+therefore sound.
 
-**Those 20 tests have never been executed against a live database.** They
-are written, wired, gated, and self-checking — the suite refuses a
-non-scratch DSN, checks the CLI's symbol table for the `file`-field patch,
-and asserts both sides non-empty so that a fixture which quietly stopped
-matching cannot make the relation hold for want of anything to relate — and
-they have not run. `make test` skips all 20 and reports green. That green
-says nothing whatever about the superset property.
+This is a deliberate widening rather than a bug, and the widening is what
+makes it safe. The rule is stated in terms of the separator and not of
+whitespace, because they only coincide by default: with
+`org-property-separators` set to `(("P") . "/")`, `:P: al` plus `:P+: pha`
+answers `"al/pha"` — no whitespace in it, and no line in the file spelling
+it. `org-agents-test-rg-downgrades-a-value-it-cannot-see-on-one-line`
+pins that case.
 
-Until they run, treat the push-down table as a careful argument rather than
-as a verified one.
+The `(property "P")` direction, by contrast, is now exact: the pattern
+admits the `:P+:` spelling, so an entry whose only line is `:P+: beta` is
+in the candidate set. Under the database this package used to prefilter
+with, it was not — that was a recorded expected failure.
 
-### 2. A `:PROP+:` continuation line silently costs the whole drawer
-
-`FlatParse.Combinators.identifier` in org-jw accepts alphanumerics, `_` and
-space, and no `+`. So `:TOKENS+: beta` cannot be read as a property line,
-`parseProperties` fails for the drawer, and the drawer degrades to a plain
-body block. `entry_properties` then gets **no row at all** — not for
-`TOKENS+`, and not for the perfectly ordinary `:TOKENS: alpha` line above
-it.
-
-Consequence: `org-entry-get` joins the two lines into `"alpha beta"` and
-org-ql matches, while a pushed `(property "TOKENS")` answers with no file.
-The prefilter drops a true match, and nothing says so. The fix belongs in
-org-jw, in `identifier` and in the accumulation semantics `Store.hs` would
-then need.
-
-This is recorded as a deliberately failing test,
-`org-agents-test-diff-accumulated-property-breaks-superset`, marked
-`:expected-result :failed`. Note what that costs: because it is DB-gated it
-currently skips, and because it is marked expected-failure it will not turn
-the suite red even once it runs. It is a record, not an alarm.
-
-### 3. A buffer-wide update refreshes only an agent's first dynamic block
+### 2. A buffer-wide update refreshes only an agent's first dynamic block
 
 One agent may carry several blocks, each its own view of it. An update that
 was not asked for from inside a particular block writes only the **first**:
@@ -481,7 +433,7 @@ was not asked for from inside a particular block writes only the **first**:
 leave the rest as they were. Put point in a block to write that block, or
 use `org-update-all-dblocks` to write every block in the buffer.
 
-### 4. Deleting a pristine alias discards what you added to its drawer
+### 3. Deleting a pristine alias discards what you added to its drawer
 
 An alias holding nothing but `:AGENT_MATCH: t` is *pristine* and belongs to
 the package: every update deletes it and writes it again. Because it is
@@ -500,23 +452,25 @@ kept along with it.
 * Two matches with no ID and identical headings in one file share one
   `file:...::*` target, so one alias may stand for both while
   `AGENT_MATCHED` counts two. Give them IDs to tell them apart.
-* A relative date in a planning bound is resolved to an absolute local date
-  when the query is pushed, so a skeleton always carries a `"YYYY-MM-DD"`
-  whatever the agent wrote. The day is fixed when the query is built, so an
-  update running across local midnight uses the day it started on.
-* Writing `AGENT_MATCHED` changes the entry's content, so `org db sync` sees
-  every agent as changed on every update: its children are stored again and
-  its title re-embedded.
-* There is no file-count ceiling under which an unbounded scope could be
-  walked live rather than refused. That is the obvious way to soften the
-  corpus-scope error and it is not implemented.
+* A planning bound is never pushed, only the presence of the stamp:
+  ripgrep cannot compare dates. org-ql applies the bound, so this costs
+  candidate files and never a match. It is also strictly better than what
+  it replaces, where `(deadline 7)` and `(deadline auto)` pushed nothing at
+  all.
+* A non-ASCII literal is not pushed, for the encoding reason above. A
+  `(heading "Café")` agent over a corpus scope therefore narrows by its
+  other conjuncts only, or not at all.
+* There is no file-count ceiling under which an unbounded scope would be
+  walked live without a prefilter even being attempted. With
+  `org-agents-prefilter` at its `auto` default the live walk is what
+  happens anyway, so this matters only under `require`.
 
 ## License
 
 Free software. `org-agents.el` carries a GNU General Public License notice —
 version 2 or later — and names John Wiegley as the copyright holder.
 
-Three of the four sources are less tidy than that: `org-db-cli.el`,
-`org-agents-test.el` and `org-db-cli-test.el` carry no copyright or license
-notice at all. Extracting this package into a repository of its own is the
-moment to settle it, and this README does not pretend it is settled.
+The other source is less tidy than that: `org-agents-test.el` carries no
+copyright or license notice at all. Extracting this package into a
+repository of its own is the moment to settle it, and this README does not
+pretend it is settled.

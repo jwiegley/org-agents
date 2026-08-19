@@ -1,5 +1,12 @@
 # org-agents Design — Consolidated Heavy-Review Report
 
+> **Historical, 2026-08-18.** Findings C1 and C4 concern the org-jw `org db`
+> prefilter, which was removed on 2026-08-19. C1's superset requirement
+> survives the removal and is now discharged against ripgrep, by the
+> `org-agents-test-rg-covers-*` tests. C1 is kept exactly as written: it was
+> discovered by measuring one engine against another, and that measurement is
+> what makes the requirement credible rather than decorative.
+
 **Date:** 2026-08-18
 **Scope:** frozen snapshot of `docs/superpowers/specs/2026-08-18-org-agents-design.md` (225 lines) at dot-emacs `b869cdacc`, org-jw `4047166`
 **Process:** seven concurrent, independent, read-only passes, each in a no-history subagent (isolation proven by sentinel probe, verified with `verify-history-isolation.py`). 119 raw findings, deduplicated below. Line numbers cite the snapshot, which is identical to the canonical spec at review time.

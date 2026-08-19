@@ -1,5 +1,11 @@
 # org-agents Implementation Plan
 
+> **Historical, 2026-08-18.** Task 1 (the org-jw `file` field), Task 2
+> (`org-db-cli.el`) and Task 10's differential suite describe work that was
+> removed on 2026-08-19, when ripgrep replaced the database prefilter. Tasks
+> 3-9 describe shipped code. Nothing here is current guidance; it is kept to
+> answer "why is it like this?".
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Tinderbox-style agents for Org-mode — entries carrying an org-ql query (with `$PROP` sugar) that populate themselves with child aliases, a list, or a table of links to matching entries, optionally prefiltered by the org-jw PostgreSQL database.
