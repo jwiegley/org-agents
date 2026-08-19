@@ -185,6 +185,18 @@
     (should-not (org-agents--gate '(ts :from (shell-command "x"))))
     (should-not (org-agents--gate '(lambda (x) (shell-command "x"))))))
 
+(ert-deftest org-agents-test-gate-refuses-bytecode-in-function-position ()
+  "A byte-code object reads in from a property, and Emacs calls what it finds."
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive t)
+        ;; Through the reader, as an :AGENT_QUERY: property would store it.
+        (payload (read (prin1-to-string (list (byte-compile (lambda () t)))))))
+    (should-not (org-agents--structurally-safe-p payload))
+    (should-not (org-agents--gate payload))
+    ;; A lambda in the same position is just as callable.
+    (should-not (org-agents--gate '((lambda () (shell-command "x")))))))
+
 (ert-deftest org-agents-test-gate-allows-bare-special ()
   "A bare special expands to a read-only accessor, so it needs no approval."
   (let ((noninteractive t))

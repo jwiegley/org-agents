@@ -218,10 +218,13 @@ written."
    ((member form org-agents--special-accessors) t)
    ;; Quoted data is returned, never evaluated, whatever it holds.
    ((eq (car form) 'quote) t)
-   ;; No symbol in the car, so nothing here can be called: every
-   ;; element, the first included, stands for itself.
+   ;; No symbol in the car, so this is data and every element, the first
+   ;; included, stands for itself -- unless the car is itself callable.
+   ;; A byte-code object reads in from a property like any other text,
+   ;; and Emacs calls whatever it finds in function position.
    ((not (symbolp (car form)))
-    (cl-every #'org-agents--structurally-safe-p form))
+    (and (not (functionp (car form)))
+         (cl-every #'org-agents--structurally-safe-p form)))
    ((or (memq (car form) org-agents--boolean-heads)
         (memq (car form) org-agents--nested-query-heads)
         (org-agents--known-predicate-p (car form)))
@@ -341,15 +344,9 @@ DEADLINE from the entry's structure or its file, where the database
 holds no property row at all, so pushing one as a property test would
 drop true matches.
 
-An inheriting name is unsafe for the same reason, and not only for
-equality.  org-ql's `property' predicate takes `&key inherit' and,
-when the query does not say, uses the boolean value of
-`org-use-property-inheritance', so a plain form inherits for such a
-name.  `org-entry-get-with-inheritance' answers from an ancestor, and
-failing that from a `#+PROPERTY:' keyword or `org-global-properties',
-and those last two create no property row in any file.  Existence is
-then false of every row in a file whose entries all match, so even the
-weaker conjunct would drop the file from the candidate set."
+A name in `org-use-property-inheritance' is refused as well.  That is a
+conservative guard rather than a correctness requirement; the `property'
+row of `org-agents--pushdown-fns' records why."
   (and (stringp name)
        (not (member-ignore-case name (cons "CATEGORY" org-special-properties)))
        (not (org-agents--property-inherits-p name))))
@@ -386,15 +383,24 @@ Only a date that survives the round trip is read alike by both sides."
   (list
    (cons 'property
          (lambda (form)
+           ;; Inheriting names: push nothing.  org-ql applies the
+           ;; `org-use-property-inheritance' default only to `property'
+           ;; forms that carry an extra plist; the plain (property NAME)
+           ;; and (property NAME VALUE) forms this classifier pushes
+           ;; leave `inherit' at its nil default, so org-ql reads the
+           ;; entry's own drawer only -- exactly what the database
+           ;; stores.  Refusing to push for a name in
+           ;; `org-use-property-inheritance' is therefore not required
+           ;; for correctness; it is a conservative guard that only
+           ;; widens the candidate set and never drops a match.
            (pcase form
              ;; Existence is local on both sides: one-argument `property'
              ;; reads this entry's own drawer, as the database rows do.
              (`(property ,(and name (pred org-agents--property-pushable-p)))
               `(property ,name))
-             ;; Equality: both sides compare the entry's own value, and
-             ;; a pushable name is one that cannot have inherited it.  A
-             ;; form carrying `:inherit' has an arity neither pattern
-             ;; matches, so it pushes nothing at all.
+             ;; Equality: both sides compare the entry's own value.  A
+             ;; form carrying `:inherit' does inherit, and has an arity
+             ;; neither pattern matches, so it pushes nothing at all.
              (`(property ,(and name (pred org-agents--property-pushable-p))
                          ,(and val (pred stringp)))
               (if (string-match-p "[[:space:]]" val)
