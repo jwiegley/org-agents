@@ -889,6 +889,13 @@ pushed pattern would return NO files for a query that matches thousands."
     org-agents-refused-heads
     org-agents-prefilter
     org-agents-rg-executable
+    ;; The bound on how long the prefilter may block Emacs.  A file-local
+    ;; nil takes the bound off entirely, which is the unbounded
+    ;; `call-process' block this option was added to remove; a file-local
+    ;; 0 expires every run, which sends every corpus-scope agent down the
+    ;; live whole-corpus walk.  Neither is a decision a file gets to make
+    ;; silently.
+    org-agents-rg-timeout
     org-agents-exclude
     org-agents-files
     org-agents-attributes-file
@@ -934,7 +941,8 @@ the ones it writes by hand to the property itself.")
 (ert-deftest org-agents-test-every-defcustom-is-risky ()
   "Every option is `:risky t', and every option is on the owned list.
 Each of these names either Lisp to evaluate, a program to run, which
-files get opened and written, or the record of what has already been
+files get opened and written, how long Emacs may be blocked waiting for
+that program, or the record of what has already been
 approved -- so a file-local setting of any of them must not be applied
 without a decision, and must never be offered permanent or
 directory-wide trust.  Two halves, because either alone is passable: the
@@ -7950,40 +7958,119 @@ for the outcome half, which shows the file that is lost without this."
           (should (null (org-agents--rg-run "PAT" dir))))
       (delete-directory dir t))))
 
+(ert-deftest org-agents-test-rg-run-times-out-and-does-not-hang ()
+  "A prefilter that never answers must not take Emacs with it.
+The stub genuinely hangs -- `sleep 30' -- so this test is the thing the
+issue asked for rather than a simulation of it.  Nothing bounded the old
+`call-process': on an unresponsive filesystem, or under `--follow' over a
+pathological symlink arrangement, it returned when the child felt like
+it.  MEASURED, and it is why the fix is not a timer: a `run-at-time' set
+before a `call-process' to a hanging child NEVER FIRES -- Emacs does not
+run timers while blocked there -- while one set before a deadline loop
+over `accept-process-output' fires at +0.57 s.  So the bound has to be an
+asynchronous process, which is what `org-agents--rg-run' now spawns.
+
+An expiry is `unavailable', which is the answer that already means \"no
+answer\": the caller falls back to the live scan it would have used with
+no ripgrep at all.  So the price of a spurious expiry is a slow correct
+answer, never a wrong one, which is what makes a bound safe to have."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg (expand-file-name "rg" dir) "sleep 30"))
+         (org-agents-rg-timeout 0.3))
+    (unwind-protect
+        (let ((t0 (float-time)) result msgs)
+          (setq msgs (org-agents-test--messages
+                       (setq result (org-agents--rg-run "PAT" dir))))
+          (should (eq result 'unavailable))
+          ;; The bound is the point: without it this is 30 s.
+          (should (< (- (float-time) t0) 5))
+          (should (cl-find-if (lambda (m)
+                                (and (string-match-p "org-agents" m)
+                                     (string-match-p "timed out" m)))
+                              msgs)))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-rg-run-honours-no-timeout ()
+  "Nil is no bound, and it is honoured rather than quietly floored.
+The option exists so that someone on a slow but working filesystem can
+turn the bound off; a nil that silently became 30 would make that
+setting a lie.  The child here exits at once, so nil costs this test
+nothing -- what is asserted is that the deadline loop does not treat a
+nil bound as an immediately expired one, which would turn every
+prefilter run into `unavailable'."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg (expand-file-name "rg" dir) "exit 1"))
+         (org-agents-rg-timeout nil))
+    (unwind-protect
+        (should (null (org-agents--rg-run "PAT" dir)))
+      (delete-directory dir t))))
+
 (ert-deftest org-agents-test-rg-run-reports-a-signal-and-a-spawn-failure ()
-  "A non-integer status must fall to the failure branch, not slip past it.
-`call-process' answers with a STRING such as \"Killed: 9\" when the
-process dies on a signal, so the test has to be `(eq code 0)' /
-`(eq code 1)' and never `(> code 1)'."
+  "A process that DIED must fall to the failure branch, not slip past it.
+The sharp case, and it is real rather than contrived: MEASURED, a child
+killed by SIGHUP reports `(process-status proc)' = `signal' and
+`(process-exit-status proc)' = **1** -- because for a signal death the
+\"exit status\" IS the signal number.  So exit status alone cannot tell a
+death from ripgrep's own exit 1, and exit 1 is the answer meaning \"no
+file matches\".  Read that way, an agent whose prefilter was killed would
+render NOTHING, with no error and no message, which is the silent
+under-match this whole backend exists to prevent.  The guard is testing
+`process-status' as well as the code, and this test is what says so.
+
+The stub kills itself rather than stubbing `make-process': a real signal
+death exercises the real status pair, where a stub would be asserting
+against whatever shape the test author imagined.
+
+The old spelling of this hazard was `call-process' answering with the
+STRING \"Killed: 9\", which is why the code used to test `(eq code 0)' and
+`(eq code 1)' rather than `(> code 1)'.  The asynchronous form reports a
+death through `process-status' instead; the hazard is the same one and
+the test still covers it.
+
+Failure to spawn at all is the second half.  MEASURED: `make-process' on
+a missing program signals `file-missing', exactly as `call-process' did,
+so this path is unchanged by the rewrite."
   (let ((dir (make-temp-file "org-agents-rg" t)))
     (unwind-protect
         (progn
-          (cl-letf (((symbol-function 'call-process)
-                     (lambda (&rest _) "Killed: 9")))
-            (should (eq 'unavailable (org-agents--rg-run "PAT" dir))))
+          (let* ((org-agents-rg-executable
+                  (org-agents-test--fake-rg (expand-file-name "rg" dir)
+                                            "kill -HUP $$"))
+                 result)
+            (let ((msgs (org-agents-test--messages
+                          (setq result (org-agents--rg-run "PAT" dir)))))
+              (should (eq result 'unavailable))
+              ;; Not nil, which is what a bare `(eq code 1)' would answer.
+              (should-not (listp result))
+              (should (cl-find-if (lambda (m) (string-match-p "org-agents" m))
+                                  msgs))))
           ;; Failure to spawn at all is reported like any other failure
           ;; rather than signalling out of an agent update.
-          (cl-letf (((symbol-function 'call-process)
-                     (lambda (&rest _) (signal 'file-missing '("no rg")))))
-            (let (result)
-              (let ((msgs (org-agents-test--messages
-                           (setq result (org-agents--rg-run "PAT" dir)))))
-                (should (eq result 'unavailable))
-                (should (cl-find-if (lambda (m) (string-match-p "org-agents" m))
-                                    msgs))))))
+          (let ((org-agents-rg-executable "no-such-program-xyzzy-s2")
+                result)
+            (let ((msgs (org-agents-test--messages
+                          (setq result (org-agents--rg-run "PAT" dir)))))
+              (should (eq result 'unavailable))
+              (should (cl-find-if (lambda (m) (string-match-p "org-agents" m))
+                                  msgs)))))
       (delete-directory dir t))))
 
 (ert-deftest org-agents-test-rg-run-spawns-in-a-live-local-directory ()
-  "A deleted `default-directory' makes `call-process' signal; a remote one
+  "A deleted `default-directory' makes the spawn signal; a remote one
 would run the binary on another host, against files that are not the
-corpus.  So the process is spawned from `temporary-file-directory'."
+corpus.  So the process is spawned from `temporary-file-directory'.
+
+The stub is on `make-process', which is what the bounded prefilter
+spawns with; it was `call-process' while the run was synchronous."
   (let* ((dir (make-temp-file "org-agents-rg" t))
          (org-agents-rg-executable
           (org-agents-test--fake-rg (expand-file-name "rg" dir) "exit 1"))
          (seen nil))
     (unwind-protect
-        (cl-letf* ((real (symbol-function 'call-process))
-                   ((symbol-function 'call-process)
+        (cl-letf* ((real (symbol-function 'make-process))
+                   ((symbol-function 'make-process)
                     (lambda (&rest args)
                       (push default-directory seen)
                       (apply real args))))
@@ -9431,17 +9518,19 @@ buffers are visited and spawns nothing, while a single rg run over that
 corpus costs 0.10 to 0.45 s.  So prefiltering a scope that names its
 files is pure overhead: several times the cost of the whole update, to
 reach the same answer.
-The spawn is made DETECTABLE rather than assumed away -- a `call-process'
+The spawn is made DETECTABLE rather than assumed away -- a `make-process'
 that records the breach in a flag, because the backend catches errors by
-design and would swallow a signalling stub."
+design and would swallow a signalling stub.  The stub is on
+`make-process' because that is what the bounded prefilter spawns with; it
+was `call-process' while the run was synchronous."
   (org-agents-test--with-corpus
     (let ((breached nil)
           (query '(and (todo) (property "NEXT_REVIEW"))))
       ;; The query really does push, so the absence of a spawn is the
       ;; scope rule declining and not an empty conjunct list.
       (should (org-agents--prefilter-conjuncts query))
-      (cl-letf (((symbol-function 'call-process)
-                 (lambda (&rest _) (setq breached t) 1)))
+      (cl-letf (((symbol-function 'make-process)
+                 (lambda (&rest _) (setq breached t) nil)))
         (let ((org-agenda-files (list a b)))
           (should (equal (list a b)
                          (org-agents--scope-files
@@ -9468,8 +9557,8 @@ unusable."
   (org-agents-test--with-rg-corpus-unguarded
     (let ((org-agents-prefilter nil)
           (breached nil))
-      (cl-letf (((symbol-function 'call-process)
-                 (lambda (&rest _) (setq breached t) 1)))
+      (cl-letf (((symbol-function 'make-process)
+                 (lambda (&rest _) (setq breached t) nil)))
         (let* ((agent (list :scope 'all :query '(property "NEXT_REVIEW")))
                (files (org-agents--scope-files agent)))
           ;; The whole base set, not a narrowed one: `filler.org' holds

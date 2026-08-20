@@ -901,6 +901,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-safe-queries` | `nil` | forms approved to run without prompting, each recorded as `(HASH . QUERY-TEXT)` |
 | `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
+| `org-agents-rg-timeout` | `30` | seconds to wait for one ripgrep run, or `nil` for no bound. On expiry the run answers "no answer" and the scope is scanned live, so the price is a slow correct answer and never a wrong one. See "The prefilter cannot block Emacs without bound" |
 | `org-agents-attributes-file` | `"~/org/attributes.org"` | the Org file declaring the corpus's user attributes. Optional: one that is missing or unreadable declares nothing and says nothing about it, and the package never creates it. See "The attribute registry" below |
 | `org-agents-action-limit` | `100` | how many entries one `org-agents-apply-actions` will edit. Nil for no limit. A plan over more than this is refused rather than truncated, and the gate is on entries rather than on edits. See "Action code" |
 
@@ -914,7 +915,11 @@ program to run (`org-agents-rg-executable`), whether a subprocess is spawned
 at all (`org-agents-prefilter`), which files get opened and *written*
 (`org-agents-files` — an update rewrites aliases), or the record of what has
 already been approved or refused (`org-agents-safe-queries`,
-`org-agents-refused-queries`, `org-agents-refused-heads`), or the bound on
+`org-agents-refused-queries`, `org-agents-refused-heads`), how long Emacs
+may be blocked waiting for that program (`org-agents-rg-timeout` — a
+file-local `nil` takes the bound off entirely, and a file-local `0` expires
+every run and sends every corpus-scope agent down the live whole-corpus
+walk), or the bound on
 how many entries one command may edit (`org-agents-action-limit` — a file
 that could raise it could have `org-agents-apply-actions` edit the whole
 corpus). A file that could set any of them from its own local-variables
@@ -1773,6 +1778,64 @@ prefilter buys buffers and memory, not regexp work.
 There is no staleness window. ripgrep reads the bytes on disk as they are
 now, so a file that *newly* satisfies a pushed conjunct is in the candidate
 set immediately. There is nothing to sync and no cadence to keep.
+
+### The prefilter cannot block Emacs without bound
+
+The prefilter used to be a synchronous `call-process`, and *nothing* bounded
+it. On an unresponsive filesystem — NFS, sshfs, a sleeping disk — or under
+`--follow` over a pathological symlink arrangement, it returned when the
+child felt like it, and Emacs waited.
+
+Two candidate fixes were measured and one of them does not exist:
+
+* **A timer around `call-process`.** Does not work, and cannot. A
+  `run-at-time` set before a `call-process` to a hanging child **never
+  fires** — Emacs runs no timers while blocked there. One set before a loop
+  over `accept-process-output` fires at +0.57 s. That difference is the
+  whole reason the run is now asynchronous.
+* **A `timeout(1)` wrapper.** Rejected twice over. `/usr/bin/timeout` does
+  not exist on stock macOS, so the package would claim a bound that its own
+  platform's default install does not have. And `timeout` bounds the
+  *child*, not Emacs: measured against a child that ignores SIGTERM,
+  `timeout 2` ran the full 8 s until an outer SIGKILL. SIGKILL is equally
+  powerless against a process in an uninterruptible disk wait, which is
+  precisely the case this is for — and Emacs would then sit blocked waiting
+  for `timeout` to reap something that will not die.
+
+So the run is a `make-process` with a deadline loop, bounded by
+`org-agents-rg-timeout` (default 30 s, `nil` for no bound). 30 s is roughly
+fifty times the slowest run measured for any pattern this package builds
+over a 3,649-file corpus: 0.564 s cold, 0.068–0.083 s warm. On expiry the
+process is deleted, one message says so, and the answer is `unavailable` —
+which is exactly what a missing ripgrep already answers, so the scope is
+scanned live with the message that explains it. **A spurious expiry costs a
+slow correct answer and never a wrong one**, and that is what makes having a
+bound safe.
+
+One consequence is new and worth stating plainly: **waiting on a subprocess
+runs timers and process filters, where `call-process` ran nothing.** So an
+update may execute an idle timer while its prefilter is in flight.
+`org-agents--update-agent` is written for that — it collects *outside* its
+`atomic-change-group`, so no timer's edits can land inside this package's
+change group and be undone by a later render failure along with it. And no
+save spawns a prefilter at all, whatever `org-agents-prefilter` says, so the
+only way to reach the wait is a command you typed. C-g still escapes, because
+the error handler catches `error` and not `quit`.
+
+Two details of the process are load-bearing and were both wrong on the first
+attempt. Completion is sentinel-driven, not a loop on `process-live-p`. And
+stderr goes to a separate pipe, never merged into stdout: merged, a warning
+line gets glued onto a NUL-delimited path, is kept as a file name, and a real
+file is then silently dropped from the candidate set — the one direction that
+loses matches. A separate stderr in turn forces `just-this-one` `nil` in
+`accept-process-output`; with `t` every run deadlocks, measured, with a pipe
+and with a buffer alike.
+
+Finally, a signal death is not an exit. Measured: a child killed by SIGHUP
+reports `process-status` `signal` and `process-exit-status` **1** — the
+signal number — and exit 1 is ripgrep's own answer for "no file matches". Read
+by exit status alone, an agent whose prefilter was killed would render nothing,
+silently. The status is checked as well as the code.
 
 ## Honest limitations
 

@@ -315,6 +315,22 @@
 ;; genuinely matches nothing renders zero matches rather than reporting a
 ;; broken prefilter.
 ;;
+;; A prefilter run is BOUNDED, by `org-agents-rg-timeout', and nothing
+;; bounded it before: the run was a synchronous `call-process', and on an
+;; unresponsive filesystem it returned when the child felt like it.  A
+;; timer cannot rescue one -- MEASURED, a `run-at-time' set before a
+;; `call-process' to a hanging child never fires, because Emacs runs no
+;; timers while blocked there -- so the run is an asynchronous process
+;; with a deadline.  On expiry the answer is `unavailable', which is what
+;; a missing ripgrep already answers, so the scope is scanned live: a
+;; spurious expiry costs a slow correct answer and never a wrong one.
+;; The new cost is REENTRANCY -- waiting on a subprocess runs timers and
+;; process filters, where `call-process' ran nothing -- so an update may
+;; execute an idle timer while its prefilter is in flight.
+;; `org-agents--update-agent' collects OUTSIDE its `atomic-change-group'
+;; so that no timer's edits can land in this package's change group, and
+;; no save spawns a prefilter at all.
+;;
 ;; A file the scope NAMES but nothing can open is reported by this package
 ;; rather than by org-ql, and the two kinds of scope get different answers:
 ;; an explicit `:AGENT_SCOPE:' file list is REFUSED, naming the files,
@@ -1752,8 +1768,54 @@ Looked up with `executable-find', so a bare name is resolved against
 line endings.  Every flag was verified against 15.2.0 and against no
 other version; 13 is named as a round, safely old floor.
 
-Risky: this names a program that will be `call-process'ed."
+Risky: this names a program that will be run as a subprocess."
   :type 'string
+  :risky t
+  :group 'org-agents)
+
+(defcustom org-agents-rg-timeout 30
+  "Seconds to wait for one ripgrep prefilter run, or nil for no bound.
+A bound is needed because nothing else provides one.  On an unresponsive
+filesystem -- NFS, sshfs, a sleeping disk -- or under `--follow' over a
+pathological symlink arrangement, a ripgrep run can take arbitrarily
+long, and the prefilter used to be a synchronous `call-process' that
+returned when the child felt like it.
+
+MEASURED, and it is why this is a deadline over an asynchronous process
+rather than a timer: a `run-at-time' set before a `call-process' to a
+hanging child NEVER FIRES, because Emacs does not run timers while
+blocked there.  One set before a loop over `accept-process-output' fires
+at +0.57 s.  `timeout(1)' was the other candidate and was rejected twice
+over: `/usr/bin/timeout' does not exist on stock macOS, and it bounds the
+CHILD rather than Emacs -- against a process in an uninterruptible disk
+wait, which is the very case this is for, Emacs would stay blocked
+waiting for `timeout' to reap something that will not die.
+
+30 s is roughly fifty times the slowest run measured for any pattern this
+package builds over the author's 3,649-file corpus: 0.564 s cold and
+0.068 to 0.083 s warm.  The price of an expiry is bounded and known: the
+run answers `unavailable', which is what a missing ripgrep already
+answers, so the scope is scanned live with the message that says so.  A
+spurious expiry therefore costs a slow correct answer and never a wrong
+one, which is what makes having a bound safe.
+
+Nil turns the bound off, for someone on a slow but working filesystem who
+would rather wait.  Then C-g is the only escape, as it was before.
+
+One consequence worth stating, because it is new: waiting on a subprocess
+this way runs timers and process filters, where `call-process' ran
+nothing.  So an update may now execute an idle timer while its prefilter
+is in flight.  `org-agents--update-agent' is written for that -- it
+collects OUTSIDE its `atomic-change-group' so that no timer's edits can
+land inside this package's change group -- and no save ever spawns a
+prefilter at all, since `org-agents--update-on-save' binds
+`org-agents-prefilter' to nil.
+
+Risky: a file-local nil takes the bound off, which is the unbounded block
+this exists to remove, and a file-local 0 expires every run and sends
+every corpus-scope agent down the live whole-corpus walk."
+  :type '(choice (const :tag "No bound" nil)
+                 (number :tag "Seconds"))
   :risky t
   :group 'org-agents)
 
@@ -2002,14 +2064,6 @@ package needs is an AND."
         "--no-ignore" "--hidden" "--follow" "--iglob" "*.org"
         "--regexp" pattern "--" root))
 
-(defun org-agents--file-contents (file)
-  "Return FILE's contents, trimmed, or an empty string if unreadable."
-  (or (ignore-errors
-        (with-temp-buffer
-          (insert-file-contents file)
-          (string-trim (buffer-string))))
-      ""))
-
 (defun org-agents--rg-paths (raw)
   "Split RAW, ripgrep's NUL-terminated stdout, into a list of file names.
 RAW is read as BYTES and each path decoded with the file-name coding
@@ -2053,21 +2107,67 @@ backend exists to remove.  Only the symbol `unavailable' means \"no
 answer\".  Callers test with `listp', which is exact: `(listp nil)' is t
 and `(listp \\='unavailable)' is nil.
 
-The status test is `(eq code 0)' and `(eq code 1)', never `(> code 1)':
-`call-process' answers with a STRING such as \"Killed: 9\" when the
-process dies on a signal, and a non-integer must fall to the failure
-branch rather than slip past a numeric comparison.
+BOUNDED by `org-agents-rg-timeout', and that is what makes this an
+asynchronous process rather than a `call-process'.  A process that never
+answers must not take Emacs with it, and MEASURED, a timer cannot rescue
+a `call-process': set before one to a hanging child it NEVER FIRES,
+because Emacs runs no timers while blocked there.  Set before a loop over
+`accept-process-output' it fires at +0.57 s.  On expiry the process is
+deleted, one message says so, and the answer is `unavailable' -- the same
+answer a missing ripgrep gives, so the caller falls back to the live scan
+it would have used anyway.  A spurious expiry costs a slow correct answer
+and never a wrong one.  See that option for why `timeout(1)' was not the
+answer instead.
+
+The status test is `(eq code 0)' and `(eq code 1)' AND
+`(eq (process-status proc) \\='exit)', never `(> code 1)'.  Both halves
+are needed: for a process killed by a signal `process-exit-status' answers
+the SIGNAL NUMBER, so a child dead of SIGHUP would answer 1 and be read
+as the perfectly good \"no file matches\".  `process-status' is what tells
+an exit from a death.  (The old synchronous form had the same hazard
+spelled differently: `call-process' answers with a STRING such as
+\"Killed: 9\" on a signal, and the `eq'-against-integers test was what
+kept a non-integer out of the answer branches.)
 
 Status 2 discards whatever was printed.  Measured: with one unreadable
 file among two, ripgrep prints the readable match, writes `Permission
 denied' to stderr, AND exits 2 -- so the printed answer is missing a
 file, and a partial answer is exactly the unsound direction.
 
-Never signals an error.  A `quit' from C-g during the synchronous call
-still escapes, as it must.  Spawned from `temporary-file-directory',
-because a `default-directory' that has been deleted makes `call-process'
+Never signals an error.  A `quit' from C-g still escapes, because the
+handler is `error' and not `t'.  Spawned from `temporary-file-directory',
+because a `default-directory' that has been deleted makes the spawn
 signal and a remote one would run the binary on another host, against
 files that are not the corpus.
+
+Four things about the process are load-bearing, each MEASURED while this
+was written, and each of which was wrong on the first attempt:
+
+  - Completion is SENTINEL-driven.  A loop on `process-live-p' returns as
+    soon as the child dies, which can be before its output has been
+    read.
+  - stderr goes to a SEPARATE pipe process.  Merged into stdout it
+    corrupts the answer: measured, a dangling symlink under `--follow'
+    gives exit 2 with one real path on stdout AND a warning line on
+    stderr, and glued together the warning becomes a NUL-delimited
+    \"path\" that `org-agents--rg-paths' keeps and `org-agents--same-files'
+    then silently drops a real file over.
+  - ...and a separate stderr forces JUST-THIS-ONE nil in
+    `accept-process-output'.  Emacs implements `:stderr' as an internal
+    pipe process, and `just-this-one' t forbids reading it, which
+    withholds the main process's own exit handling: measured, every run
+    DEADLOCKS and \"times out\" at the deadline, with `:stderr' as a pipe
+    and as a buffer alike.  So other processes' filters may run during
+    this wait; that is the price and it is stated in
+    `org-agents-rg-timeout'.
+  - the stderr pipe's sentinel is `ignore', or Emacs writes \"Process ...
+    stderr finished\" into the buffer and the diagnostic quotes Emacs at
+    the user.
+
+`:connection-type' is `pipe' rather than left to `process-connection-type',
+whose default is t: over a pty the NUL-delimited paths and the raw bytes
+`--text' exists for would both be mangled, and `call-process' always used
+a pipe.
 
 RIPGREP_CONFIG_PATH is UNSET for the child, and that is a soundness
 requirement rather than tidiness.  ripgrep prepends every argument in
@@ -2088,31 +2188,86 @@ ripgrep 13 as the supported floor, an unknown flag there exits 2, and an
 entry of `process-environment' holding no `=' removes the variable for
 the child on every Emacs this package supports."
   (condition-case err
-      (let ((stderr-file (make-temp-file "org-agents-rg-stderr")))
+      (let ((out (generate-new-buffer " *org-agents-rg*"))
+            (errbuf (generate-new-buffer " *org-agents-rg-stderr*"))
+            (errproc nil)
+            (proc nil))
         (unwind-protect
-            (with-temp-buffer
-              ;; `default-directory' is buffer-local, so this must be
-              ;; bound with the temp buffer current to have any effect on
-              ;; the process `call-process' spawns.
+            (let ((done nil) (err-done nil))
+              ;; Created OUTSIDE the binary binding below, so that stderr
+              ;; is decoded as the text it is: the only thing read from it
+              ;; is a diagnostic put in a message.  Its sentinel records
+              ;; completion and prints nothing: the DEFAULT sentinel would
+              ;; write "Process org-agents-rg-stderr finished" into the
+              ;; buffer, and the diagnostic would quote Emacs at the user.
+              (setq errproc (make-pipe-process
+                             :name "org-agents-rg-stderr"
+                             :buffer errbuf
+                             :noquery t
+                             :sentinel (lambda (&rest _) (setq err-done t))))
               (let* ((default-directory temporary-file-directory)
                      (coding-system-for-read 'binary)
                      (process-environment
-                      (cons "RIPGREP_CONFIG_PATH" process-environment))
-                     (code (apply #'call-process org-agents-rg-executable
-                                  nil (list (current-buffer) stderr-file)
-                                  nil (org-agents--rg-args pattern root))))
-                (cond
-                 ((eq code 1) nil)      ; an answer: no file matches
-                 ((eq code 0) (org-agents--rg-paths (buffer-string)))
-                 (t
-                  (let ((stderr (org-agents--file-contents stderr-file)))
-                    (message "org-agents: %s exited %s: %s"
-                             org-agents-rg-executable code
-                             (if (string-empty-p stderr)
-                                 (string-trim (buffer-string))
-                               stderr)))
-                  'unavailable))))
-          (ignore-errors (delete-file stderr-file))))
+                      (cons "RIPGREP_CONFIG_PATH" process-environment)))
+                (setq proc (make-process
+                            :name "org-agents-rg"
+                            :buffer out
+                            :command (cons org-agents-rg-executable
+                                           (org-agents--rg-args pattern root))
+                            :stderr errproc
+                            :connection-type 'pipe
+                            :noquery t
+                            :sentinel (lambda (&rest _) (setq done t)))))
+              ;; `just-this-one' nil: with a separate stderr, t deadlocks.
+              (let ((deadline (and org-agents-rg-timeout
+                                   (+ (float-time) org-agents-rg-timeout))))
+                (while (and (not done)
+                            (or (null deadline) (< (float-time) deadline)))
+                  (accept-process-output proc 0.05 nil nil)))
+              ;; `done' is tested BEFORE anything deletes the process:
+              ;; `delete-process' runs the sentinel, which sets `done', so
+              ;; a later test could not tell an expiry from an answer.
+              (if (not done)
+                  (progn
+                    (delete-process proc)
+                    (message "org-agents: %s timed out after %s s"
+                             org-agents-rg-executable org-agents-rg-timeout)
+                    'unavailable)
+                ;; The MAIN process's sentinel can fire before the stderr
+                ;; pipe has delivered what is left in it -- OBSERVED as a
+                ;; test that intermittently read an empty diagnostic where
+                ;; ripgrep had written `Permission denied'.  So wait for
+                ;; the pipe's own sentinel too.  Always, not only on the
+                ;; failure branch, because "did stderr finish" must not be
+                ;; a question the answer branch leaves open; it costs
+                ;; nothing when the pipe is already done, which is the
+                ;; usual case.  Bounded, and on `nil' rather than on
+                ;; ERRPROC, so a pipe already deleted cannot spin here.
+                (let ((drain (+ (float-time) 1.0)))
+                  (while (and (not err-done) (< (float-time) drain))
+                    (accept-process-output nil 0.05)))
+                (let ((code (process-exit-status proc))
+                      (exited (eq (process-status proc) 'exit)))
+                  (cond
+                   ;; An answer: no file matches.
+                   ((and exited (eq code 1)) nil)
+                   ((and exited (eq code 0))
+                    (org-agents--rg-paths (with-current-buffer out
+                                            (buffer-string))))
+                   (t
+                    (let ((stderr (with-current-buffer errbuf
+                                    (string-trim (buffer-string)))))
+                      (message "org-agents: %s exited %s: %s"
+                               org-agents-rg-executable code
+                               (if (string-empty-p stderr)
+                                   (string-trim (with-current-buffer out
+                                                  (buffer-string)))
+                                 stderr)))
+                    'unavailable)))))
+          (when (process-live-p proc) (delete-process proc))
+          (when (process-live-p errproc) (delete-process errproc))
+          (kill-buffer out)
+          (kill-buffer errbuf)))
     (error
      (message "org-agents: %s failed: %s"
               org-agents-rg-executable (error-message-string err))
@@ -5177,13 +5332,26 @@ write: the one point sat in when the update was asked for.
 The children view is rendered inside `atomic-change-group', because it
 deletes the aliases it is about to write again before it writes any of
 them: a failure part way through would otherwise leave the agent half
-rewritten.  A dynamic block writer answers for its own body already."
+rewritten.  A dynamic block writer answers for its own body already.
+
+The COLLECT is deliberately hoisted OUT of that change group, and this
+matters now that the prefilter is a bounded asynchronous process rather
+than a `call-process': waiting on a subprocess runs timers and process
+filters, so with the collect evaluated as an argument INSIDE the change
+group -- which is how this was written -- an arbitrary idle timer could
+edit this buffer while the prefilter was in flight, and a later render
+failure would `primitive-undo' that timer's edits along with its own.
+`org-agents--collect' writes nothing to the agent's buffer -- it gates,
+resolves files and calls `org-ql-select' -- and the change group's stated
+purpose is the alias delete-then-write, which is entirely inside
+`org-agents--render-children'.  So the hoist is semantically identical and
+removes the only path where a subprocess wait sat inside a change group."
   (org-with-point-at marker
     (let* ((agent (org-agents--read-agent))
            (count (if (eq (plist-get agent :view) 'children)
-                      (atomic-change-group
-                        (org-agents--render-children
-                         agent (org-agents--collect agent)))
+                      (let ((matches (org-agents--collect agent)))
+                        (atomic-change-group
+                          (org-agents--render-children agent matches)))
                     (org-agents--update-block block))))
       (org-agents--write-matched marker count)
       count)))
