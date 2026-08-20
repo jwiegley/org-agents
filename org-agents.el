@@ -464,7 +464,25 @@ could pre-approve its own query and never be asked about it."
   :type org-agents--approval-type :risky t :group 'org-agents)
 
 (defvar org-agents--session-approved (make-hash-table :test 'equal)
-  "Query hashes approved for this session only.")
+  "Hash of each form approved for this session only, mapped to its text.
+Keyed like `org-agents-safe-queries' and holding the same text beside the
+same hash, so `org-agents-list-approvals' can show a session-only
+approval and revoke it, instead of leaving it to work unseen until Emacs
+is restarted.  Where customize has no file to write, EVERY approval is
+session-only, so this is the common table and not the rare one.
+
+Risky, and not as a matter of hygiene: this table IS the record the gate
+consults first.  Unmarked it was settable from a Local Variables block --
+Emacs classes it `unsafe' rather than `risky', which is precisely the
+class it offers to mark permanently safe -- and the hash to put in it is
+computable offline, `org-agents-exclude' having a published default.  A
+file could therefore pre-approve its own arbitrary Lisp, which would then
+run at every candidate entry with no prompt and no listing.")
+
+;; `defcustom' takes `:risky t'; a `defvar' has to say it separately, and
+;; the two must not diverge: the safe list and this table answer the same
+;; question, one of them persistently and one of them for the session.
+(put 'org-agents--session-approved 'risky-local-variable t)
 
 (defun org-agents--approval-hash (entry)
   "The hash ENTRY records, whether ENTRY is a cons or a legacy string."

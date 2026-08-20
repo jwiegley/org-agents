@@ -634,6 +634,29 @@ this list fails the completeness half of
 `org-agents-test-every-defcustom-is-risky', which is what keeps a new
 option from arriving unmarked.")
 
+(defconst org-agents-test--risky-variables
+  (cons 'org-agents--session-approved org-agents-test--defcustoms)
+  "Every variable that must be `risky-local-variable'.
+The options, plus the one internal variable a file-local setting could
+subvert the gate through: `org-agents--session-approved' IS the approval
+record the gate consults first, and it is a `defvar', which takes no
+`:risky t' and so has to be marked by hand.  Emacs classes an unmarked
+variable `unsafe' rather than `risky', and `unsafe' is exactly the class
+it offers to mark permanently safe -- so a file could install a table
+holding the hash of its own arbitrary Lisp, computable offline from the
+published default of `org-agents-exclude', and be asked about nothing
+afterwards.")
+
+(defconst org-agents-test--auto-risky-options
+  '(org-agents-mode-hook global-org-agents-mode-hook)
+  "The package's options that Emacs classes risky by NAME.
+`define-minor-mode' and `define-globalized-minor-mode' generate a hook
+option each, and `risky-local-variable-p' answers t for any name ending
+in `-hook' whether or not the property is set -- so these carry no
+`:risky t' and need none.  They are named here so that the completeness
+check can account for every option the package defines, and still hold
+the ones it writes by hand to the property itself.")
+
 (ert-deftest org-agents-test-every-defcustom-is-risky ()
   "Every option is `:risky t', and every option is on the owned list.
 Each of these names either Lisp to evaluate, a program to run, which
@@ -641,20 +664,66 @@ files get opened and written, or the record of what has already been
 approved -- so a file-local setting of any of them must not be applied
 without a decision, and must never be offered permanent or
 directory-wide trust.  Two halves, because either alone is passable: the
-first says the listed options are marked, the second says the list is the
-whole set."
-  (dolist (var org-agents-test--defcustoms)
+first says the listed variables are marked, the second says the list is
+the whole set.
+
+The set is derived by NAME and not from the group: a `defcustom' declared
+under some other `:group' is still an `org-agents' option a file-local
+block can reach, and deriving from `(get 'org-agents 'custom-group)' let
+exactly that case through unmarked."
+  (dolist (var org-agents-test--risky-variables)
     (should (get var 'risky-local-variable)))
-  ;; Every defcustom passes `:group 'org-agents', so the group's members
-  ;; are the whole set as soon as the file is loaded.  An option added
-  ;; under some other group would go missing here, which is itself worth
-  ;; failing on.
-  (let ((declared (cl-loop for (symbol type) in (get 'org-agents 'custom-group)
-                           when (eq type 'custom-variable) collect symbol)))
+  ;; The generated hooks carry no property and need none, but only for as
+  ;; long as Emacs really does class a `-hook' name risky by itself.
+  (dolist (var org-agents-test--auto-risky-options)
+    (should (risky-local-variable-p var)))
+  (let (declared)
+    ;; `define-globalized-minor-mode' names its option `global-' first, so
+    ;; the prefix has to allow for that one and for nothing looser.
+    (mapatoms (lambda (symbol)
+                (when (and (string-match-p "\\`\\(global-\\)?org-agents-"
+                                           (symbol-name symbol))
+                           (custom-variable-p symbol))
+                  (push symbol declared))))
     (should declared)
     (should (equal (sort (mapcar #'symbol-name declared) #'string<)
                    (sort (mapcar #'symbol-name
+                                 (append org-agents-test--defcustoms
+                                         org-agents-test--auto-risky-options))
+                         #'string<))))
+  ;; And the group still accounts for all of them, which is what keeps an
+  ;; option from going missing out of customize's own tree.
+  (let ((grouped (cl-loop for (symbol type) in (get 'org-agents 'custom-group)
+                          when (eq type 'custom-variable) collect symbol)))
+    (should (equal (sort (mapcar #'symbol-name grouped) #'string<)
+                   (sort (mapcar #'symbol-name
                                  (copy-sequence org-agents-test--defcustoms))
+                         #'string<)))))
+
+(ert-deftest org-agents-test-no-option-is-offered-permanent-trust ()
+  "Emacs must sort every one of these into `risky', never into `unsafe'.
+The distinction is the whole point of the marking, and it is invisible to
+the `risky-local-variable' property alone: `hack-local-variables-filter'
+sorts a file-local setting into one bucket or the other, and files.el
+offers the `!' \"permanently mark these values as safe\" option for the
+UNSAFE ones only.  `org-agents--session-approved' landed in `unsafe', so
+a file carrying a session table that pre-approved its own arbitrary Lisp
+was offered exactly that permanent trust."
+  (let ((enable-local-variables t)
+        unsafe risky)
+    (cl-letf (((symbol-function 'hack-local-variables-confirm)
+               (lambda (_all unsafe-vars risky-vars _dir)
+                 (setq unsafe unsafe-vars risky risky-vars)
+                 nil)))
+      (with-temp-buffer
+        (hack-local-variables-filter
+         (mapcar (lambda (var) (cons var nil))
+                 org-agents-test--risky-variables)
+         nil)))
+    (should-not unsafe)
+    (should (equal (sort (mapcar #'symbol-name org-agents-test--risky-variables)
+                         #'string<)
+                   (sort (mapcar (lambda (cell) (symbol-name (car cell))) risky)
                          #'string<)))))
 
 ;;;; Approvals
