@@ -1368,8 +1368,12 @@ the second agent reading the first agent's entry."
     (goto-char (point-min))
     (let ((agent (org-agents--read-agent)))
       (org-agents--render-children agent (org-agents--collect agent))
-      (should (string-suffix-p "]]  [2020-01-01 Wed]"
-                               (org-agents-test--alias-line "Fix widget"))))
+      ;; One space, not two: the suffix reads as part of the heading
+      ;; line rather than as a column aligned away from it.
+      (should (string-suffix-p "]] [2020-01-01 Wed]"
+                               (org-agents-test--alias-line "Fix widget")))
+      (should-not (string-suffix-p "]]  [2020-01-01 Wed]"
+                                   (org-agents-test--alias-line "Fix widget"))))
     ;; A property the match does not carry adds nothing to the heading,
     ;; not even the space that would have separated it.
     (goto-char (point-min))
@@ -1566,7 +1570,11 @@ the corpus is the one `org-agents-test--with-corpus' provides."
 (ert-deftest org-agents-test-dblock-list ()
   (org-agents-test--with-dblock-agent "list" ":AGENT_FORMAT: NEXT_REVIEW\n"
     (org-dblock-update)
-    (should (string-match-p "^- \\[\\[id:11111111-.*Fix widget\\]\\]  \\[2020-01-01 Wed\\]"
+    ;; One space between the link and the suffix, as the children view
+    ;; writes it: the suffix reads as part of the line rather than as a
+    ;; column aligned away from it.  The regexp discriminates -- two
+    ;; spaces in the buffer leave the second unmatched before `\['.
+    (should (string-match-p "^- \\[\\[id:11111111-.*Fix widget\\]\\] \\[2020-01-01 Wed\\]"
                             (buffer-string)))
     ;; The count the update commands report is this render's, and only a
     ;; render that succeeded has one.

@@ -49,7 +49,7 @@ the entry has grown one child per match, and a status line of its own:
 :AGENT_LIMIT:   25
 :AGENT_MATCHED: 3 [2026-08-19 Wed 09:14]
 :END:
-** [[id:1F2E3D4C-...][Review: Renew the domain]]  [2026-08-14 Fri]
+** [[id:1F2E3D4C-...][Review: Renew the domain]] [2026-08-14 Fri]
 :PROPERTIES:
 :AGENT_MATCH: t
 :END:

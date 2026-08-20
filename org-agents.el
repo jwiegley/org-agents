@@ -1850,7 +1850,7 @@ the agent's own buffer, where an edit would move it."
              (pcase-dolist (`(,_ ,text ,suffix) new)
                (insert "\n" (make-string (1+ level) ?*) " " text)
                (when-let* ((extra (org-string-nw-p suffix)))
-                 (insert "  " extra))
+                 (insert " " extra))
                (insert "\n:PROPERTIES:\n:AGENT_MATCH: t\n:END:")))))))
     (length matches)))
 
@@ -1985,7 +1985,7 @@ ends the body."
                     (org-agents--format-suffix
                      element (plist-get agent :format)))))
        (concat "- " (org-agents--link-to element)
-               (and suffix (concat "  " suffix)))))
+               (and suffix (concat " " suffix)))))
    matches "\n"))
 
 (defun org-agents--dblock-query (params)
