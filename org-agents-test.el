@@ -2537,12 +2537,61 @@ mistake would show up as a corpus with no data rather than as a mistake."
     ;; view of anything.
     (should-error (org-agents-attribute-columns nil) :type 'user-error)))
 
+(ert-deftest org-agents-test-attribute-columns-refuses-an-unspellable-name ()
+  "A declared name a `COLUMNS' format cannot spell is refused as well.
+`org-columns-compile-format' matches a column's property with `(in alnum
+\"_-\")' and TRUNCATES at anything else, while Org accepts such a name as
+a property perfectly well -- `org--valid-property-p' rejects only
+whitespace.  So the registry can declare one, and emitting it produces
+the very failure the undeclared-name guard exists to prevent: a silent,
+always-empty column, here headed by half a name.
+
+Both halves are MEASURED below: what Org does with such a format, and
+that the command no longer produces one."
+  (org-agents-test--with-registry "\
+* WITH.DOT
+:PROPERTIES:
+:ATTR_TYPE: number
+:END:
+* HAS=EQ
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+* PLAIN_NAME-2
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+"
+    ;; The reader declares all three: this is not a registry problem.
+    (should (equal '("WITH.DOT" "HAS=EQ" "PLAIN_NAME-2")
+                   (org-agents-attributes)))
+    ;; What a format naming them would compile to -- the name truncated at
+    ;; the punctuation, and the number's summary operator dropped with it.
+    (should (equal (org-columns-compile-format "%WITH.DOT{+} %HAS=EQ")
+                   '(("WITH" "WITH" nil nil nil)
+                     ("HAS" "HAS" nil nil nil))))
+    (dolist (name '("WITH.DOT" "HAS=EQ"))
+      (let ((err (should-error (org-agents-attribute-columns (list name))
+                              :type 'user-error)))
+        (should (string-match-p (regexp-quote name)
+                               (error-message-string err)))))
+    ;; Alphanumerics, `_' and `-' are the class Org accepts, and they are
+    ;; emitted, so the guard refuses nothing it should not.
+    (should (equal (org-agents-attribute-columns '("PLAIN_NAME-2"))
+                   "%ITEM %PLAIN_NAME-2"))
+    (should (equal (org-columns-compile-format "%ITEM %PLAIN_NAME-2")
+                   '(("ITEM" "ITEM" nil nil nil)
+                     ("PLAIN_NAME-2" "PLAIN_NAME-2" nil nil nil))))))
+
 (ert-deftest org-agents-test-attribute-columns-inserts-into-the-entry ()
   "With INSERT the format becomes the entry's `:COLUMNS:' property.
 The property and not a `#+COLUMNS:' keyword, because that is what
 descendants inherit and what `org-agenda-columns' reads for a matched
-entry -- MEASURED, through the `(org-entry-get m \"COLUMNS\" t)' branch
-of `org-columns-get-format'."
+entry -- MEASURED, through the `(org-entry-get m \"COLUMNS\" t)' arm of
+that function's own `cond', which `org-overriding-columns-format',
+`org-local-columns-format' and `org-columns-default-format-for-agenda'
+all outrank.  Not `org-columns-get-format', which reads `(org-entry-get
+nil \"COLUMNS\" t)' and so answers for the agenda buffer itself."
   (org-agents-test--with-registry org-agents-test--registry-with-date
     (with-temp-buffer
       (let ((org-use-property-inheritance nil))

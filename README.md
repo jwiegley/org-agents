@@ -338,7 +338,12 @@ a set or a string means nothing. Write one in by hand if you want one — this
 generates a starting point, not a policy. An undeclared name is refused
 rather than emitted, because a `COLUMNS` line naming a property nothing
 declares renders an empty column, which looks exactly like a property
-nothing has set.
+nothing has set. So is a declared name a `COLUMNS` format cannot spell:
+`org-columns-compile-format` matches a column's property with
+`[[:alnum:]_-]` and truncates silently at anything else — measured,
+`%WITH.DOT{+}` compiles to a column named `WITH` with no summary operator
+— while Org accepts `WITH.DOT` as a property name perfectly well, so the
+registry can declare one and only the column view cannot say it.
 
 Measured, and worth knowing: `org-columns-compile-format` validates no
 operator at all — `%X{nope}` compiles without complaint — so the guarantee
@@ -349,12 +354,23 @@ that these operators are real is this command's, and nowhere else.
 Here is what those three add up to, and the reason there is no renderer in
 this package. **`org-agenda-columns` already works inside an `org-ql-search`
 results buffer.** That buffer is an `org-agenda-mode` buffer carrying
-`org-hd-marker` on every result line; `org-columns-get-format` reads its
+`org-hd-marker` on every result line; `org-agenda-columns` reads its
 format from the matched entry's inherited `:COLUMNS:`, through the
-`(org-entry-get m "COLUMNS" t)` branch; and an edit is written back to the
-source file by `org-columns-edit-value`. Corpus-wide displayed attributes
-with write-back editing exist today. What was missing was a format string,
-and the command above is it.
+`(org-entry-get m "COLUMNS" t)` arm of its own `cond`; and an edit is
+written back to the source file by `org-columns-edit-value`. Corpus-wide
+displayed attributes with write-back editing exist today. What was missing
+was a format string, and the command above is it.
+
+Two details worth having before you debug this. It is `org-agenda-columns`
+that decides, and **not** `org-columns-get-format`, which reads
+`(org-entry-get nil "COLUMNS" t)` — the agenda buffer's own absent
+property — and answered the default format when measured on a live result
+line. And that `cond` arm is the *fourth*: `org-overriding-columns-format`,
+`org-local-columns-format` and the `org-columns-default-format-for-agenda`
+option all outrank it. The last of those is an ordinary Org defcustom, nil
+by default and set precisely by people who use agenda column views, and a
+non-nil value silently defeats step 3 below — measured, the generated
+`:COLUMNS:` is then ignored entirely.
 
 Four steps, end to end.
 

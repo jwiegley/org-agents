@@ -3014,10 +3014,15 @@ empty buffer."
 ;;
 ;; MEASURED: `org-agenda-columns' already runs inside an `org-ql-search'
 ;; results buffer.  That buffer is an `org-agenda-mode' one carrying
-;; `org-hd-marker' on every line, `org-columns-get-format' reads the
-;; format from the matched entry's inherited `:COLUMNS:' through its
-;; `(org-entry-get m "COLUMNS" t)' branch, and an edit goes back to the
-;; source file through `org-columns-edit-value'.  So corpus-wide
+;; `org-hd-marker' on every line, and `org-agenda-columns' itself reads
+;; the format from the matched entry's inherited `:COLUMNS:' -- the
+;; `(org-entry-get m "COLUMNS" t)' arm of its own `cond', which
+;; `org-overriding-columns-format', `org-local-columns-format' and the
+;; `org-columns-default-format-for-agenda' option all outrank -- and an
+;; edit goes back to the source file through
+;; `org-columns-edit-value'.  (Not `org-columns-get-format': that reads
+;; `(org-entry-get nil "COLUMNS" t)', which in an agenda buffer is the
+;; agenda buffer's own absent property.)  So corpus-wide
 ;; displayed attributes with write-back editing exist today, and what was
 ;; missing was a format string.  This generates one; README's
 ;; "Corpus-wide column view" is the recipe.  No renderer is written here
@@ -3035,6 +3040,18 @@ may not be; and a summary over a `set' or a `string' has no meaning at
 all.  A user who wants one writes it into the `:COLUMNS:' line by hand --
 this command generates a starting point, not a policy.")
 
+(defconst org-agents--attribute-column-name-re "\\`[[:alnum:]_-]+\\'"
+  "What a property name must look like to be spellable in a `COLUMNS' format.
+Not this package's rule: it is the character class
+`org-columns-compile-format' matches a column's property with, `(in alnum
+\"_-\")'.  A name holding anything else is TRUNCATED at the offending
+character rather than rejected -- MEASURED, `%HAS=EQ %WITH.DOT{+}'
+compiled to columns named `HAS' and `WITH', and the number's summary
+operator was dropped with it -- and Org accepts such a name as a property
+perfectly well, since `org--valid-property-p' rejects only whitespace.
+So the registry may declare one and only the column view cannot spell
+it.")
+
 ;;;###autoload
 (defun org-agents-attribute-columns (names &optional insert)
   "Return a `COLUMNS' format for the registry attributes NAMES.
@@ -3049,6 +3066,12 @@ An undeclared name is REFUSED rather than emitted.  A `COLUMNS' line
 naming a property nothing declares renders an empty column, which looks
 exactly like a property nothing has set -- so the mistake would show up
 as a corpus with no data in it rather than as a mistake.
+
+So is a declared name a `COLUMNS' format cannot spell -- see
+`org-agents--attribute-column-name-re'.  Emitting one produces the very
+same silent, always-empty column, from a name the registry does declare:
+`PROJECT.PHASE' would render as a column headed `PROJECT' that nothing
+ever fills.
 
 MEASURED: `org-columns-compile-format' validates no operator whatever --
 `%X{nope}' compiles to `(\"X\" \"X\" nil \"nope\" nil)' with no complaint
@@ -3072,6 +3095,11 @@ implements is this function's own, and
                  (user-error "org-agents: `%s' is not declared in %s" name
                              (abbreviate-file-name
                               (expand-file-name org-agents-attributes-file))))
+               (unless (string-match-p org-agents--attribute-column-name-re
+                                       name)
+                 (user-error (concat "org-agents: `%s' cannot be spelled in"
+                                     " a COLUMNS format")
+                             name))
                (format " %%%s%s" name
                        (if-let* ((operator
                                   (alist-get
