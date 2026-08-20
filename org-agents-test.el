@@ -2893,7 +2893,17 @@ lacks the attribute."
       org-agents-test--prototype-corpus
     (org-agents-test--at-entry (funcall F "follower.org") "Ship the widget"
       (should (equal "ada" (org-agents-resolve-property "OWNER")))
-      (should (equal "7" (org-agents-resolve-property "REVIEWS"))))))
+      (should (equal "7" (org-agents-resolve-property "REVIEWS")))
+      ;; Case-insensitively, as the tiers around it are.  `org-entry-get'
+      ;; upcases a key for step 3 and `org-agents-attribute' matches a
+      ;; declaration case-insensitively for step 5, but step 4 is
+      ;; case-insensitive only by the CASE-FOLD argument to
+      ;; `assoc-string' -- MEASURED, dropping it left the whole suite
+      ;; green while a lowercase name resolved locally and from the
+      ;; registry and nowhere in between.
+      (should (equal "ada" (org-agents-resolve-property "owner")))
+      (should (equal "7" (org-agents-resolve-property "reviews")))
+      (should (equal "7" (org-agents-resolve-property "Reviews"))))))
 
 (ert-deftest org-agents-test-prototype-local-value-wins ()
   "A value the entry spells for itself outranks every prototype."
@@ -3377,6 +3387,48 @@ ordinary configuration; a test has to arrange that explicitly."
       (org-agents-test--at-entry (funcall F "f.org") "Follows a bare uuid"
         (should (equal "corpus-master" (org-agents-resolve-property "OWNER")))))))
 
+(ert-deftest org-agents-test-prototype-id-cache-invalidates-on-an-unsaved-edit ()
+  "An unsaved edit to an id-named master is what the next resolution sees.
+`org-agents-test-prototype-cache-invalidates-on-an-unsaved-edit' pins this
+for the registry's own prototypes; the id path is keyed on a file of its
+own -- whichever file the id happens to live in -- and had no equivalent.
+
+MEASURED, the gap admitted two independent mutations, each of which looks
+like tidying: dropping the key comparison in
+`org-agents--prototype-id-entry', and reading the master with
+`insert-file-contents' instead of `org-agents--in-org-copy' so that an
+unsaved buffer is invisible.  Both left 318 of 318 tests green, and both
+made every `$NAME^' agent resolve against the master as it stood at the
+session's first lookup: the user edits the master, runs the agent, and
+sees matches computed from the old value with no diagnostic."
+  (let ((uuid "1f2e3d4c-5b6a-7890-abcd-ef0123456789"))
+    (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+        `(("masters.org" . ,(concat "\
+* Master out in the corpus
+:PROPERTIES:
+:ID:      " uuid "
+:OWNER:   before
+:END:
+"))
+          ("f.org" . ,(concat "\
+* TODO Follows an id
+:PROPERTIES:
+:PROTOTYPE: id:" uuid "
+:END:
+")))
+      (let ((org-id-locations-file (expand-file-name ".org-id-locations" dir)))
+        (puthash uuid (funcall F "masters.org") org-id-locations)
+        (org-agents-test--at-entry (funcall F "f.org") "Follows an id"
+          (should (equal "before" (org-agents-resolve-property "OWNER"))))
+        ;; Edited in the visiting buffer and NOT saved.
+        (with-current-buffer (find-file-noselect (funcall F "masters.org"))
+          (goto-char (point-min))
+          (should (re-search-forward "^:OWNER:   before$" nil t))
+          (replace-match ":OWNER:   after")
+          (should (buffer-modified-p)))
+        (org-agents-test--at-entry (funcall F "f.org") "Follows an id"
+          (should (equal "after" (org-agents-resolve-property "OWNER"))))))))
+
 (ert-deftest org-agents-test-prototype-missing-attributes-file-resolves-nothing ()
   "No registry: no named prototype, no default, one diagnostic, no error.
 `org-agents--file-cache-key' answers nil for a file that cannot be read,
@@ -3786,6 +3838,54 @@ about an entry no prototype and no default is involved in."
       (should (equal "" (org-agents-resolve-property "S")))
       (should (equal (org-entry-get nil "S")
                      (org-agents-resolve-property "S"))))))
+
+(ert-deftest org-agents-test-property-resolved-empty-value-is-not-no-value ()
+  "`(property-resolved NAME \"\")' selects the empty value, not the absent one.
+The VALUE argument admits `\"\"' -- `org-agents--check-resolved-args' asks
+only for a string, so a query or a caller that passes a possibly-empty
+value reaches this -- and \"resolves to the empty string\" and \"does not
+resolve at all\" are different questions the suite did not distinguish.
+MEASURED, rewriting the predicate's comparison as
+`(string-equal value (or resolved \"\"))' left 318 of 318 tests green; the
+two readings differ on exactly this input, and under the mutant the form
+matches every entry in scope with no `:S:' line at all rather than the one
+entry that spells `:S:' with nothing after it.  A massive over-match, and
+the ripgrep side objects to neither reading, since an empty value degrades
+to the wider existence arm.
+
+The agreement with org-ql's own `property' holds too, and needs
+`org-ql-use-preamble' nil to be visible: MEASURED, `(property \"S\" \"\")'
+selects the entry with the preamble off and NOTHING with it on, because
+org-ql's regexp preamble seeks `[ \\t]+' and then the value, which an
+empty value never spells.  `property-resolved' contributes no preamble
+ever, so it answers alike at both settings -- which is the same asymmetry
+its own docstring records, measured here on the value it is easiest to get
+wrong."
+  (org-agents-test--with-attr-corpus org-agents-test--resolved-registry
+      org-agents-test--resolved-corpus
+    ;; Only the entry that spells the name with nothing after it.
+    (should (equal (org-ql-select files '(property-resolved "S" "")
+                     :action '(org-get-heading t t t t))
+                   '("Spells the name and nothing after it")))
+    ;; The corpus holds three entries with no `:S:' line at all, and none
+    ;; of them matches.  This is the assertion the mutant fails.
+    (should (= 1 (length (org-ql-select files '(property-resolved "S" "")
+                           :action '(org-get-heading t t t t)))))
+    (dolist (preamble (list t nil))
+      (let ((org-ql-use-preamble preamble))
+        (should (equal (org-ql-select files '(property-resolved "S" "")
+                         :action '(org-get-heading t t t t))
+                       '("Spells the name and nothing after it")))))
+    ;; And org-ql's own `property' agrees where its preamble is out of
+    ;; the way.
+    (let ((org-ql-use-preamble nil))
+      (should (equal (org-ql-select files '(property "S" "")
+                       :action '(org-get-heading t t t t))
+                     '("Spells the name and nothing after it"))))
+    ;; A non-empty value on the same name selects nothing, so the empty
+    ;; string is being compared rather than ignored.
+    (should-not (org-ql-select files '(property-resolved "S" "x")
+                  :action '(org-get-heading t t t t)))))
 
 (ert-deftest org-agents-test-property-resolved-in-name-position ()
   "A `$ref' in the NAME position of `property-resolved' is the name string.
