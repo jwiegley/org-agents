@@ -15,8 +15,8 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~5,800 lines), and one
-tests it, `org-agents-test.el` — 344 ERT tests, all of which run in a
+One file makes up the package, `org-agents.el` (~7,600 lines), and one
+tests it, `org-agents-test.el` — 423 ERT tests, all of which run in a
 plain `make test` with no external service. The 35 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
@@ -147,9 +147,13 @@ This is the whole of it, as implemented.
 | `AGENT_FORMAT` | whitespace-separated property names, shown after the link in the `children` and `list` views. |
 | `AGENT_MATCH` | written by the package on a generated alias, never by hand. |
 | `AGENT_MATCHED` | written by the package after an update: how many entries matched, and when. |
+| `AGENT_ACTION` | what to do to the entries the query matched. Read only by `org-agents-apply-actions`, from this entry's own drawer — never inherited, never evaluated, and never read on a save. See [Action code](#action-code). |
 
-`PROTOTYPE` and `ID` are the only properties outside that table the package
-reads by name. `PROTOTYPE` names the entry a value is inherited *from*, and
+`PROTOTYPE`, `ID` and the properties the action verbs edit are the only ones
+outside that table the package reads by name. The verbs read `SCHEDULED`,
+`DEADLINE`, `PRIORITY`, the effort property (`Effort` by default) and, for
+`archive!`, an inherited `ARCHIVE` — each of them at the entry it is about to
+edit, and each described under [Action code](#action-code). `PROTOTYPE` names the entry a value is inherited *from*, and
 is described under [Prototypes](#prototypes). `ID` is how a match is linked
 to: every rendered match is read for one, and an entry that has one is
 registered with `org-id-add-location` so the link resolves — so an update
@@ -1035,12 +1039,12 @@ something you can check rather than take on trust.
 | `set-property!(NAME, VALUE)` | the property `NAME` | `org-entry-put` | |
 | `delete-property!(NAME)` | removes the property `NAME` | `org-entry-delete` | **every time** |
 | `tag!(+added -removed)` | the entry's own tags | `org-set-tags` | |
-| `todo!(STATE)` | the TODO keyword | `org-todo` | |
+| `todo!(STATE)` | the TODO keyword, and nothing else — no `CLOSED`, no note; a repeating entry is refused | `org-todo` | |
 | `priority!(A)` | the priority cookie | `org-priority` | |
 | `scheduled!(DATE)` | the `SCHEDULED` stamp | `org-schedule` | |
 | `deadline!(DATE)` | the `DEADLINE` stamp | `org-deadline` | |
 | `effort!(VALUE)` | `org-effort-property`, normally `Effort` | `org-entry-put` | |
-| `archive!` | archives the subtree | `org-archive-subtree` | **every time** |
+| `archive!` | archives the subtree, into a buffer and never to disk | `org-archive-subtree` | **every time** |
 
 Several of them refuse more than Org does, and each refusal is a measured
 hazard rather than fastidiousness.
@@ -1075,9 +1079,49 @@ different ones file by file. `org-todo` refuses an unknown state anyway; this
 refusal happens in the planning phase instead, so a typo costs a refusal
 rather than half a corpus.
 
+**`todo!` refuses a *repeating* entry**, and this one is a disappointment
+taken on purpose. Measured on `* TODO Item` with
+`SCHEDULED: <2020-01-01 Wed +1w>`: `org-todo` runs `org-auto-repeat-maybe`
+from inside itself, so the entry is still `TODO` afterwards, its stamp has
+moved to `<2020-01-08 Wed +1w>` and it has gained a `:LAST_REPEAT:` property
+— while the line the user approved said `TODO -> DONE`. Two edits no report
+line named, and an outcome the entry never reached. The repeater arithmetic
+happens at apply time, so no dry run can show it; advancing a repeater is a
+per-entry judgement anyway, and that is what `C-c C-t` is for.
+
+**`set-property!` will not write an `AGENT_` name, `PROTOTYPE`, or
+`ARCHIVE`.** Measured: `set-property!("AGENT_QUERY", "(todo)")
+set-property!("AGENT_ACTION", "archive!")` left both properties on a matched
+entry — one confirmed action turning every entry it matched into an agent
+carrying its own action, written into files you have never edited. That is
+exactly the per-file trust the non-inheritance rule exists to keep.
+`ARCHIVE` is refused for a second measured reason: it *steers* where
+`archive!` puts a subtree, and since the whole plan is computed before any
+row is applied, the dry run named the innocuous default while the subtree
+went to the other file.
+
+**One action writes each field once.** Measured: `tag!(+alpha) tag!(+beta)`
+at an entry tagged `:api:` reported `:api: -> :api:beta:` on its second line
+and left the entry `:api:alpha:beta:` — a report showing *less* change than
+the run made, because every planner runs against the state the run began in.
+So two verbs writing one field is a parse error naming both, before the
+corpus is opened: `tag!(+alpha -stale)` is how you say it in one. A verb of
+your own declares what it writes with `org-agents-action-field`; without a
+declaration, two calls of it collide and two different verbs do not.
+
 **`archive!` must be the last verb**, and may appear once. It removes the
 subtree a later verb would edit, so the ordering is a parse error rather than
 something an apply pass discovers half way through.
+
+**`archive!` saves nothing, and checks its destination twice.** Measured:
+`org-archive-subtree` ends with `save-buffer` on the archive file, because
+`org-archive-subtree-save-file-p` defaults to `from-org` — so a confirmed
+`archive!` put files on disk while the command's own summary said *nothing
+was saved*, and `undo` in the source buffer cannot take a file back off a
+disk. The archive buffer is now left modified and unsaved like every other
+buffer a run touches, and it is named in the summary. The destination is also
+recomputed immediately before archiving, and a subtree is not archived at all
+where that disagrees with the line you approved.
 
 ### Value keywords
 
@@ -1136,7 +1180,7 @@ Answered `n`, the header changes to `NOTHING WAS APPLIED.` and not one byte
 was written. Answered `y`, each line gains its outcome:
 
 ```
-org-agents: 6 edits at 3 entries in 2 files.  Nothing was saved; every edit is undoable per buffer.
+org-agents: 6 edits at 3 entries in 2 files (1 not open before this ran).  Nothing was saved; every edit is undoable per buffer.
 /home/johnw/org/proj.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
 /home/johnw/org/proj.org:1: tag!(+reviewed)  :api: -> :api:reviewed:  applied
 /home/johnw/org/proj.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
@@ -1161,12 +1205,62 @@ is *N modified buffers*, reviewable and undoable one at a time, not N
 modified files.
 
 A verb's planning phase is not trusted to write nothing — it is *checked*.
-`buffer-chars-modified-tick` is read before and after every planner call, and
-a tick that moved aborts the whole command naming the verb, before anything
-is applied. Measured, and this is why the tick and not the obvious guard:
+`buffer-chars-modified-tick` is read for **every buffer that was alive when
+the plan began**, before and after every planner call, and a tick that moved
+aborts the whole command naming the verb and the buffer, before anything is
+applied. Measured, and this is why the tick and not the obvious guard:
 `buffer-read-only` cannot be used, because `org-entry-put` wraps its body in
 `org-no-read-only`, which binds `inhibit-read-only`, and it writes into a
-read-only buffer regardless.
+read-only buffer regardless. Measured also, and this is why every buffer and
+not the one being planned at: a planner that wrote into a shared scratch
+buffer completed the command with no complaint at all, and left that buffer
+modified on the runs the user *cancelled*.
+
+A row that would change nothing says so, and is not counted as an edit.
+Measured: `delete-property!(ABSENT)` reported `1 edit at 1 entry in 1 file`
+and, because the verb is destructive, asked about deleting nothing — which
+over ninety matched entries of which four carry the property is ninety
+confirmations, eighty-six of them about nothing, in the one sentence this
+design leans on for informed consent. Such a line reads `nothing to do`, the
+header counts them separately, and where no row would change anything the
+command says `THERE IS NOTHING TO DO` and asks nothing.
+
+### The blast radius is the rows the report shows
+
+That is a claim about a *run*, and Org's editing primitives do not honour it
+on their own: they are the interactive commands, and they run your hooks. So
+the apply phase binds off everything that would edit what no line names —
+`org-after-todo-state-change-hook`, `org-trigger-hook`,
+`org-property-changed-functions`, `org-after-tags-change-hook`,
+`org-archive-hook`, `org-archive-finalize-hook`, `org-log-done`,
+`org-todo-log-states`, `org-todo-state-tags-triggers`,
+`org-provide-todo-statistics`, `org-log-reschedule`, `org-log-redeadline` and
+`org-archive-subtree-save-file-p`.
+
+Measured, each of these through the real command: one function on
+`org-after-todo-state-change-hook` left `:TRIGGERED: yes` on an entry the
+query never matched, while the report said `1 edit at 1 entry in 1 file`;
+`org-log-done` `time` added a `CLOSED:` line no line named; and
+`org-trigger-hook` is org-edna's own mechanism — the system this design
+deliberately does not extend — so a corpus with `org-edna-mode` on would
+schedule successors and flip blockers in other files, none of it reported and
+none of it counted against `org-agents-action-limit`.
+
+The cost is worth stating plainly: **`todo!` sets the keyword and nothing
+else.** No `CLOSED` stamp is added or removed, no state note is written (a
+note would *prompt*, in the middle of a run over a corpus), no statistics
+cookie in an ancestor is refreshed, and no tag trigger fires.
+
+`org-blocker-hook` is deliberately *not* bound off: a blocker is your own
+refusal to let an entry change, and binding it off would widen a run past
+what your config allows. Measured, though, `org-todo` fails **silently** when
+a blocker blocks — a `message` and a `throw`, with no signal — so the row
+would be reported `applied`. That is why every applied row is **verified**:
+the verb's own planning phase is run again at the entry, and where what it
+reads back is not what the line said, the row reads `APPLIED DIFFERENTLY: the
+entry now reads X, and the plan said Y`, the run stops there, and every later
+line says `not attempted`. It is the backstop for the failures nobody has
+thought of yet.
 
 ### Stamps: the same command, pointed at a selection
 
@@ -1259,17 +1353,30 @@ and every argument would have to be turned back into a string anyway. The
 regexp lexer refuses all of that by shape.
 
 **So the worst thing expressible in `:AGENT_ACTION:` is a bounded, greppable
-Org edit** — mass retagging, mass property deletion, mass archiving. There is
-no shell, no network, and no file write outside Org's own entry-editing
-primitives. And the bound on a misfire is `org-agents-action-limit` entries,
-in modified buffers, unsaved, undoable one buffer at a time.
+Org edit** — mass retagging, mass property deletion, mass archiving — at the
+entries the report lists and nowhere else. There is no shell, no network, and
+no file write outside Org's own entry-editing primitives. And the bound on a
+misfire is `org-agents-action-limit` entries, in modified buffers, unsaved,
+undoable one buffer at a time. An action cannot plant an agent, a prototype
+link or action text, either: `set-property!` refuses those names.
 
-Two protections fall out of machinery this feature did not write, and are
-pinned by tests anyway. An agent's action never edits the agent itself,
-because `org-agents--collect` drops the agent from its own match set; and it
-never edits a generated alias, because `org-agents-exclude` defaults to
+Two protections come free on the ordinary path from machinery this feature
+did not write. An agent's action never edits the agent itself, because
+`org-agents--collect` drops the agent from its own match set; and it never
+edits a generated alias, because `org-agents-exclude` defaults to
 `(not (property "AGENT_MATCH"))`. If the self-skip ever regressed, an action
 would rewrite the drawer it was read from.
+
+The *explicit* path does not go through `org-agents--collect`, so it enforces
+both itself. Measured, before it did: an agent whose body held a link to
+itself, with that line in the region, applied
+`set-property!(AGENT_QUERY, hijacked)` to its own drawer and rewrote the
+query the next run would read. A rendered view is full of links and a region
+is a hand-made selection, so the one entry that must not be touched is the
+one most easily selected by accident. Both are now skipped and *reported* —
+`skipped: this is the agent itself`, `skipped: this is a generated alias` —
+rather than dropped, because a selection you made and the command declined
+has to be visible.
 
 ### Writing a verb of your own
 
@@ -1317,6 +1424,27 @@ To mark a verb as one that must come last, as `archive!` is:
 ```elisp
 (put 'org-agents-action/shout! 'org-agents-action-terminal t)
 ```
+
+And to say what it writes, so that the one-write-per-field rule knows when
+two of your calls collide:
+
+```elisp
+(put 'org-agents-action/shout! 'org-agents-action-field
+     (lambda (args) (format "the property %s" (upcase (car args)))))
+```
+
+Without that, every call of `shout!` claims one field, so `shout!(A)
+shout!(B)` is refused. With it, those two are different fields and
+`shout!(A) shout!(a)` is still refused, which is right: Org matches a
+property name case-insensitively. The string is printed in the refusal, so
+write it to be read.
+
+An applied row is **verified**: the planning phase is run again at the entry
+and what it reads back has to equal the `NEW` the line showed. So keep the
+two phases in step — a `plan` that predicts something the `apply` does not
+produce stops the run with `APPLIED DIFFERENTLY`, which is the diagnostic,
+not a bug in the machinery. A terminal verb is exempt, since the subtree it
+was about to remove is gone.
 
 ### What is deliberately not ported
 
@@ -1440,15 +1568,15 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 344 tests, no external service needed
+make test        # 423 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `344 tests, 344 results as expected, 0 unexpected` and
+`make test` reports `423 tests, 423 results as expected, 0 unexpected` and
 takes about half a minute. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `309 results as expected, 0
+set up. Where `rg` is not on `PATH` it reports `388 results as expected, 0
 unexpected, 35 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing. No test asserts

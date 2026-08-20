@@ -82,6 +82,7 @@ to the position it appears in.
              org-agents-update-all
              org-agents-apply-actions
              org-agents-preview
+             org-agents-insert-dblock
              org-agents-list-approvals
              org-agents-check-attributes
              org-agents-attribute-columns

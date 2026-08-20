@@ -118,7 +118,11 @@ Consumers:
 
 Any entry may carry `:PROTOTYPE: <name-or-id>`. A name resolves among the
 entries of a `Prototypes` top-level section in the attributes file; an
-`id:`-style UUID resolves to any entry in the corpus. Prototypes may
+`id:`-style UUID resolves to an entry the `org-id` location table knows
+about — `org-id-find-id-file`, and deliberately not `org-id-find`, which
+would rescan the corpus and rewrite `org-id-locations-file` behind a
+render; where that table has no entry the prototype dangles, with a
+one-line diagnostic. Prototypes may
 themselves carry `:PROTOTYPE:`; chains are followed with a visited set, and
 a cycle is a `user-error` naming the cycle.
 
@@ -209,6 +213,26 @@ Epic 5's trust model or not at all.
   chain. `action-code-safety.md` part 3 is the argument: inheritable actions
   make per-file trust meaningless, because saving A would run code written
   in B.
+- **How much one run may edit.** `org-agents-action-limit`, a risky option
+  defaulting to 100: a plan over more entries is REFUSED, naming the count,
+  the limit and the option, before anything is planned — not truncated,
+  because a truncated plan applies a subset nobody can predict. The gate is
+  on entries, not edits.
+- **There is no batch path.** The whole-plan question is asked
+  unconditionally, so where there is nobody to answer it — `noninteractive`,
+  `inhibit-interaction` — the *whole* run is refused, not only its
+  destructive verbs. The dry run is still printed. A variable that silenced
+  the question is exactly what this epic must not have.
+- **The report is the truth.** A run may not write anything its dry run did
+  not name, and that takes more than well-behaved verbs: the apply phase
+  binds off the hooks and the logging that would edit what no line names
+  (`org-trigger-hook`, `org-after-todo-state-change-hook`, `org-log-done`,
+  the archive hooks, and `org-archive-subtree-save-file-p`, which otherwise
+  SAVES the archive file); one action may write each field only once, since
+  a second verb's plan is computed from before the first ran; every applied
+  row is re-read, and a divergence stops the run; and the two edits no dry
+  run can show are refused outright — `todo!` on a repeating entry, and
+  `archive!` whose destination moved between the report and the answer.
 
 ## What is deliberately not ported
 
