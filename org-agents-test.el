@@ -13,6 +13,34 @@
 (require 'ert)
 (require 'org-agents)
 
+;; Ahead of every test, because a macro used before it is defined is
+;; compiled as a FUNCTION call: byte-compiling this file said "macro
+;; `org-agents-test--messages' defined too late", and the gate test that
+;; used it would have failed with a void-function instead of asserting
+;; anything.  `make test' loads the source, where the body is expanded
+;; lazily, so the suite stayed green and said nothing about it.
+
+(defvar org-agents-test--message-log nil
+  "Where `org-agents-test--messages' collects what `message' was passed.")
+
+(defmacro org-agents-test--messages (&rest body)
+  "Evaluate BODY and return the list of texts it passed to `message'.
+The package reports what a save did through the echo area, which in batch
+goes to stderr and is gone: capturing the calls is the only way to assert
+on a message, and on the absence of one."
+  (declare (indent 0))
+  `(let ((org-agents-test--message-log nil))
+     (cl-letf (((symbol-function 'message)
+                (lambda (format &rest args)
+                  ;; `message' with a nil format clears the echo area and
+                  ;; has no text to record.
+                  (when format
+                    (let ((text (apply #'format-message format args)))
+                      (push text org-agents-test--message-log)
+                      text)))))
+       ,@body)
+     (nreverse org-agents-test--message-log)))
+
 (ert-deftest org-agents-test-expand-truthy ()
   (should (equal (org-agents--expand '(and (todo) $URL))
                  '(and (todo) (property "URL")))))
@@ -3401,16 +3429,28 @@ the same case for the same reason."
       (should (string-match-p "org-agenda-files" (error-message-string err))))))
 
 (ert-deftest org-agents-test-preview-gates-and-reads-its-query ()
-  "A preview is gated like an agent, and evaluates nothing it refuses."
-  (cl-letf (((symbol-function 'org-ql-search)
+  "A preview is gated like an agent, and evaluates nothing it refuses.
+`org-agenda-files' is stubbed, and each error is matched by TEXT.  Left
+unstubbed, batch leaves the agenda empty and the preview's own \"nothing
+to preview\" `user-error' satisfied every `should-error' here: deleting
+the gate call from `org-agents-preview' outright left this test green."
+  (cl-letf (((symbol-function 'org-agenda-files) (lambda (&rest _) '("a.org")))
+            ((symbol-function 'org-ql-search)
              (lambda (&rest _) (error "must not be reached"))))
-    (should-error (org-agents-preview "(and (todo") :type 'user-error)
-    (should-error (org-agents-preview "(headline \"x\")") :type 'user-error)
+    (let ((err (should-error (org-agents-preview "(and (todo")
+                             :type 'user-error)))
+      (should (string-match-p "the query" (error-message-string err))))
+    (let ((err (should-error (org-agents-preview "(headline \"x\")")
+                             :type 'user-error)))
+      (should (string-match-p "not an org-ql predicate"
+                              (error-message-string err))))
     (let ((org-agents--session-approved (make-hash-table :test 'equal))
           (org-agents-safe-queries nil)
           (noninteractive t))
-      (should-error (org-agents-preview "(and (todo) (shell-command \"x\"))")
-                    :type 'user-error))))
+      (let ((err (should-error
+                  (org-agents-preview "(and (todo) (shell-command \"x\"))")
+                  :type 'user-error)))
+        (should (string-match-p "not approved" (error-message-string err)))))))
 
 (ert-deftest org-agents-test-preview-gates-the-form-it-runs ()
   "A preview refuses a form its exclusion made unsafe.
@@ -3459,27 +3499,6 @@ rewrite its aliases rather than insert anything."
 ;; Every test here saves a real file, through `save-buffer', and reads the
 ;; result back off disk rather than out of the buffer that wrote it: what
 ;; the mode promises is about the bytes that reach the file.
-
-(defvar org-agents-test--message-log nil
-  "Where `org-agents-test--messages' collects what `message' was passed.")
-
-(defmacro org-agents-test--messages (&rest body)
-  "Evaluate BODY and return the list of texts it passed to `message'.
-The package reports what a save did through the echo area, which in batch
-goes to stderr and is gone: capturing the calls is the only way to assert
-on a message, and on the absence of one."
-  (declare (indent 0))
-  `(let ((org-agents-test--message-log nil))
-     (cl-letf (((symbol-function 'message)
-                (lambda (format &rest args)
-                  ;; `message' with a nil format clears the echo area and
-                  ;; has no text to record.
-                  (when format
-                    (let ((text (apply #'format-message format args)))
-                      (push text org-agents-test--message-log)
-                      text)))))
-       ,@body)
-     (nreverse org-agents-test--message-log)))
 
 (defun org-agents-test--file-text (file)
   "The bytes of FILE, read off disk rather than out of a buffer.
