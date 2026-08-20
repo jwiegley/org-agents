@@ -4588,6 +4588,105 @@ Prototype documentation and the worked example.
 ]
 #+end_src
 
+* TODO [#D] Narrow a resolved property by the prototypes that could supply it
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prototypes-opa.6
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-20 Thu 04:40]
+:MODIFIED: [2026-08-20 Thu 04:40]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+Narrow a resolved property by the prototypes that could actually supply it.
+
+## Problem
+
+The prefilter widening that makes prototypes sound (Epic 3, `orga-prototypes-opa.4`) pushes
+an alternation whose second arm is **name-independent**:
+
+    (?:^[ \t]*:NAME\+?:[ \t]+VALUE[ \t]*$|^[ \t]*:PROTOTYPE\+?:)
+
+The second arm selects every file carrying *any* `:PROTOTYPE:` line, whether or not the
+prototype it names declares NAME at all. That is sound — it can only widen — and it was the
+right call for correctness. But its cost grows with prototype adoption, and at high adoption
+the prefilter stops narrowing.
+
+Measured on the real corpus (3,635 non-archive files), 2026-08-20:
+
+| prototype adoption | files a resolved query selects | of 3,635 |
+|---|---|---|
+| today (0 files carry `:PROTOTYPE:`) | 309 (the value arm alone) | 8% |
+| ~10% of files | ≈672 | 18% |
+| ~50% of files | ≈1,817 | 50% — narrowing essentially gone |
+
+The 309 figure is `:NEXT_REVIEW:` as a representative property. Confirmed in miniature by the
+coordinator's fixture: `(property "OWNER" "alice")` selected 1 file where
+`(property-resolved "OWNER" "alice")` selected 4 of 11, the extra three being every
+prototype-bearing file.
+
+There is no bug today — adoption is zero, so a resolved query costs exactly what a plain one
+costs. This is a scaling issue to fix before prototypes are used widely, not a defect to fix
+now.
+
+## Proposal
+
+The registry already knows which prototypes declare which attributes. So the second arm can
+name the prototypes that could actually supply NAME, rather than all of them:
+
+1. From the registry snapshot (the resolution already runs inside
+   `org-agents--in-attributes-batch`, so the snapshot is at hand), compute the set of
+   prototype names whose own resolved value for NAME is non-nil — following chains, since a
+   prototype may inherit NAME from *its* prototype.
+2. Emit the second arm as an alternation over just those names:
+   `^[ \t]*:PROTOTYPE\+?:[ \t]+(?:Task|Chained)[ \t]*$`
+3. When that set is empty, no prototype can supply NAME, so the second arm is dropped
+   entirely and the pattern collapses to the plain value pattern — strictly better than today.
+4. When a prototype is named by `id:` UUID rather than by registry name, the arm cannot be
+   narrowed that way; keep the broad `:PROTOTYPE:` arm whenever any *unregistered* route
+   exists, so soundness never depends on the registry being complete.
+
+Soundness argument to hold the implementation to: a matching entry either spells the value
+locally, or names a prototype that resolves NAME. Step 1 enumerates exactly the latter set
+from the registry, so the narrowed arm is a superset of the prototype-supplied matches —
+,*provided* step 4's escape hatch covers every route the registry cannot see. That proviso is
+the whole risk and belongs in a test.
+
+## Acceptance Criteria
+
+- A resolved query whose attribute no prototype declares pushes the plain value pattern with
+  no `:PROTOTYPE:` arm, and a test asserts the arm is absent.
+- A resolved query whose attribute two prototypes declare pushes an arm naming exactly those
+  two, chains included (a prototype inheriting NAME from its own prototype counts).
+- An `id:`-named prototype, or any route the registry cannot enumerate, falls back to the
+  broad arm — pinned by a test that would lose a match if it did not.
+- The Epic 3 differential tests still pass unchanged, and one new differential fixture has a
+  prototype-bearing file whose prototype does NOT declare the queried attribute: it must be
+  excluded from the candidate set while every real match survives.
+- README's prototype-cost paragraph is updated with the new figures.
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prototypes-opa.6",
+    "depends_on_id": "orga-prototypes-opa",
+    "type": "parent-child",
+    "created_at": "2026-08-20T11:40:01.304370Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
 * DONE [#B] Prove the database prefilter's superset property    :differential:prefilter:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
