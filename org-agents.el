@@ -2368,8 +2368,12 @@ the child on every Emacs this package supports."
               ;; SUCCESSFUL answer was discarded as an expiry.  A child
               ;; ripgrep answers in milliseconds hits that window
               ;; whenever anything delays this loop's first call.  With
-              ;; nil the pending sentinel runs on the first call, and a
-              ;; nil bound then WAITS rather than spins.
+              ;; nil the pending sentinel runs on the first call, and
+              ;; neither loop below can spin: MEASURED, with no live
+              ;; process at all `(accept-process-output nil 0.05)' still
+              ;; sleeps -- 160 ms per call -- so even the pathological
+              ;; case where no sentinel ever arrives costs the bound in
+              ;; wall clock and nothing in CPU.
               (let ((deadline (and org-agents-rg-timeout
                                    (+ (float-time) org-agents-rg-timeout))))
                 ;; `process-live-p' is a SECOND completion signal, so
