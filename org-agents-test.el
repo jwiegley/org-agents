@@ -261,11 +261,32 @@ distinguish from any other function call in a query."
     (should (org-agents--gate '(and (todo "TODO") (property "URL"))))))
 
 (ert-deftest org-agents-test-gate-refuses-bare-call ()
-  "An unapproved arbitrary call is never evaluated, even inside (and ...)."
+  "An unapproved arbitrary call is refused AND never evaluated, inside (and ...).
+The refusal and the non-evaluation are two claims, and a `should-not' on
+the gate makes only the first: it establishes that the gate answered nil,
+not that nothing ran on the way to answering.  MEASURED: a gate mutated
+to `(dolist (sub (cdr query)) (ignore-errors (eval sub t)))' before its
+`or' still answers nil, so a single `should-not' stays green while the
+call it was named for has run.  The second arm is what catches that.
+
+The tripwire is a COUNTER rather than a stub that signals.  The gate
+reaches `user-error' on some paths and its callers catch broadly, so a
+raising stub can be swallowed and read as a pass; a counter cannot be.
+`org-agents-test-gate-refuses-call-in-predicate-argument' makes the same
+claim the same way for a call in a predicate's argument."
   (let ((org-agents--session-approved (make-hash-table :test 'equal))
         (org-agents-safe-queries nil)
         (noninteractive t))
-    (should-not (org-agents--gate '(and (todo) (shell-command "touch /tmp/pwned"))))))
+    ;; Refused.  Keeps the literal form the spec's Verification section
+    ;; cites by name.  Nothing writes `/tmp/pwned': the point is that the
+    ;; call never runs, and the suite writes only under its own temporary
+    ;; directories.
+    (should-not (org-agents--gate '(and (todo) (shell-command "touch /tmp/pwned"))))
+    ;; And nothing in it was evaluated on the way to the refusal.
+    (let ((org-agents-test--tripwire-count 0))
+      (should-not (org-agents--gate
+                   '(and (todo) (org-agents-test--tripwire "touch /tmp/pwned"))))
+      (should (= 0 org-agents-test--tripwire-count)))))
 
 (ert-deftest org-agents-test-gate-residual-needs-approval-then-passes ()
   (let ((org-agents--session-approved (make-hash-table :test 'equal))
@@ -6192,7 +6213,15 @@ the gate call from `org-agents-preview' outright left this test green."
       (let ((err (should-error
                   (org-agents-preview "(and (todo) (shell-command \"x\"))")
                   :type 'user-error)))
-        (should (string-match-p "not approved" (error-message-string err)))))))
+        (should (string-match-p "not approved" (error-message-string err))))
+      ;; "evaluates nothing it refuses" is a claim about EVALUATION, and a
+      ;; `should-error' makes only the claim that it refused.  The tripwire
+      ;; counter makes the other half, exactly as
+      ;; `org-agents-test-gate-refuses-bare-call' does for the gate itself.
+      (let ((org-agents-test--tripwire-count 0))
+        (should-error (org-agents-preview "(and (todo) (org-agents-test--tripwire))")
+                      :type 'user-error)
+        (should (= 0 org-agents-test--tripwire-count))))))
 
 (ert-deftest org-agents-test-preview-gates-the-form-it-runs ()
   "A preview refuses a form its exclusion made unsafe.
