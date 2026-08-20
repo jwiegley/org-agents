@@ -2988,11 +2988,17 @@ and nothing said so -- the unconfirmed count was 0, because no candidate
 was ever produced to go unconfirmed."
   (skip-unless (executable-find "rg"))
   (org-agents-test--with-attr-corpus org-agents-test--registry-example
-      '(("ok.org" . "* LF entry\n:PROPERTIES:\n:PLAINOK: y\n:END:\n"))
+      '(("ok.org" . "\
+* LF entry
+:PROPERTIES:
+:PLAINOK: y
+:SHARED: seen-by-both
+:END:
+"))
     (let ((cronly (org-agents-test--write-raw
                    (funcall F "cronly.org")
                    (concat "* CR entry\r:PROPERTIES:\r:CRONLYNAME: x\r"
-                           ":REVIEWS: many\r:END:\r")
+                           ":SHARED: seen-by-both\r:REVIEWS: many\r:END:\r")
                    'binary)))
       ;; One: the prefilter admits it, so it is a file this command
       ;; believes it has accounted for.
@@ -3022,7 +3028,19 @@ was ever produced to go unconfirmed."
       (org-agents-check-attributes 'all)
       (let ((names (org-agents-test--attr-undeclared-names)))
         (should (member "CRONLYNAME" names))
-        (should (member "PLAINOK" names)))
+        (should (member "PLAINOK" names))
+        (should (member "SHARED" names)))
+      ;; `:SHARED:' is in BOTH the blind file and a file the census saw, and
+      ;; it is ONE row: `org-agents--attr-census-merge' folds the two
+      ;; producers' candidates for one name together rather than reporting
+      ;; the name once per enumerator.
+      (let ((shared (cl-remove-if-not
+                     (lambda (line) (string-match-p " SHARED is not" line))
+                     (org-agents-test--attr-finding-lines))))
+        (should (= 1 (length shared)))
+        ;; And the count is both producers' -- one census site plus one
+        ;; property line the walk read.
+        (should (string-match-p "(2 property-line sites)" (car shared))))
       ;; And its VALUES are judged too -- ONCE.  The value tier's own
       ;; ripgrep narrowing runs WITH `--crlf' and may report this file, so
       ;; a blind file walked without being removed from that list would

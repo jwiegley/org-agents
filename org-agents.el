@@ -5666,10 +5666,8 @@ whitespace.  A match that cannot be located has no entry to read them
 at, and so has no suffix either."
   (when-let* ((props (and format-props (split-string format-props)))
               (m (org-agents--live-marker element)))
-    (with-current-buffer (marker-buffer m)
-      (org-with-wide-buffer
-       (goto-char m)
-       (mapconcat (lambda (p) (or (org-entry-get nil p) "")) props "  ")))))
+    (org-with-point-at m
+      (mapconcat (lambda (p) (or (org-entry-get nil p) "")) props "  "))))
 
 (defun org-agents--alias-target (heading)
   "The target of the first bracket link in HEADING, or nil if it has none.
