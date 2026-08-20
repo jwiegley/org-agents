@@ -474,15 +474,17 @@ Appearance documentation, and what is deliberately absent.
 ]
 #+end_src
 
-* TODO [#C] A corpus-wide attribute registry
+* DONE [#C] A corpus-wide attribute registry
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-attribute-registry-b1j
 :LABELS:   []
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 16:43]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:43]
+:CLOSE_REASON: All children completed
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -700,15 +702,17 @@ machinery.
 ]
 #+end_src
 
-* TODO [#C] Make the corpus-scope attribute lint usable via ripgrep
+* DONE [#C] Make the corpus-scope attribute lint usable via ripgrep
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-attribute-registry-b1j.5
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-20 Thu 00:00]
-:MODIFIED: [2026-08-20 Thu 00:00]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed, commits ee0d9b8 be2f4d3 8a78d7a 4930e3b 21bc980 3f7e5ce. Two tiers: one ripgrep census answers the vocabulary question for the whole corpus, and the value tier narrows per declared name through the existing prefilter with a progress reporter. Coordinator-verified on the real corpus: 67s cold producing a real 87-finding report, against >600s and killed with no report before; the docstring states the range honestly as 7-9s warm, 64-110s cold. The equivalence obligation is a test (org-agents-test-attr-census-fast-equals-slow), and review found two real defects in the first cut: the census was blind to CR-only line endings and under-reported silently (21bc980), and the equivalence test was vacuous without ripgrep (509fcde). The command also no longer prompts per large file, which made it unusable across 296 files (4930e3b). Names that appear in property-line shape outside any drawer are excluded AND the count is reported rather than hidden.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -796,15 +800,17 @@ files should say so rather than appear hung.
 ]
 #+end_src
 
-* TODO [#D] Code hygiene in org-agents v1    :hygiene:
+* DONE [#D] Code hygiene in org-agents v1    :hygiene:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq
 :LABELS:   ["hygiene"]
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:53]
+:MODIFIED: [2026-08-20 Thu 16:43]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:43]
+:CLOSE_REASON: All children completed
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -840,15 +846,17 @@ mutation that shows it landed.
 - [ ] the byte-compile gate still passes at zero warnings, and the suite is still
       green, after every change
 
-* TODO [#D] One spelling for deciding whether a heading is an agent    :hygiene:
+* DONE [#D] One spelling for deciding whether a heading is an agent    :hygiene:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq.1
 :LABELS:   ["hygiene"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed, commit fdd16dc. One spelling for deciding whether a heading is an agent. The map proved the two did not differ over 1,161 cases before unifying them, so this is a pure refactor and the suite proves it.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -912,15 +920,17 @@ fourth caller written from the nearest example is how that rule gets lost.
 ]
 #+end_src
 
-* TODO [#E] One idiom for reading at a match's marker    :hygiene:
+* DONE [#E] One idiom for reading at a match's marker    :hygiene:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq.2
 :LABELS:   ["hygiene"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed by the coordinator, commit 935f7df. All SIX hand-rolled (with-current-buffer (marker-buffer m) (org-with-wide-buffer (goto-char m) ...)) sites now say org-with-point-at. Equivalence was checked against the macro's own expansion rather than recalled. Three of the six were in the action code, written after this issue was filed -- the idiom had already begun spreading again, which is the argument for one spelling. Done with Emacs finding the bounds and re-indenting after a naive paren count, defeated by parens inside strings, deleted a paren from the wrong line 59 lines away.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1216,15 +1226,17 @@ the fast idiom is already the house style.
 ]
 #+end_src
 
-* TODO [#E] Stop requiring org-ql-search at load time    :hygiene:
+* DONE [#E] Stop requiring org-ql-search at load time    :hygiene:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq.6
 :LABELS:   ["hygiene"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed, commit 3ee988d. org-ql-search is required lazily, in the one command that uses it, and the gate stays at zero warnings -- which was the constraint that made this non-trivial.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1284,15 +1296,17 @@ to make and to verify.
 ]
 #+end_src
 
-* TODO [#D] The gate's headline test does not check what its docstring claims    :hygiene:test:
+* DONE [#D] The gate's headline test does not check what its docstring claims    :hygiene:test:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-code-hygiene-tcq.7
 :LABELS:   ["hygiene","test"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:54]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed, commit 9d8878e. org-agents-test-gate-refuses-bare-call now establishes NON-EVALUATION, not merely that the gate answered nil. The RED evidence is necessarily inverted, since the test was the defect: the old assertion SURVIVES a mutation that adds (eval sub t) inside the gate, and the new one does not. This is the package's security boundary and the spec cites this test by name for exactly that claim.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2018,15 +2032,17 @@ which matters because that handling reads a keychain password.
 ]
 #+end_src
 
-* TODO [#D] A buffer-wide update refreshes only an agent's first block    :commands:feature:view:
+* DONE [#D] A buffer-wide update refreshes only an agent's first block    :commands:feature:view:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.16
 :LABELS:   ["commands","feature","view"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed, commit 14f8a5c. A buffer-wide update now refreshes EVERY block of a multi-block agent rather than the first, so no view is left stale in silence -- the same standard the action epic applied when it narrowed a verb rather than report an edit that did not happen. The byte-identical-save property was explicitly re-verified against this change, since refreshing more blocks is exactly what could have broken it.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -3057,15 +3073,17 @@ it turns out to name fewer than N files.
 ]
 #+end_src
 
-* TODO [#D] Bound how long the ripgrep prefilter can block Emacs
+* DONE [#D] Bound how long the ripgrep prefilter can block Emacs
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-gate-prefilter-by-cost-1h3
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 12:31]
-:MODIFIED: [2026-08-19 Wed 16:52]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed, commits 5ab2326 8a78d7a 493fa7b 7735bc8. The prefilter is now bounded and cannot block Emacs indefinitely. timeout(1) was rejected as a wrapper: it exists here only via nix coreutils and is absent from stock macOS, so the fix is make-process with a sentinel-driven deadline. The map found five traps by hitting them, one of which is a soundness trap worth recording: ripgrep can write to stderr WHILE printing a partial answer, so merging the streams would glue a warning onto a NUL-delimited path and --same-files would then silently drop a real file. Review then found the first cut hot-spun for the whole bound and discarded a successful answer -- CONFIRMED critical, reproduced twice, fixed, and 493fa7b records the measurement that it cannot spin.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -3409,15 +3427,17 @@ expand into IO.
 ]
 #+end_src
 
-* TODO [#D] Report a missing scope file legibly, not as a bufferp type error
+* DONE [#D] Report a missing scope file legibly, not as a bufferp type error
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-legible-missing-scope-file-5te
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 12:57]
-:MODIFIED: [2026-08-19 Wed 12:57]
+:MODIFIED: [2026-08-20 Thu 16:42]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 16:42]
+:CLOSE_REASON: Fixed, commit 66f000f. An unreadable scope file is now named once, and the scope is identified as the fault, instead of surfacing as 'Wrong type argument: bufferp' wrapped around org-ql's real complaint. Error-versus-skip was decided per scope kind and documented rather than left implicit; a file the user named explicitly is never silently dropped.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
