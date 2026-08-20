@@ -15,10 +15,11 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~7,600 lines), and one
-tests it, `org-agents-test.el` — 423 ERT tests, all of which run in a
-plain `make test` with no external service. The 35 that exercise the
-prefilter end to end need `rg` on `PATH`, and `make test` says so when it
+One file makes up the package, `org-agents.el` (~8,700 lines), and one
+tests it, `org-agents-test.el` — 442 ERT tests, all of which run in a
+plain `make test` with no external service. The 40 that exercise the
+prefilter and the attribute census end to end need `rg` on `PATH`, and
+`make test` says so when it
 is missing.
 
 Beside the agents there is an optional second file, which declares the
@@ -1749,16 +1750,16 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 423 tests, no external service needed
+make test        # 442 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `423 tests, 423 results as expected, 0 unexpected` and
+`make test` reports `442 tests, 442 results as expected, 0 unexpected` and
 takes about half a minute. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `388 results as expected, 0
-unexpected, 35 skipped`, and prints one line saying why — `skip-unless` is
+set up. Where `rg` is not on `PATH` it reports `402 results as expected, 0
+unexpected, 40 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing. No test asserts
 the count, so these four figures drift whenever the suite grows: read them
