@@ -16,8 +16,8 @@ candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
 One file makes up the package, `org-agents.el` (~5,200 lines), and one
-tests it, `org-agents-test.el` — 318 ERT tests, all of which run in a
-plain `make test` with no external service. The 34 that exercise the
+tests it, `org-agents-test.el` — 327 ERT tests, all of which run in a
+plain `make test` with no external service. The 35 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
 
@@ -840,16 +840,16 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 318 tests, no external service needed
+make test        # 327 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `318 tests, 318 results as expected, 0 unexpected` and
+`make test` reports `327 tests, 327 results as expected, 0 unexpected` and
 takes about half a minute. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `284 results as expected, 0
-unexpected, 34 skipped`, and prints one line saying why — `skip-unless` is
+set up. Where `rg` is not on `PATH` it reports `292 results as expected, 0
+unexpected, 35 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing. No test asserts
 the count, so these four figures drift whenever the suite grows: read them
