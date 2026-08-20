@@ -4548,6 +4548,15 @@ yield no pattern, so `org-agents--rg-files-for' answers t.  Treating that
 the whole corpus, which is the conflation this backend exists to avoid.
 Both t and `unavailable' therefore widen to the whole of FILES.
 
+The `t' arm is UNREACHABLE from here and is kept anyway, which is worth
+saying so that nobody deletes it believing it dead or keeps it believing
+it tested: `org-agents--rg-files-for' answers `t' only for an EMPTY
+pattern list, and the `org-agents--rg-name-p' gate above means this never
+passes one.  It is the contract's third answer, so it is handled here;
+`org-agents-test-attr-value-tier-narrows-per-declared-name' asserts it
+against `org-agents--rg-files-for' directly, because an assertion through
+this function cannot reach it.
+
 MEASURED on the author's corpus: 3 rare names narrow 3,673 files to 592
 and the walk is 8.75 s; 12 names including `CREATED' narrow to 3,648 and
 the walk is 20.19 s.  Narrowing helps enormously for a registry of rare

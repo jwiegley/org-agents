@@ -3110,7 +3110,19 @@ MEASURED on the author's corpus, they are the two largest matches the
 census produces: `END' 43,277 sites and `PROPERTIES' 41,840.  Asserted at
 BOTH levels, because only the pair of assertions says the exclusion is
 doing work: present in `org-agents--attr-census-rg''s raw answer, absent
-from the report."
+from the report.
+
+And asserted INDEPENDENTLY of the confirmation pass, which is what this
+test was named for and did not do.  MEASURED: with
+`org-agents--rg-census-delimiters' deleted from the guard, this test
+stayed GREEN -- confirmation drops `PROPERTIES' and `END' anyway, since
+`org-get-property-block''s range excludes those very lines, so they never
+reached the report and nothing here noticed.  The only test that caught
+the mutation was a differently named one, on an arithmetic assertion.  So
+the CONFIRM nil producer is asserted too: there the guard is the only
+thing standing between those two keys and a finding, and the cost of
+losing it is up to 40 wasted file opens per run as well as two false
+report lines."
   (skip-unless (executable-find "rg"))
   (should (equal '("PROPERTIES" "END") org-agents--rg-census-delimiters))
   (org-agents-test--with-attr-corpus org-agents-test--registry-example
@@ -3120,7 +3132,19 @@ from the report."
            (keys (mapcar #'car census)))
       (should (member "PROPERTIES" keys))
       (should (member "END" keys))
-      (should (member "WIDGET" keys)))
+      (should (member "WIDGET" keys))
+      ;; Confirmation OFF, so the guard is on its own.  Every name here
+      ;; is reported unless something excludes it.
+      (pcase-let ((`(,findings ,_unconfirmed ,_limited)
+                   (org-agents--with-attributes
+                     (org-agents--attr-name-findings census nil))))
+        (should (cl-find-if (lambda (f) (string-match-p " WIDGET is not" f))
+                            findings))
+        (should-not (cl-find-if (lambda (f)
+                                  (string-match-p " PROPERTIES is not" f))
+                                findings))
+        (should-not (cl-find-if (lambda (f) (string-match-p " END is not" f))
+                                findings))))
     (org-agents-check-attributes 'all)
     (let ((names (org-agents-test--attr-undeclared-names)))
       (should (member "WIDGET" names))
@@ -3478,7 +3502,17 @@ skip that name's value checks over the whole corpus.  So a name it cannot
 narrow widens the tier to the WHOLE scope rather than to none of it.
 
 MEASURED that both arms are real: `(org-agents--rg-name-p \"TWO WORDS\")'
-and `(org-agents--rg-name-p \"CAFÉ\")' are both nil."
+and `(org-agents--rg-name-p \"CAFÉ\")' are both nil.
+
+The `t' answer is asserted DIRECTLY, on `org-agents--rg-files-for' itself,
+and that matters because `org-agents--attr-value-files' cannot produce it:
+it gates on `org-agents--rg-name-p' first, so it never passes an empty
+pattern list, and the `(eq answer t)' arm it carries for the contract's
+sake is unreachable from there.  MEASURED: changing that arm to answer nil
+-- the exact conflation this test is named for -- left this test PASSING,
+because the \"TWO WORDS\" arm exercises the `(null pattern)' branch
+instead.  So the claim and the assertion are made to agree: `t' is what an
+empty PATTERNS answers, and it is not the empty list."
   (skip-unless (executable-find "rg"))
   (should-not (org-agents--rg-name-p "TWO WORDS"))
   (should-not (org-agents--rg-name-p "CAFÉ"))
@@ -3509,7 +3543,14 @@ and `(org-agents--rg-name-p \"CAFÉ\")' are both nil."
       ;; one alone answer a whole corpus.
       (pcase-let ((`(,none . ,_)
                    (org-agents--attr-value-files files nil root)))
-        (should-not none)))))
+        (should-not none))
+      ;; And the third answer, at the level that can produce it.  `t' is
+      ;; "nothing was narrowed", the widest answer there is; nil is the
+      ;; narrowest.  Conflating them is the whole trap.
+      (should (eq t (org-agents--rg-files-for nil root)))
+      (should (listp (org-agents--rg-files-for
+                      (list (org-agents--rg-property-pattern "STATUS"))
+                      root))))))
 
 (ert-deftest org-agents-test-attr-value-tier-reports-progress ()
   "A run that reads many files says so rather than appearing hung.
@@ -7425,9 +7466,15 @@ path that is not there signalled `wrong-type-argument bufferp \"Error
 entry point away.  A preview's scope is `agenda' by construction, so the
 answer is the `agenda' answer: skipped, named once, and the readable file
 still searched."
-  (let ((real (make-temp-file "org-agents-preview" nil ".org" "* TODO Something\n"))
-        (missing (expand-file-name "nope.org" (make-temp-file "org-agents-gone" t)))
-        files)
+  (let* ((real (make-temp-file "org-agents-preview" nil ".org"
+                               "* TODO Something\n"))
+         ;; Bound, not built inline: the directory has to be DELETED, and
+         ;; a name computed inside `expand-file-name' cannot be.  Every
+         ;; run used to leave one `org-agents-gone*' behind, which a
+         ;; repeat-run harness turns into dozens.
+         (gone (make-temp-file "org-agents-gone" t))
+         (missing (expand-file-name "nope.org" gone))
+         files)
     (unwind-protect
         (cl-letf (((symbol-function 'org-agenda-files)
                    (lambda (&rest _) (list real missing)))
@@ -7439,7 +7486,8 @@ still searched."
                                   (and (string-match-p (regexp-quote missing) m)
                                        (string-match-p "cannot be read" m)))
                                 msgs))))
-      (delete-file real))))
+      (delete-file real)
+      (delete-directory gone t))))
 
 (ert-deftest org-agents-test-preview-requires-org-ql-search-lazily ()
   "`org-ql-search' is this file's dependency for ONE command, so one command
@@ -9152,6 +9200,23 @@ The stub kills itself rather than stubbing `make-process': a real signal
 death exercises the real status pair, where a stub would be asserting
 against whatever shape the test author imagined.
 
+It kills itself through `exec perl', and that is not decoration.  A
+SIG_IGN disposition is INHERITED across fork and exec, and a POSIX shell
+cannot reset a signal that was already ignored when it started -- `trap -
+HUP' does not help.  MEASURED: under `nohup make test' the stub's shell
+ignored the signal, survived, exited 0, and this test failed on
+`(eq nil unavailable)' -- 3 runs out of 3 with `nohup', 3 out of 3 clean
+without it -- reporting a broken guard that was in fact intact, to anyone
+driving the suite from a daemon, a supervisor, a detached session or a CI
+runner that ignores SIGHUP.  `exec' makes perl the process Emacs spawned,
+and perl can put the disposition back: measured `status=signal
+exit-status=1' with `nohup' and without it alike.
+
+Not SIGKILL instead, which no disposition can ignore: signal 1 colliding
+with ripgrep's own exit 1 is the entire point of the case.  Where there
+is no perl the plain shell `kill' is used, which is correct except under
+an inherited-ignored SIGHUP.
+
 The old spelling of this hazard was `call-process' answering with the
 STRING \"Killed: 9\", which is why the code used to test `(eq code 0)' and
 `(eq code 1)' rather than `(> code 1)'.  The asynchronous form reports a
@@ -9165,8 +9230,11 @@ so this path is unchanged by the rewrite."
     (unwind-protect
         (progn
           (let* ((org-agents-rg-executable
-                  (org-agents-test--fake-rg (expand-file-name "rg" dir)
-                                            "kill -HUP $$"))
+                  (org-agents-test--fake-rg
+                   (expand-file-name "rg" dir)
+                   (if (executable-find "perl")
+                       "exec perl -e '$SIG{HUP}=\"DEFAULT\"; kill \"HUP\",$$'"
+                     "kill -HUP $$")))
                  result)
             (let ((msgs (org-agents-test--messages
                           (setq result (org-agents--rg-run "PAT" dir)))))
