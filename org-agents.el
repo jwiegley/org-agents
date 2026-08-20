@@ -2114,6 +2114,18 @@ because after the closing colon comes `\\r', which is neither `$' nor
 `[ \\t]'.  Only `\\r?$' with `--crlf' absent finds both files' names and
 returns them clean.
 
+What dropping `--crlf' COSTS, measured and not argued away: a file whose
+lines are separated by a bare CR -- classic Mac, and what some old
+imports and converters still write -- is ONE line to ripgrep, whose line
+model splits on LF.  Emacs reads such a file as `undecided-mac' and Org
+reads its drawers perfectly, so the walk finds names in it that this
+pattern reports NOTHING about.  Restoring `--crlf' would not fix it
+either: with it, ripgrep's `--line-number' still counts LFs, so the
+confirmation pass could not find the site it was told about.  What fixes
+it is `org-agents--attr-census-blind-files': a file this pattern matches
+nothing in -- not even the `:PROPERTIES:' line it matches in every file
+with a drawer -- is read live.
+
 Printable ASCII throughout, which
 `org-agents-test-attr-census-pattern-is-printable-ascii' pins for the same
 reason the drawer pattern's test does: ripgrep decodes the PATTERN as
@@ -3701,8 +3713,14 @@ sees and no list could have anticipated: `LOGBOOK' (1,407 sites),
 packages' DRAWER OPENERS -- property-line-shaped lines that are not
 property lines -- and the next corpus will have different ones.  So each
 candidate is confirmed by reading a real property drawer, and the pass
-drops precisely those four and nothing else: after confirmation the fast
-census's name set is IDENTICAL to the slow one's.
+drops precisely those four and nothing else.
+
+Confirmation is one of the TWO things the fast path's name set needs to
+be the slow one's rather than a subset of it, and the other is
+`org-agents--attr-census-blind-files': confirmation removes what ripgrep
+saw and Org would not read, and the blind-file walk supplies what ripgrep
+could not see at all.  Neither alone is enough, and both are pinned by
+`org-agents-test-attr-census-fast-equals-slow'.
 
 The bound's cost is real and is reported rather than hidden: a name whose
 only genuine property line sits in its twenty-first file would be missed,
@@ -3810,17 +3828,28 @@ function for the prompt this used to reach."
     (while (and groups (null answer) (< opened org-agents--attr-confirm-limit))
       (let* ((group (pop groups))
              (file (car group))
+             (name (nth 1 group))
              (lines (cddr group)))
-        (cl-incf opened)
-        (ignore-errors
-          (with-current-buffer (org-agents--attr-visit file)
-            (org-with-wide-buffer
-             (dolist (line lines)
-               (unless answer
-                 (goto-char (point-min))
-                 (forward-line (1- line))
-                 (when-let* ((name (org-agents--attr-property-at-point)))
-                   (setq answer (list name file line))))))))))
+        (if name
+            ;; Already proved, and for free: a group carrying a NAME came
+            ;; from a LIVE WALK, which found that name inside
+            ;; `org-get-property-block''s range and decoded it out of the
+            ;; buffer.  Re-reading the file would be asking a question
+            ;; whose answer is in front of us, and it must not count
+            ;; against `org-agents--attr-confirm-limit' either.  This is
+            ;; what lets `org-agents--attr-census-merge' hand one census
+            ;; holding both producers' groups to one consumer.
+            (setq answer (list name file (car lines)))
+          (cl-incf opened)
+          (ignore-errors
+            (with-current-buffer (org-agents--attr-visit file)
+              (org-with-wide-buffer
+               (dolist (line lines)
+                 (unless answer
+                   (goto-char (point-min))
+                   (forward-line (1- line))
+                   (when-let* ((name (org-agents--attr-property-at-point)))
+                     (setq answer (list name file line)))))))))))
     answer))
 
 (defun org-agents--attr-census-parse (raw files)
@@ -3838,11 +3867,14 @@ the file's coding system, and the DECODED name comes from the buffer in
 `org-agents--attr-property-at-point', which is Emacs's business and gets
 it right.
 
-Two honest consequences of keying by bytes, both in the safe direction.
-A name spelled in two different encodings in two files groups as two
-candidates -- two rows, never zero.  And `upcase' over raw bytes folds
-ASCII only, which is exactly what `member-ignore-case' against the
-exemption lists needs anyway.
+One honest consequence of keying by bytes, and it is in the safe
+direction: a name spelled in two different ENCODINGS in two files groups
+as two candidates -- two rows, never zero.  The other consequence was a
+defect rather than a consequence: folding bytes with `upcase' folds ASCII
+only, so `:Ünicode:' and `:ünicode:' were two candidates and two rows
+where the walk reported one.  `org-agents--attr-census-key' is what folds
+a key now, and it decodes before folding wherever the bytes are valid
+UTF-8.
 
 FILES is the scope's own file list, and the intersection is what keeps the
 census inside the scope: the census's ROOT is the scope's root, which for
@@ -3874,8 +3906,9 @@ at 0.176 s over 3,638 files, which buys exact scope soundness."
               (when colon
                 (push (list path
                             (string-to-number (substring rest 0 colon))
-                            (upcase (string-remove-suffix
-                                     "+" (substring rest (1+ colon)))))
+                            (org-agents--attr-census-key
+                             (string-remove-suffix
+                              "+" (substring rest (1+ colon)))))
                       sites))))
           (goto-char eol)
           (forward-line 1))))
@@ -3918,6 +3951,121 @@ at 0.176 s over 3,638 files, which buys exact scope soundness."
                                              (cons (cadr g)
                                                    (nreverse (cddr g)))))
                                      (cdr entry)))))))
+            (nreverse order))))
+
+(defun org-agents--files-without (files excluded)
+  "FILES in their own order, without any member of EXCLUDED.
+EXCLUDED comes from the same list FILES was drawn from, so `equal' is the
+right comparison and no truename work is needed here."
+  (if (null excluded)
+      files
+    (let ((drop (make-hash-table :test #'equal)))
+      (dolist (f excluded) (puthash f t drop))
+      (cl-remove-if (lambda (f) (gethash f drop)) files))))
+
+(defun org-agents--attr-census-key (bytes)
+  "The grouping key for a census name arriving as BYTES.
+Ripgrep answers in bytes and cannot know a file's coding system, so this
+is the one place a name is folded without a buffer to decode it against.
+Two spellings of one property must land on ONE key, because Org matches
+property keys case-insensitively and the live walk folds them with
+`upcase' over a DECODED string.
+
+`upcase' over raw bytes folds ASCII only.  MEASURED, and it made the two
+enumerators disagree about a corpus: with `aa.org' spelling `:Ünicode:'
+and `bb.org' spelling `:ünicode:', the census reported the property TWICE
+-- two rows, one use each -- where the walk reported it once with two
+uses, and Org itself answers the same value for either spelling.  So
+valid UTF-8 is DECODED first and folded as a string.
+
+Bytes that are not valid UTF-8 are folded as bytes, which is the case
+byte-keying was for in the first place: the latin-1 `:CAF\\xC9:' of
+`org-agents--rg-census-pattern' cannot be decoded without knowing the
+file's coding system, and a wrong guess would report mojibake.  Emacs
+represents an undecodable byte as a character at or above #x3FFF80, which
+is what tells the two apart -- a round-trip through
+`encode-coding-string' does NOT, because raw bytes survive it."
+  (let ((decoded (decode-coding-string bytes 'utf-8)))
+    (if (cl-find-if (lambda (c) (>= c #x3FFF80)) decoded)
+        (upcase bytes)
+      (upcase decoded))))
+
+(defun org-agents--attr-census-blind-files (census files)
+  "The members of FILES that CENSUS holds no site in at all.
+A file ripgrep reported nothing about, in a run whose pattern matches
+`:PROPERTIES:' and `:END:' as well as every property key -- so a file
+with a drawer in it contributes at least two sites, and contributing NONE
+means ripgrep could not see this file's lines.  Those files are read
+LIVE, which is what makes the fast path's vocabulary the same set as the
+walk's rather than a subset of it.
+
+MEASURED, and this is why the check exists: a file written with classic
+Mac line endings -- a bare CR between lines -- is ONE line to ripgrep,
+because its line model splits on LF and the census deliberately omits
+`--crlf' (see `org-agents--rg-census-pattern' for why it cannot have
+both).  Emacs reads such a file as `undecided-mac' and Org reads its
+drawers perfectly: `org-entry-get' answered `x' for a property the census
+reported nothing about.  So the drawer prefilter ADMITTED the file, the
+census saw nothing in it, and every name unique to it was missing from
+the report with no count and no diagnostic -- a silent under-report, the
+one direction this package refuses.
+
+A file whose line structure is only PARTLY invisible is not this case and
+does not need to be: a CR inside an otherwise LF file leaves Emacs
+decoding as unix with a literal CR in the line, `org-property-start-re'
+does not match `:PROPERTIES:\\r', and Org reads no drawer there either --
+so both enumerators agree on nothing, which is agreement.  MEASURED, and
+recorded in `org-agents-test--attr-census-corpus''s CRLF comment.
+
+Normally EMPTY, and that is the point: the check costs one hash table
+over a list already in hand, and buys a walk only over files that would
+otherwise be invisible."
+  (let ((seen (make-hash-table :test #'equal)))
+    (dolist (candidate census)
+      (dolist (group (cddr candidate))
+        (puthash (car group) t seen)))
+    ;; The census's own file spellings are ripgrep's; FILES' are the
+    ;; scope's.  `org-agents--same-files' is the one comparison that knows
+    ;; they can name one file two ways, and it answers in FILES' spellings
+    ;; -- so what is left over after removing its answer is exactly the
+    ;; files no site named.  The truename table inside it is built only if
+    ;; something IS left over, which is the case this function is for.
+    (let ((reported (make-hash-table :test #'equal)))
+      (dolist (f (org-agents--same-files files (hash-table-keys seen)))
+        (puthash f t reported))
+      (cl-remove-if (lambda (f) (gethash f reported)) files))))
+
+(defun org-agents--attr-census-merge (census extra)
+  "CENSUS with EXTRA's candidates folded in, keyed by name.
+Both arguments are `((KEY COUNT (FILE NAME LINE...)...)...)'.  One name
+enumerated by both producers is ONE candidate with both their groups and
+the sum of their counts, so it is reported once rather than twice.
+
+The groups are re-sorted by file, so which producer found a name makes no
+difference to the spelling and the example site reported for it -- the
+alphabetically first file's, from either, as `org-agents--attr-sort-groups'
+requires.  A group EXTRA contributed carries its NAME, which
+`org-agents--attr-confirm-candidate' takes as proof already given."
+  (let ((table (make-hash-table :test #'equal))
+        (order nil))
+    ;; ENTRY is `(COUNT GROUP...)', the candidate without its key -- the
+    ;; same shape `org-agents--attr-census-parse' accumulates into.
+    (dolist (candidate (append census extra))
+      (let* ((key (car candidate))
+             (entry (gethash key table)))
+        (if entry
+            (progn
+              (setcar entry (+ (car entry) (nth 1 candidate)))
+              (setcdr entry (append (cdr entry) (cddr candidate))))
+          (puthash key
+                   (cons (nth 1 candidate) (copy-sequence (cddr candidate)))
+                   table)
+          (push key order))))
+    (mapcar (lambda (key)
+              (let ((entry (gethash key table)))
+                (cons key
+                      (cons (car entry)
+                            (org-agents--attr-sort-groups (cdr entry))))))
             (nreverse order))))
 
 (defun org-agents--attr-census-rg (root files)
@@ -4292,7 +4440,15 @@ structure, so it needs `org-agents--attr-confirm-candidate'; the live walk
 found its names inside `org-get-property-block''s range and has already
 proved it.  See `org-agents--attr-confirm-limit' for what confirmation
 buys, measured: without it the fast census reports four names the slow one
-never sees, and with it the two name sets are IDENTICAL.
+never sees.  With it -- and with the blind-file walk of
+`org-agents--attr-census-blind-files', which is the other half -- the two
+name sets are the same set.
+
+CENSUS may hold groups from BOTH producers, which
+`org-agents--attr-census-merge' builds when some file was invisible to
+ripgrep.  A group carrying a NAME is proof already given, so CONFIRM t
+over a mixed census confirms the walk's contribution for free and reads
+files only for ripgrep's.
 
 UNCONFIRMED is how many candidates were dropped for want of proof, which
 the report states rather than hiding: it is the visible cost of
@@ -4492,10 +4648,13 @@ This needs no Org semantics -- it is a question about text -- so
 whole scope, 0.17 s for 336,628 sites.  Each candidate is then CONFIRMED
 against a real property drawer, because ripgrep cannot see drawer
 structure: see `org-agents--attr-confirm-limit' for the four names on the
-author's corpus that no exclusion list could have anticipated.  One
-finding per NAME, with its use count and a confirmed example site, not one
-per line: the per-line form is about 149,000 findings against an
-unseeded registry, and that is not a report.
+author's corpus that no exclusion list could have anticipated.  And a
+file ripgrep reported NOTHING about is read live, because a file whose
+lines it cannot see -- a CR-only one -- is a file Org reads perfectly:
+see `org-agents--attr-census-blind-files'.  One finding per NAME, with its
+site count and a confirmed example site, not one per line: the per-line
+form is about 149,000 findings against an unseeded registry, and that is
+not a report.
 
 Tier two, the VALUES: `org-agents--attr-value-files' narrows to the files
 holding each DECLARED name, one ripgrep run per name, and only those files
@@ -4559,13 +4718,26 @@ seconds went, not Org parsing, whose whole-corpus walk is 38.59 s."
     (org-agents--with-attributes
       (let* ((declared (org-agents-attributes))
              (census (and root (org-agents--attr-census-rg root files)))
-             (fast (and (listp census) census)))
+             (fast (and (listp census) census))
+             ;; The files the census reported NOTHING about, which are the
+             ;; files ripgrep could not see the lines of.  Walked live,
+             ;; names and values both, so the fast path's vocabulary is
+             ;; the walk's SET and not a subset of it.  Normally empty.
+             (blind (and fast (org-agents--attr-census-blind-files
+                               census files))))
         (pcase-let*
             ((`(,tier2 . ,_narrowed)
               (if fast
                   (org-agents--attr-value-files files declared root)
                 (cons files nil)))
+             ;; A blind file is walked below, so it must not be walked
+             ;; here as well: the value tier's own ripgrep narrowing runs
+             ;; WITH `--crlf' and may well report a file the census could
+             ;; not read, and judging its values twice would report every
+             ;; finding in it twice.
+             (tier2 (org-agents--files-without tier2 blind))
              (table (unless fast (make-hash-table :test #'equal)))
+             (blind-table (and blind (make-hash-table :test #'equal)))
              ;; DECLARED on BOTH paths, so the walk only ever judges
              ;; VALUES and the census only ever judges NAMES.  One
              ;; question, one judge, whichever enumerator answered it --
@@ -4574,13 +4746,25 @@ seconds went, not Org parsing, whose whole-corpus walk is 38.59 s."
              ;; name.
              (`(,entries . ,findings)
               (org-agents--attr-findings tier2 declared table))
+             ;; The blind walk answers BOTH questions for its files, which
+             ;; is what the fallback path does for all of them.
+             (`(,blind-entries . ,blind-findings)
+              (if blind
+                  (org-agents--attr-findings blind declared blind-table)
+                (cons 0 nil)))
              (`(,names . ,unconfirmed)
               (org-agents--attr-name-findings
-               (or fast (org-agents--attr-census-table table))
+               (cond ((and fast blind)
+                      (org-agents--attr-census-merge
+                       fast (org-agents--attr-census-table blind-table)))
+                     (fast fast)
+                     (t (org-agents--attr-census-table table)))
                (and fast t))))
           (org-agents--attr-report
-           (org-agents--attr-sort (nconc names findings))
-           files entries (length tier2) unconfirmed))))))
+           (org-agents--attr-sort (nconc names findings blind-findings))
+           files (+ entries blind-entries)
+           (+ (length tier2) (length blind))
+           unconfirmed))))))
 
 ;; The `COLUMNS' generator, and the one thing this epic does NOT build.
 ;;

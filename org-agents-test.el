@@ -2769,6 +2769,26 @@ Some text first, so what follows is not a property drawer.
 :PROPERTIES:
 :A:B: z
 :END:
+")
+    ;; One property, two spellings that differ OUTSIDE ASCII.  Org matches
+    ;; property keys case-insensitively for these too -- verified,
+    ;; `org-entry-get' answers the same value for `ÜNICODE' and for
+    ;; `Ünicode' -- and the walk folds them with `upcase' over a decoded
+    ;; string.  The census keys by BYTES, and `upcase' over bytes folds
+    ;; ASCII ONLY: MEASURED, this pair was reported TWICE by the census, a
+    ;; row each with one use, against the walk's single row with two.
+    ;; `org-agents--attr-census-key' is what folds them into one.
+    ("unicode-a.org" . "\
+* Non-ASCII name, capitalised
+:PROPERTIES:
+:Ünicode: v
+:END:
+")
+    ("unicode-b.org" . "\
+* Non-ASCII name, lower case
+:PROPERTIES:
+:ünicode: w
+:END:
 "))
   "Every case that could separate the ripgrep census from the live walk.
 Each file defends something specific, and the whole point of collecting
@@ -2877,8 +2897,22 @@ the walk with itself."
     (org-agents-test--write-raw
      (funcall F "crlf.org")
      "* CRLF entry\r\n:PROPERTIES:\r\n:CARRIAGE: x\r\n:END:\r\n" 'binary)
+    ;; A CR-ONLY file: classic Mac line endings, which is ONE line to
+    ;; ripgrep -- its line model splits on LF, and the census deliberately
+    ;; omits `--crlf'.  Emacs reads this as `undecided-mac' and Org reads
+    ;; the drawer perfectly (`org-entry-get' answers "x"), so the walk
+    ;; finds `CRONLY' and the census reports NOTHING about the file at
+    ;; all.  MEASURED before the fix: the drawer prefilter ADMITTED this
+    ;; file, `fast' was ("PLAINOK") where `slow' was ("CRONLY" "PLAINOK"),
+    ;; and the omission was silent -- no unconfirmed count, no message,
+    ;; because no candidate was ever produced to go unconfirmed.
+    ;; `org-agents--attr-census-blind-files' is what covers it.
+    (org-agents-test--write-raw
+     (funcall F "cronly.org")
+     "* CR entry\r:PROPERTIES:\r:CRONLY: x\r:END:\r" 'binary)
     (let ((all (append files (list (funcall F "latin1.org")
-                                   (funcall F "crlf.org"))))
+                                   (funcall F "crlf.org")
+                                   (funcall F "cronly.org"))))
           (census-runs 0)
           (walk-runs 0))
       ;; Fast: a corpus scope, which has a root and so takes the census.
@@ -2907,8 +2941,13 @@ the walk with itself."
           ;; And the set really does hold the cases the fixture is for, so
           ;; that an equivalence of two empty-ish sets cannot pass for one.
           (dolist (name '("FILEWIDE" "GADGET" "SPROCKET" "CAFÉ"
-                          "CARRIAGE" "A:B" "REALONE"))
+                          "CARRIAGE" "A:B" "REALONE" "CRONLY"))
             (should (member name fast)))
+          ;; ONE entry for the two spellings of one NON-ASCII name, which
+          ;; `upcase' over the census's raw bytes could not do.
+          (should (= 1 (length (cl-remove-if-not
+                                (lambda (n) (equal (upcase n) "ÜNICODE"))
+                                fast))))
           ;; ONE entry for the two spellings of one name: `plain.org' has
           ;; `:WIDGET:' and `case.org' has `:widget:', Org matches keys
           ;; case-insensitively, and the census folds them together.
@@ -2932,6 +2971,128 @@ the walk with itself."
                           "bodykey" "BODYKEY" "BURIED"))
             (should-not (member name fast))
             (should-not (member name slow))))))))
+
+(ert-deftest org-agents-test-attr-census-reads-a-file-ripgrep-cannot-see ()
+  "A file the census reports NOTHING about is walked, not written off.
+Asserted at three levels, because only the three together say the blind
+walk is doing work: the drawer prefilter ADMITS the file, the census holds
+no site in it, and the report names its property all the same.
+
+The file has classic Mac line endings -- a bare CR between lines -- which
+is one line to ripgrep, whose line model splits on LF, and the census
+cannot pass `--crlf' for the reasons `org-agents--rg-census-pattern'
+measures.  Emacs reads it as `undecided-mac' and Org reads the drawer, so
+this is a name the walk finds and the census cannot: MEASURED before the
+fix, `fast' was (\"PLAINOK\") against `slow' (\"CRONLYNAME\" \"PLAINOK\"),
+and nothing said so -- the unconfirmed count was 0, because no candidate
+was ever produced to go unconfirmed."
+  (skip-unless (executable-find "rg"))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("ok.org" . "* LF entry\n:PROPERTIES:\n:PLAINOK: y\n:END:\n"))
+    (let ((cronly (org-agents-test--write-raw
+                   (funcall F "cronly.org")
+                   (concat "* CR entry\r:PROPERTIES:\r:CRONLYNAME: x\r"
+                           ":REVIEWS: many\r:END:\r")
+                   'binary)))
+      ;; One: the prefilter admits it, so it is a file this command
+      ;; believes it has accounted for.
+      (should (member cronly (org-agents--narrowed-files
+                              'all (list org-agents--rg-drawer-pattern)
+                              "pattern" nil)))
+      ;; Two: and the census holds no site in it whatsoever -- not even
+      ;; the `:PROPERTIES:' line it matches in every other file.
+      (let* ((root (org-agents--scope-root 'all))
+             (scope (org-agents--narrowed-files
+                     'all (list org-agents--rg-drawer-pattern) "pattern" nil))
+             (census (org-agents--attr-census-rg root scope)))
+        (should (assoc "PLAINOK" census))
+        (should-not (cl-find-if
+                     (lambda (candidate)
+                       (assoc cronly (cddr candidate)))
+                     census))
+        ;; Three: which is exactly what the blind-file list names.
+        (should (equal (list cronly)
+                       (org-agents--attr-census-blind-files census scope))))
+      ;; And Org really does read the property, so this is a name the
+      ;; report OWES the reader rather than an artefact of a broken file.
+      (with-current-buffer (find-file-noselect cronly)
+        (should (equal "x" (save-excursion
+                             (goto-char (point-min))
+                             (org-entry-get (point) "CRONLYNAME")))))
+      (org-agents-check-attributes 'all)
+      (let ((names (org-agents-test--attr-undeclared-names)))
+        (should (member "CRONLYNAME" names))
+        (should (member "PLAINOK" names)))
+      ;; And its VALUES are judged too -- ONCE.  The value tier's own
+      ;; ripgrep narrowing runs WITH `--crlf' and may report this file, so
+      ;; a blind file walked without being removed from that list would
+      ;; have every finding in it reported twice.
+      (let ((reviews (cl-remove-if-not
+                      (lambda (line) (string-match-p "REVIEWS" line))
+                      (org-agents-test--attr-finding-lines))))
+        (should (= 1 (length reviews)))
+        (should (string-match-p "not a number" (car reviews)))))))
+
+(ert-deftest org-agents-test-attr-census-reports-the-first-file-by-name ()
+  "The reported spelling and site are the alphabetically first file's, always.
+RIPGREP'S OUTPUT ORDER IS NONDETERMINISTIC -- it walks the tree in
+parallel -- so which file a candidate's sites are grouped under first
+varies between runs of one command, and the confirmation pass reports the
+name AS THAT FILE SPELLS IT.  `org-agents--attr-sort-groups' is the fix
+and this is its deterministic test: the census is HAND-BUILT with its
+groups in reverse file order, so nothing here depends on process
+scheduling.  Its predecessor did: with the sort removed,
+`…-fast-equals-slow' passed 7 runs out of 7 on an idle machine and failed
+2 out of 8 under load, so a regression would have landed green.
+
+BOTH producers, because the sort is applied in both and a fix in one of
+them would leave the other reporting whichever spelling arrived first:
+`org-agents--attr-census-parse' for ripgrep, whose raw answer here lists
+`z.org' before `a.org' exactly as a parallel walk may, and
+`org-agents--attr-census-table' for the live walk, whose hash is built in
+the same reverse order."
+  (let* ((dir (make-temp-file "org-agents-attr-sort" t))
+         (a (expand-file-name "a.org" dir))
+         (z (expand-file-name "z.org" dir)))
+    (unwind-protect
+        (org-agents-test--with-registry org-agents-test--registry-example
+          (with-temp-file a (insert "* E\n:PROPERTIES:\n:widget: x\n:END:\n"))
+          (with-temp-file z (insert "* E\n:PROPERTIES:\n:WIDGET: x\n:END:\n"))
+          (org-agents--with-attributes
+            ;; Ripgrep's producer, its output in the unhelpful order.  The
+            ;; groups come back alphabetically, so the confirmation pass
+            ;; reads `a.org' first and reports the name as IT spells it.
+            (let ((census (org-agents--attr-census-parse
+                           (concat z "\0" "3:WIDGET\n" a "\0" "3:widget\n")
+                           (list a z))))
+              (should (equal (list a z)
+                             (mapcar #'car (cddr (assoc "WIDGET" census)))))
+              (pcase-let ((`(,findings . ,unconfirmed)
+                           (org-agents--attr-name-findings census t)))
+                (should (= 0 unconfirmed))
+                (should (= 1 (length findings)))
+                (should (string-prefix-p (format "%s:3: widget " a)
+                                         (car findings)))))
+            ;; The live walk's producer, whose groups carry the decoded
+            ;; name -- so nothing is opened and the name is still the
+            ;; alphabetically first file's.
+            (let ((table (make-hash-table :test #'equal)))
+              (puthash "WIDGET" (list 2 (list a "widget" 3) (list z "WIDGET" 3))
+                       table)
+              ;; Pushed newest-first by the walk, so reverse it to get the
+              ;; order a walk that met `z.org' last would leave.
+              (puthash "WIDGET" (list 2 (list z "WIDGET" 3) (list a "widget" 3))
+                       table)
+              (let ((census (org-agents--attr-census-table table)))
+                (should (equal (list a z)
+                               (mapcar #'car (cddr (assoc "WIDGET" census)))))
+                (pcase-let ((`(,findings . ,unconfirmed)
+                             (org-agents--attr-name-findings census nil)))
+                  (should (= 0 unconfirmed))
+                  (should (= 1 (length findings)))
+                  (should (string-prefix-p (format "%s:3: widget " a)
+                                           (car findings))))))))
+      (delete-directory dir t))))
 
 (ert-deftest org-agents-test-attr-census-excludes-drawer-delimiters ()
   "`PROPERTIES' and `END' are in the raw census and in neither report.
