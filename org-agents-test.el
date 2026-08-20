@@ -5297,6 +5297,31 @@ the corpus is the one `org-agents-test--with-corpus' provides."
        (re-search-backward "#\\+BEGIN: org-agents")
        ,@body)))
 
+(defun org-agents-test--block-bodies ()
+  "The body of every `org-agents' block in the buffer, in buffer order.
+For the multi-block tests, which have to say which body is which: a
+`cl-count-if' over the whole buffer cannot tell a block that rendered
+from one that received a copy of its neighbour."
+  (let (out)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward org-dblock-start-re nil t)
+        (when (equal (match-string 1) "org-agents")
+          (let ((beg (progn (forward-line 1) (point))))
+            (when (re-search-forward org-dblock-end-re nil t)
+              (push (buffer-substring-no-properties beg (match-beginning 0))
+                    out))))))
+    (nreverse out)))
+
+(defun org-agents-test--masked-buffer-text ()
+  "The buffer's text with `:AGENT_MATCHED:' stamps masked out.
+The stamp holds the time of the render, so two renders of an unchanged
+agent differ there and nowhere else.  Masking it is how the save path's
+own byte-identity check is written -- see `org-agents--mask-matched' --
+so an idempotence assertion here is the same comparison the save makes."
+  (org-agents--mask-matched (buffer-substring-no-properties
+                             (point-min) (point-max))))
+
 (defun org-agents-test--dblock-body ()
   "The body of the `org-agents' block point is in, as a string."
   (save-excursion
@@ -5874,6 +5899,71 @@ standing in."
         (should (= 1 (cl-count-if
                       (lambda (l) (string-match-p "^- \\[\\[id:" l))
                       (split-string (buffer-string) "\n"))))))))
+
+(ert-deftest org-agents-test-update-buffer-refreshes-every-block ()
+  "An agent carrying several blocks has EVERY one of them refreshed.
+`org-agents--goto-block' stopped at the first, so
+`org-agents-update-buffer', `org-agents-update-all' and the save path
+refreshed one view and left the rest as they were WITH NO INDICATION THAT
+THEY WERE STALE.  REPRODUCED before the fix: a three-block list agent
+came back with block 1 rendered and blocks 2 and 3 empty, and
+`:AGENT_MATCHED:' stamped as though the agent were up to date.  Silence
+about a stale render is the same class of defect this package refuses
+elsewhere.
+
+The second block is a TABLE, so it cannot pass by receiving a copy of the
+first: it has to hold `|' rows of its own.  The third is `:limit 1', which
+is what makes the `:AGENT_MATCHED:' claim below testable -- MEASURED, the
+same agent's three blocks wrote 2, 2 and 1 items, so \"the agent's count\"
+is not a well-defined thing and the FIRST block's count is what the
+property holds.
+
+The idempotence arm at the end is what protects the byte-identical save:
+refreshing every block twice must leave the buffer as it was, or a save of
+a file whose agents found nothing new would stop reaching disk unchanged."
+  (org-agents-test--with-corpus
+    ;; A second match, so that `:limit 1' below has something to limit and
+    ;; the three blocks' counts really do differ.
+    (with-temp-buffer
+      (insert "* TODO Fix the other widget\n:PROPERTIES:\n"
+              ":ID: 33333333-3333-3333-3333-333333333333\n"
+              ":NEXT_REVIEW: [2020-01-02 Thu]\n:END:\n")
+      (append-to-file (point-min) (point-max) a))
+    (with-current-buffer (find-file-noselect agent-file)
+      (set-window-buffer (selected-window) (current-buffer))
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-max))
+      (insert "#+BEGIN: org-agents\n#+END:\n\n"
+              "#+BEGIN: org-agents :view table :columns \"ITEM_BY_ID NEXT_REVIEW\"\n"
+              "#+END:\n\n"
+              "#+BEGIN: org-agents :limit 1\n#+END:\n")
+      (org-agents-update-buffer)
+      (let ((bodies (org-agents-test--block-bodies)))
+        (should (= 3 (length bodies)))
+        ;; Every one of them wrote something.
+        (dolist (body bodies)
+          (should-not (string-empty-p (string-trim body))))
+        ;; The list blocks hold items and the table holds a table: the
+        ;; second did not pass by receiving a copy of the first.
+        (should (string-match-p "^- \\[\\[id:" (nth 0 bodies)))
+        (should (string-match-p "|" (nth 1 bodies)))
+        (should (string-match-p "^- \\[\\[id:" (nth 2 bodies)))
+        ;; `:limit 1' really did limit, so the three counts differ and the
+        ;; property below is a choice rather than a coincidence.
+        (should (= 2 (cl-count-if (lambda (l) (string-match-p "^- \\[\\[id:" l))
+                                  (split-string (nth 0 bodies) "\n"))))
+        (should (= 1 (cl-count-if (lambda (l) (string-match-p "^- \\[\\[id:" l))
+                                  (split-string (nth 2 bodies) "\n")))))
+      ;; `:AGENT_MATCHED:' is the FIRST block's count, in buffer order.
+      (goto-char (point-min))
+      (should (string-match-p "\\`2 " (org-entry-get nil "AGENT_MATCHED")))
+      ;; Idempotent: a second refresh-all moves nothing.  This is the
+      ;; property the save path depends on.
+      (let ((before (org-agents-test--masked-buffer-text)))
+        (org-agents-update-buffer)
+        (should (equal before (org-agents-test--masked-buffer-text))))
+      (set-buffer-modified-p nil))))
 
 (ert-deftest org-agents-test-update-finds-only-its-own-block ()
   "The block an agent renders into is one in the agent's own entry.

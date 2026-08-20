@@ -874,6 +874,35 @@ so a block can say things a drawer never could. `:view "table"` is a string
 and not the symbol `table`, and `:limit "5"` is not a count; both are
 refused by name rather than rendered wrongly.
 
+### Several blocks under one agent
+
+An update writes **every** block of the agent: `org-agents-update` with
+point outside a block, and therefore `org-agents-update-buffer`,
+`org-agents-update-all` and the save path, refresh them all. With point
+*inside* a particular block, that block alone is written — which is how you
+refresh one expensive view without the others.
+
+It used to write only the first, and leave the rest as they were **with
+nothing said about it**. A stale render kept silently is the same class of
+defect this package refuses elsewhere, so it is fixed rather than
+documented.
+
+`AGENT_MATCHED` records the **first** block's count, in buffer order. That
+is a definition, not an approximation, and there is no better one to be had:
+a block's parameters override the entry's — `:query` and `:scope` included —
+so two blocks of one agent may run different queries over different file
+sets, and what a block reports is *rows or items written*, which a
+row-sorted table cuts to `AGENT_LIMIT` after building them. Measured on a
+three-block agent: its blocks wrote 2, 2 and 1 items. The first block is
+also what the property has always held, since a no-block update has always
+written that one, so no existing file's stamp changes meaning.
+
+One consequence will look like a regression the first time it happens. A
+buffer whose second block was stale used to reach disk byte-identical on
+save — the staleness was what made it identical — so the first save after
+this change *writes the file*. That is the fix working; every save after it
+is byte-identical again.
+
 ## Commands and options
 
 | Command | What it does |
@@ -1865,16 +1894,7 @@ the `:P+:` spelling was a recorded expected failure. Nothing in the
 package speaks to a database any more, and there is nothing to install or
 configure for the prefilter beyond ripgrep itself.)
 
-### 2. A buffer-wide update refreshes only an agent's first dynamic block
-
-One agent may carry several blocks, each its own view of it. An update that
-was not asked for from inside a particular block writes only the **first**:
-`org-agents-update` with point outside a block, and therefore
-`org-agents-update-buffer` and `org-agents-update-all`, refresh that one and
-leave the rest as they were. Put point in a block to write that block, or
-use `org-update-all-dblocks` to write every block in the buffer.
-
-### 3. Deleting a pristine alias discards what you added to its drawer
+### 2. Deleting a pristine alias discards what you added to its drawer
 
 An alias holding nothing but `:AGENT_MATCH: t` is *pristine* and belongs to
 the package: every update deletes it and writes it again. Because it is
@@ -1882,7 +1902,7 @@ deleted rather than edited, **extra drawer properties or tags you added to a
 body-less alias are discarded.** Write a line under the alias and they are
 kept along with it.
 
-### 4. One unreadable file, or one symlink loop, disables the prefilter corpus-wide
+### 3. One unreadable file, or one symlink loop, disables the prefilter corpus-wide
 
 ripgrep exits 2 for any per-file I/O error — an unreadable `.org` file, a
 dangling `*.org` symlink, a directory symlink loop — and it can print a
@@ -1909,7 +1929,7 @@ ripgrep prepends that file's arguments to the command line and the
 package's own flags do not override `--max-depth`, `--max-filesize`,
 `--pre`, `--encoding` or `--glob`.
 
-### 5. A corpus-scope lint leaves every file in scope visited
+### 4. A corpus-scope lint leaves every file in scope visited
 
 `org-agents-check-attributes` opens each file with `find-file-noselect`,
 as `org-agents-update-all` does, and kills nothing afterwards: a buffer
@@ -1930,7 +1950,7 @@ buffers once you have worked through the report, with
 session you ran the seeding lint in. Run the `all` scope deliberately
 rather than casually.
 
-### 6. Applying actions over a corpus scope leaves every file in scope visited
+### 5. Applying actions over a corpus scope leaves every file in scope visited
 
 `org-agents-apply-actions` reaches its match set through the same
 `org-agents--collect` an update uses, which opens each candidate file with

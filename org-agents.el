@@ -78,7 +78,12 @@
 ;;   :AGENT_MATCH:   written by this package on a generated alias, never
 ;;                   by hand.  See the alias contract below.
 ;;   :AGENT_MATCHED: written by this package after an update: how many
-;;                   entries matched, and when.
+;;                   entries matched, and when.  For an agent carrying
+;;                   several blocks it is the FIRST block's count, in
+;;                   buffer order -- a block's parameters override the
+;;                   entry's, `:query' included, so two blocks of one
+;;                   agent may answer different questions and "the
+;;                   agent's count" is not one number.
 ;;
 ;; An Org property value is a single line.  Keep the query on one line,
 ;; or name a shorter one and let a residual predicate do the rest.  A
@@ -373,17 +378,19 @@
 ;;   - A planning bound is never pushed, only the presence of the stamp:
 ;;     ripgrep cannot compare dates.  org-ql applies the bound, so this
 ;;     costs candidate files and no matches.
-;;   - One agent may carry several blocks, each its own view of it, but an
-;;     update that was not asked for from inside a particular one writes
-;;     only the FIRST: `org-agents-update' with point outside a block, and
-;;     therefore `org-agents-update-buffer' and `org-agents-update-all',
-;;     refresh that one and leave the rest as they were.  Put point in a
-;;     block to write that block, or use `org-update-all-dblocks' to write
-;;     every block in the buffer.
 ;;
-;; Each is covered by a test in org-agents-test.el rather than only
-;; described here: the first two in the Prefilter section, beside the
-;; soundness suite, and the third beside the other update commands.
+;; Both are covered by a test in org-agents-test.el rather than only
+;; described here, in the Prefilter section beside the soundness suite.
+;;
+;; One agent may carry several blocks, each its own view of it, and an
+;; update writes EVERY one of them: `org-agents-update' with point outside
+;; a block, and therefore `org-agents-update-buffer',
+;; `org-agents-update-all' and the save path, refresh them all.  With point
+;; inside a particular block, that block alone is written -- which is what
+;; makes it possible to refresh one expensive view without the others.
+;; `:AGENT_MATCHED:' records the FIRST block's count, in buffer order; see
+;; `org-agents--update-agent' for why "the agent's count" is not a
+;; well-defined thing to record instead.
 ;;
 ;; This file is kept warning-free under the byte compiler, and
 ;; tools/org-agents-byte-compile-gate.sh is what says so: it builds the two
@@ -5208,28 +5215,52 @@ update writes -- not whichever one the agent's subtree holds first."
 Written both by `org-agents--goto-block', for an agent whose view needs a
 block and has none, and by `org-agents-insert-dblock' for `C-c C-x x'.")
 
+(defun org-agents--entry-blocks ()
+  "Markers on the `#+BEGIN:' line of every `org-agents' block in this entry.
+In buffer order.  Point is not moved.
+
+Only the agent's OWN entry is searched, not its whole subtree, and a
+block is recognized by the name Org reads out of it rather than by the
+text of its `#+BEGIN:' line.  A block under a child heading belongs to
+that child -- `org-dblock-write:org-agents' reads the properties of the
+heading a block sits under -- and adopting it would render one agent into
+another's view.
+
+MARKERS, and that is a requirement rather than a style.  MEASURED with
+integer positions: writing the first block shifts the buffer, the second
+block's recorded position no longer sits on a `#+BEGIN:' line, and
+`org-prepare-dblock' answers `user-error \"Not at a dynamic block\"'.  With
+markers, and the position read fresh at each iteration, the same
+three-block agent rendered 102, 226 and 51 bytes.
+
+The DEFAULT insertion type is correct here, and the reasoning in
+`org-agents--buffer-agents' for its insertion type t does NOT transfer:
+that marker sits exactly where a new block gets inserted, and these do
+not.  Text a render writes goes INSIDE a block, never at the `#+BEGIN:'
+line's own position, and a marker advances for insertions before it
+whatever its insertion type."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((entry-end (save-excursion (outline-next-heading) (point)))
+          (found nil))
+      (while (re-search-forward org-dblock-start-re entry-end t)
+        (when (equal (match-string 1) "org-agents")
+          (push (copy-marker (match-beginning 0)) found)))
+      (nreverse found))))
+
 (defun org-agents--goto-block ()
   "Move to the `org-agents' block of the agent at point, opening one if none.
 An agent whose view is a list or a table has nowhere to render until it
 has a block, so its first update opens one where the entry's own text
 begins: after the drawers, and above whatever else the agent holds.
 
-Only the agent's own entry is searched, not its whole subtree, and a
-block is recognized by the name Org reads out of it rather than by the
-text of its `#+BEGIN:' line.  A block under a child heading belongs to
-that child -- `org-dblock-write:org-agents' reads the properties of the
-heading a block sits under -- and adopting it would render one agent into
-another's view.  An agent carrying several blocks of its own is answered
-for by the first; the others are written where the user stands in them,
-or by `org-update-all-dblocks'."
+Where the agent already has blocks this moves to the FIRST of them.  It
+is `org-agents--entry-blocks' that finds them, and an update with no
+block named writes every one -- see `org-agents--update-agent'.  This
+function's remaining job is the one `org-agents--entry-blocks' cannot do:
+opening a block for an agent that has none."
   (org-back-to-heading t)
-  (let ((entry-end (save-excursion (outline-next-heading) (point)))
-        (found nil))
-    (save-excursion
-      (while (and (not found)
-                  (re-search-forward org-dblock-start-re entry-end t))
-        (when (equal (match-string 1) "org-agents")
-          (setq found (match-beginning 0)))))
+  (let ((found (car (org-agents--entry-blocks))))
     (if found
         (goto-char found)
       (org-end-of-meta-data t)
@@ -5345,14 +5376,48 @@ failure would `primitive-undo' that timer's edits along with its own.
 resolves files and calls `org-ql-select' -- and the change group's stated
 purpose is the alias delete-then-write, which is entirely inside
 `org-agents--render-children'.  So the hoist is semantically identical and
-removes the only path where a subprocess wait sat inside a change group."
+removes the only path where a subprocess wait sat inside a change group.
+
+With no BLOCK named, EVERY block of the agent is written, not just the
+first.  One agent may carry several -- a list and a table of one query --
+and writing one of them while leaving the others as they were, with
+nothing said about it, is a stale render kept silently.  The count
+returned, and so the one `:AGENT_MATCHED:' records, is the FIRST block's
+in buffer order.  That is a definition rather than an approximation of
+\"the agent's count\", and there is no better one available: a block's
+parameters OVERRIDE the entry's, `:query' and `:scope' included, so two
+blocks of one agent may run different queries over different file sets,
+and `org-agents--update-block' answers with rows or items WRITTEN, which
+a row-sorted table cuts to `:AGENT_LIMIT:' after building them.  MEASURED
+on a three-block agent: its blocks wrote 2, 2 and 1 items.  The first
+block is also what the property has always held, since a no-block update
+has always written that one, so no existing file's stamp changes meaning."
   (org-with-point-at marker
     (let* ((agent (org-agents--read-agent))
-           (count (if (eq (plist-get agent :view) 'children)
-                      (let ((matches (org-agents--collect agent)))
-                        (atomic-change-group
-                          (org-agents--render-children agent matches)))
-                    (org-agents--update-block block))))
+           (count (cond
+                   ((eq (plist-get agent :view) 'children)
+                    (let ((matches (org-agents--collect agent)))
+                      (atomic-change-group
+                        (org-agents--render-children agent matches))))
+                   (block (org-agents--update-block block))
+                   (t
+                    (let ((blocks (org-agents--entry-blocks)))
+                      (if (null blocks)
+                          ;; None yet: one is opened, exactly as before.
+                          (org-agents--update-block nil)
+                        (let ((counts nil))
+                          (dolist (m blocks)
+                            ;; Read fresh: an earlier block's render has
+                            ;; shifted this one, and the marker is what
+                            ;; followed it.
+                            (push (org-agents--update-block
+                                   (marker-position m))
+                                  counts)
+                            (set-marker m nil))
+                          ;; The first block's count, whatever it was --
+                          ;; including zero, which a `(or ...)' over the
+                          ;; list would have skipped past.
+                          (car (nreverse counts)))))))))
       (org-agents--write-matched marker count)
       count)))
 
@@ -5772,6 +5837,14 @@ buffer back as it was, `:AGENT_MATCHED:' stamps and all, so saving a file
 whose agents found nothing new leaves it byte-identical -- old stamps
 included, because a stamp is worth reading only if it dates the render it
 describes.
+
+One thing about that will look like a regression the first time it
+happens, so it is said here: a save refreshes EVERY block of a
+multi-block agent, and it used to refresh only the first.  So a buffer
+whose second block was stale used to reach disk byte-identical -- the
+STALENESS was what made it identical -- and the first save after this
+change writes the file.  That is the fix working.  Every save after it is
+byte-identical again.
 
 C-g during an update on save aborts the save along with the update."
   :lighter " Agents"
