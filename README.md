@@ -184,6 +184,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-safe-queries` | `nil` | forms approved to run without prompting, each recorded as `(HASH . QUERY-TEXT)` |
 | `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
+| `org-agents-attributes-file` | `"~/org/attributes.org"` | the Org file declaring the corpus's user attributes. Optional: one that is missing or unreadable declares nothing and says nothing about it, and the package never creates it. See "The attribute registry" below |
 
 Every option in that table is `:risky t`, and so is `global-org-agents-mode`.
 Emacs will not apply a file-local setting of a risky variable without asking,
@@ -350,6 +351,21 @@ not; set it to `require` to be refused rather than kept waiting, or to
 `nil` never to spawn anything. Where ripgrep is installed under another
 name, or somewhere Emacs's `exec-path` does not reach, name it with
 `org-agents-rg-executable`.
+
+One thing is not turned on for you. Completion of declared attribute
+values is a function on one of Org's own hooks, and a library has no
+business adding itself to a user's hook at load time, so you add it:
+
+```elisp
+(add-hook 'org-property-allowed-value-functions
+          #'org-agents-allowed-values)
+```
+
+After that, `org-set-property` on a name the registry declares offers the
+values it declares — in every Org buffer, not only in the corpus. A name
+the registry says nothing about is left entirely alone, `:NAME_ALL:`
+declarations included: see "The attribute registry" below for why that
+distinction is sharper than it looks.
 
 ## Running the tests
 

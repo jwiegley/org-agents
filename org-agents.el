@@ -167,6 +167,11 @@
 ;; not yet saved.  See `org-agents-attribute' for the declaration a
 ;; reader gets back, and docs/attributes-example.org for a whole file.
 ;;
+;; What reads it: `org-agents-allowed-values', which on
+;; `org-property-allowed-value-functions' makes `org-set-property'
+;; complete declared values in any Org buffer.  It is not added to that
+;; hook for you -- the hook is Org's and it is the user's.
+;;
 ;; Updating on save:
 ;;
 ;; Besides `org-agents-update', `org-agents-update-buffer' and
@@ -2552,6 +2557,54 @@ most once per edit to it."
 File order rather than sorted: the registry is a document, and the order
 its author chose is information."
   (mapcar #'car (org-agents--attributes-alist)))
+
+;;;###autoload
+(defun org-agents-allowed-values (property)
+  "Allowed values for PROPERTY out of the registry, or nil for none.
+Written for `org-property-allowed-value-functions', whose contract this
+matches exactly: one argument, a FLAT LIST of strings, and nil for a
+property this is not responsible for.  Turn it on with
+
+  (add-hook \\='org-property-allowed-value-functions
+            #\\='org-agents-allowed-values)
+
+after which `org-set-property' completes declared values in every Org
+buffer.  Never added at load time: a library has no business mutating a
+user's hook.
+
+Three things this must not do, each of them measured.
+
+Answer for an UNDECLARED name, or for a declared name carrying no
+`:ATTR_VALUES:'.  `org-property-get-allowed-values' consults this hook
+from a `cond' clause ABOVE the one that reads `NAME_ALL', and with
+`run-hook-with-args-until-success', so any non-nil answer SHADOWS every
+`_ALL' declaration in the corpus for that name.  Measured: a hook
+answering for `STATUS' beat a `:STATUS_ALL: a b c' in the entry's own
+drawer.  So nil is how a name is left alone, and the empty list would be
+an answer rather than the absence of one.
+
+Return the cached list.  Where the vocabulary ends in `:ETC',
+`org-property-get-allowed-values' calls `org-add-props' on the first
+string of the list it was handed, and `org-add-props' adds text
+properties IN PLACE.  Measured: a hook that returned its own cached list
+left `(org-unrestricted t)' on that list's first string for the rest of
+the session.  Hence `copy-sequence' on every member.
+
+Filter `:ETC' out.  It is Org's own marker for \"these are defaults,
+other values should be allowed too\", and dropping it would turn an open
+vocabulary into a closed one: `org-read-property-value' reads
+REQUIRE-MATCH off the `org-unrestricted' text property that `:ETC' is
+what puts there.
+
+A `boolean' answers its two values because the READER synthesized them,
+so there is no type dispatch here at all; a `set' or a `list' answers its
+member vocabulary, which is what completing one member needs.  And
+fourteen names plus `CATEGORY' never reach this function -- Org answers
+for them in clauses of its own -- which the reader says once, at the
+declaration."
+  (when-let* ((attr (org-agents-attribute property))
+              (values (plist-get attr :values)))
+    (mapcar #'copy-sequence values)))
 
 ;;;; Links
 

@@ -17,6 +17,13 @@ its normalizer, which spawns =org db search= past the evaluation gate, so
 of running. Semantic search stays available as =M-s s=; see the option's
 comment in the block below for how to accept the subprocess instead.
 
+One thing is not turned on for you: completion of declared attribute
+values. It is a function on Org's own
+=org-property-allowed-value-functions=, and a library has no business
+adding itself to a user's hook at load time, so the =:hook= entry in the
+block below is what arms it. See *The attribute registry* further down for
+the file it reads.
+
 There is nothing else that must be configured. The candidate-file
 prefilter is ripgrep, which needs no DSN, no config file and no
 credential: it is found on =exec-path= or it is not, and where it is not
@@ -46,7 +53,18 @@ to the position it appears in.
              global-org-agents-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
   ;; `org-update-all-dblocks', so it has to be autoloaded as well.
-  :autoload (org-dblock-write:org-agents)
+  :autoload (org-dblock-write:org-agents
+             org-agents-allowed-values)
+  :init
+  ;; What arms completion of declared attribute values.  The package does
+  ;; not add itself to this hook -- it is Org's, and it is the user's.
+  ;; Spelled as an `:init' `add-hook' and not as `:hook', because
+  ;; use-package appends `-hook' to a `:hook' name that does not already
+  ;; end in it, and this one ends in `-functions'.  The symbol is
+  ;; autoloaded, so the package still loads on first use and not at
+  ;; startup: nothing runs until Org asks for a property's allowed values.
+  (add-hook 'org-property-allowed-value-functions
+            #'org-agents-allowed-values)
   :bind
   (("M-s a" . org-agents-preview)
    :map

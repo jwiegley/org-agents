@@ -1692,6 +1692,141 @@ Documentation first, drawer after -- which Org does not read.
       (should (string-match-p "LATE" (car texts)))
       (should (string-match-p "no :ATTR_TYPE:" (car texts))))))
 
+;; Completion from the registry.  Every test here drives
+;; `org-property-get-allowed-values' rather than the package's own
+;; function alone: what matters is not what the hook function answers but
+;; what Org does with the answer, and two of the five rules below are
+;; about the CLAUSE the hook sits in rather than about the hook.
+;;
+;; The hook is installed by `let' and never by `add-hook', so no test
+;; here can leak into the one after it -- or into a developer's session,
+;; where `make test' runs in the same process as everything else.
+
+(defmacro org-agents-test--with-completion (text drawer &rest body)
+  "Run BODY at a heading whose drawer holds DRAWER, against registry TEXT.
+`org-agents-allowed-values' is the only function on
+`org-property-allowed-value-functions', which is bound rather than added
+to, and point is on the heading."
+  (declare (indent 2))
+  `(org-agents-test--with-registry ,text
+     (with-temp-buffer
+       (let ((org-property-allowed-value-functions
+              (list #'org-agents-allowed-values))
+             (org-use-property-inheritance nil))
+         (insert "* Entry\n:PROPERTIES:\n" ,drawer ":END:\n")
+         (org-mode)
+         (goto-char (point-min))
+         ,@body))))
+
+(ert-deftest org-agents-test-allowed-values-declared-set ()
+  "A declared vocabulary is what `org-set-property' completes.
+The `table' form is asserted too, because that is the form
+`org-read-property-value' actually asks for on the way to the prompt."
+  (org-agents-test--with-completion org-agents-test--registry-example ""
+    (should (equal (org-property-get-allowed-values (point) "STATUS")
+                   '("open" "wip" "blocked" "done")))
+    (should (equal (org-property-get-allowed-values (point) "STATUS" 'table)
+                   '(("open") ("wip") ("blocked") ("done"))))))
+
+(ert-deftest org-agents-test-allowed-values-leave-undeclared-alone ()
+  "An undeclared name is not answered for, and its `_ALL' still wins.
+`org-property-get-allowed-values' consults this hook in a clause ABOVE
+the one that reads `NAME_ALL', so ANY non-nil answer shadows every `_ALL'
+declaration in the corpus for that name.  Measured: a hook answering for
+`STATUS' beat a `:STATUS_ALL: a b c' in the entry's own drawer.  Leaving
+an undeclared name alone therefore means answering nil, not answering
+something harmless."
+  (org-agents-test--with-completion org-agents-test--registry-example
+      ":NOPE_ALL: a b c\n"
+    (should-not (org-agents-allowed-values "NOPE"))
+    (should (equal (org-property-get-allowed-values (point) "NOPE")
+                   '("a" "b" "c")))))
+
+(ert-deftest org-agents-test-allowed-values-declared-without-values-defers ()
+  "A declaration carrying no vocabulary defers to `NAME_ALL' as well.
+The empty list is not an answer here, it is the absence of one: returning
+`\\='()' as though it were an answer would silently disable every `_ALL'
+declaration in the corpus for a name the registry merely gave a type."
+  (org-agents-test--with-completion "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+"
+      ":STATUS_ALL: a b c\n"
+    (should (org-agents-attribute "STATUS"))
+    (should-not (org-agents-allowed-values "STATUS"))
+    (should (equal (org-property-get-allowed-values (point) "STATUS")
+                   '("a" "b" "c")))))
+
+(ert-deftest org-agents-test-allowed-values-boolean-two-values ()
+  "A boolean completes to its two values, with no type dispatch here.
+The READER synthesizes them onto the declaration, which is why this
+function has no branch for the type at all."
+  (org-agents-test--with-completion org-agents-test--registry-example ""
+    (should (equal (org-property-get-allowed-values (point) "OPEN")
+                   '("true" "false")))))
+
+(ert-deftest org-agents-test-allowed-values-set-and-list-complete-per-member ()
+  "A set and a list complete their MEMBERS, not their whole vocabulary.
+Completing one member of a whitespace-separated value is what the value
+is written one member at a time, so the members are what the answer holds."
+  (org-agents-test--with-completion "\
+* TOPICS
+:PROPERTIES:
+:ATTR_TYPE:   list
+:ATTR_VALUES: emacs org lisp
+:END:
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:   set
+:ATTR_VALUES: open wip
+:END:
+" ""
+    (should (equal (org-property-get-allowed-values (point) "TOPICS")
+                   '("emacs" "org" "lisp")))
+    (should (equal (org-property-get-allowed-values (point) "STATUS")
+                   '("open" "wip")))))
+
+(ert-deftest org-agents-test-allowed-values-are-fresh-copies ()
+  "The answer is freshly copied strings, because Org writes on them.
+MEASURED, and this is the sharpest edge in the whole feature.  Where the
+vocabulary ends in `:ETC', `org-property-get-allowed-values' calls
+`org-add-props' on the first string of the list it was handed, and
+`org-add-props' adds text properties IN PLACE.  A hook that returned its
+own cached list left `(org-unrestricted t)' on that list's first string
+for the rest of the session -- so every later completion of that
+property, and every value comparison against it, carried a property
+nobody put there."
+  (org-agents-test--with-completion "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:   string
+:ATTR_VALUES: open wip :ETC
+:END:
+" ""
+    ;; `:ETC' is passed through, not filtered: it is what makes a declared
+    ;; vocabulary stay OPEN at the prompt, since `org-read-property-value'
+    ;; reads REQUIRE-MATCH off the `org-unrestricted' property `:ETC' is
+    ;; what puts there.
+    (should (member ":ETC" (org-agents-allowed-values "STATUS")))
+    (let ((answer (org-property-get-allowed-values (point) "STATUS"))
+          (cached (plist-get (org-agents-attribute "STATUS") :values)))
+      (should (equal '("open" "wip") answer))
+      ;; Org wrote on the list it was handed -- it always will, and that
+      ;; is the answer's business.  What matters is WHOSE strings those
+      ;; are: not the cache's, so the writing lands on a copy.
+      (should (text-properties-at 0 (car answer)))
+      (should-not (memq (car answer) cached)))
+    ;; So the cache is still exactly what the file spelled, `:ETC' and
+    ;; all, however many times it has been completed against.
+    (org-property-get-allowed-values (point) "STATUS")
+    (org-property-get-allowed-values (point) "STATUS")
+    (let ((cached (plist-get (org-agents-attribute "STATUS") :values)))
+      (should (equal '("open" "wip" ":ETC") cached))
+      (dolist (value cached)
+        (should-not (text-properties-at 0 value))))))
+
 ;;;; Collection
 
 (defmacro org-agents-test--with-corpus (&rest body)
