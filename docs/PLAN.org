@@ -1,6 +1,676 @@
 #+TITLE: Obr Issues
 #+SEQ_TODO: TODO DOING DRAFT WAIT DEFER NOTE | DONE CANCELED
-#+ISSUE_PREFIX: orga-code-hygiene
+#+ISSUE_PREFIX: orga-action-code
+
+* TODO [#C] Action code: declarative verbs behind one explicit command
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-action-code-wrk
+:LABELS:   []
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Action code as declarative verbs behind an explicit command: the design's
+Epic 5. AGENT_ACTION holds edna-shaped verb text (never a sexp, nothing
+evaluated); one command runs the agent's query, prints a dry-run of every
+intended edit, and applies on confirmation. Never on save, never on a timer,
+never inheritable. Blocks on Epic 1: the gate must mean what it says before a
+property can request writes.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-action-code-wrk",
+    "depends_on_id": "orga-harden-the-gate-fkl",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:38.646022Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] The action parser: verbs resolve by name, arguments stay data
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-action-code-wrk.1
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+The action parser.
+
+AGENT_ACTION holds text like: set-property!(REVIEWED, today) tag!(+reviewed)
+
+## Acceptance Criteria
+
+- Tokens resolve by name construction (org-agents-action/NAME) plus fboundp;
+  arguments are strings handed to the verb as data — nothing from the
+  property is ever evaluated, read, or expanded as Lisp.
+- An unresolved token is a user-error naming the token; a malformed argument
+  list names the verb and position. Parse errors abort before ANY verb runs.
+- Parser is pure: parsing returns a list of (verb . args) and touches no
+  buffer.
+- Tests: quoting/whitespace in arguments, multiple verbs, unresolved token,
+  the never-evaluated property pinned by a test whose argument spells a sexp
+  and asserts it arrives as a string.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-action-code-wrk.1",
+    "depends_on_id": "orga-action-code-wrk",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:25.105990Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] The verb vocabulary, destructive verbs confirm-always
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-action-code-wrk.2
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+The verb vocabulary.
+
+## Acceptance Criteria
+
+- Initial verbs, each an org-agents-action/NAME defun over Org's own editing
+  primitives: set-property!, delete-property!, tag!, todo!, priority!,
+  scheduled!, deadline!, effort!, archive!.
+- archive! and delete-property! confirm EVERY time; no remembered approval,
+  variable, or non-interactive path silences them (batch refuses rather than
+  assumes).
+- Extension is documented as a defun in init — the trusted zone; the
+  namespace convention is the contract.
+- Per-verb tests including the confirm-always property (a test that answers
+  no and asserts nothing changed).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-action-code-wrk.2",
+    "depends_on_id": "orga-action-code-wrk",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:25.343640Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-action-code-wrk.2",
+    "depends_on_id": "orga-action-code-wrk.1",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:39.583092Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] org-agents-apply-actions: dry run, then apply
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-action-code-wrk.3
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-apply-actions: the one trigger.
+
+## Acceptance Criteria
+
+- Runs the agent-at-point's query, computes the match set, and prints a
+  dry-run report first: one line per intended edit, file:line, verb,
+  old -> new. Nothing is written at this stage.
+- Applies only on explicit confirmation from that report; the report then
+  records applied/failed per line. Buffers modified are reported; nothing is
+  saved on the user's behalf.
+- Errors mid-application stop at the failing edit and say exactly what was
+  and was not applied.
+- Stamps fall out: the command also works over an explicit set (region of a
+  rendered view), documented as such.
+- Tests: dry-run writes nothing; confirmation applies exactly what was
+  listed; a failing verb mid-list leaves an honest report.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-action-code-wrk.3",
+    "depends_on_id": "orga-action-code-wrk",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:25.581662Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-action-code-wrk.3",
+    "depends_on_id": "orga-action-code-wrk.2",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:39.771277Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#B] Actions never run on save: the guarantee, held by a test
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-action-code-wrk.4
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Actions never run on save — the guarantee, held by a test.
+
+## Acceptance Criteria
+
+- Saving a file whose agent carries AGENT_ACTION performs no write beyond the
+  ordinary render: pinned by a test that saves such a file and asserts (a) no
+  verb function was called (instrumented) and (b) the file's bytes differ
+  from the pre-save state only by the render.
+- Neither minor mode, org-agents-update, org-agents-update-buffer, nor
+  org-agents-update-all ever invokes the action machinery; only
+  org-agents-apply-actions does. A test enumerates the entry points.
+- README states the guarantee in the same register as "a save never contacts
+  the database" once did.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-action-code-wrk.4",
+    "depends_on_id": "orga-action-code-wrk",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:25.816430Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#B] Actions are not inheritable: the guarantee, held by a test
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-action-code-wrk.5
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Actions are not inheritable — the guarantee, held by a test.
+
+Rationale (docs/research/action-code-safety.md part 3): if a prototype can
+pass down an action, the code that edits your corpus when you act on file A
+is written in file B, and per-file trust is meaningless.
+
+## Acceptance Criteria
+
+- The Epic 3 resolver never surfaces AGENT_ACTION — or any AGENT_* property —
+  through a PROTOTYPE chain; org-agents-apply-actions reads AGENT_ACTION only
+  from the agent entry's own drawer.
+- A test gives a prototype an AGENT_ACTION and asserts a follower agent has
+  none, and that apply-actions on the follower refuses (nothing to apply).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-action-code-wrk.5",
+    "depends_on_id": "orga-action-code-wrk",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:26.062086Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Action documentation
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-action-code-wrk.6
+:LABELS:   []
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Action documentation.
+
+## Acceptance Criteria
+
+- README: the vocabulary reference (one line per verb), the dry-run flow with
+  a real transcript, the trust model in plain words (arguments are data; the
+  worst expressible attack is a bounded, greppable Org edit), the extension
+  guide, and the two refusals with their reasons — never on save/timer, never
+  inheritable.
+- The design's not-ported table ($Rule/$Edict and why) reproduced or linked.
+- docs/init-snippet.org updated.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-action-code-wrk.6",
+    "depends_on_id": "orga-action-code-wrk",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:26.198641Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Appearance from attribute values, zero bytes changed
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-appearance-06j
+:LABELS:   []
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Appearance driven by attribute values, zero bytes changed: the design's
+Epic 4. One font-lock mode faces headlines from declared ATTR_FACES mappings,
+resolving through the Epic 3 cache. No geometry, no writes. Blocks on Epic 3
+for resolution.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-appearance-06j",
+    "depends_on_id": "orga-prototypes-opa",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:38.431331Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] org-agents-faces-mode
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-appearance-06j.1
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-faces-mode.
+
+## Acceptance Criteria
+
+- Buffer-local minor mode plus a global variant patterned on
+  global-org-agents-mode: one font-lock keyword facing a headline when a
+  declared attribute's resolved value maps to a face in its ATTR_FACES.
+- jit-lock-driven; the matcher reads only the entry at the match, so cost
+  scales with what is displayed — pinned by a test counting resolver calls
+  after fontifying a narrow window of a large buffer.
+- Disabling restores the buffer exactly (font-lock keyword removed, no
+  residue); ATTR_FACES parse errors diagnosed once, by attribute name.
+- Faces validated: an undefined face name is a diagnostic, not an error.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-appearance-06j.1",
+    "depends_on_id": "orga-appearance-06j",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:24.478630Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-appearance-06j.1",
+    "depends_on_id": "orga-prototypes-opa.1",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:39.401819Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Appearance documentation, and what is deliberately absent
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-appearance-06j.2
+:LABELS:   []
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Appearance documentation, and what is deliberately absent.
+
+## Acceptance Criteria
+
+- README: ATTR_FACES syntax, a worked example (STATUS: active/stalled), the
+  zero-bytes property, and the explicit refusals — no geometry ($Width/$Xpos
+  are map-view artifacts), and no writes of any kind from appearance
+  declarations, with a pointer to Epic 5 for why.
+- docs/init-snippet.org gains the mode.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-appearance-06j.2",
+    "depends_on_id": "orga-appearance-06j",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:24.621794Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] A corpus-wide attribute registry
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-attribute-registry-b1j
+:LABELS:   []
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+A corpus-wide attribute registry: the typed-user-attributes half of the
+dynamic-properties design (docs/2026-08-19-dynamic-properties-design.md,
+Epic 2). One Org file declares each attribute's type, default, allowed values
+and documentation; the package reads it lazily, caches on modification tick,
+and feeds completion, linting, column formats, and (Epic 3) prototype
+defaults. Pure data — nothing to trust, nothing executed.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-attribute-registry-b1j",
+    "depends_on_id": "orga-harden-the-gate-fkl",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:38.014612Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] The registry file, its reader, and its cache
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-attribute-registry-b1j.1
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+The registry file, its reader, and its cache.
+
+`defcustom org-agents-attributes-file` (default ~/org/attributes.org, :risky t).
+Each top-level entry declares one attribute: heading = name, body = doc,
+drawer carries ATTR_TYPE (string|number|date|boolean|set|list), ATTR_DEFAULT,
+ATTR_VALUES (whitespace-separated), ATTR_FACES (consumed by Epic 4). set/list
+follow Tinderbox's meanings: unordered-unique and ordered.
+
+## Acceptance Criteria
+
+- An API function answers one attribute's declaration as a plist, and another
+  lists all declared names; both read through a cache keyed on the file's
+  modification tick, re-reading only when it changes.
+- A missing or unreadable registry file means "nothing declared", never an
+  error; a malformed entry is reported once by name and skipped.
+- Types validate values: a `date` default that does not parse is diagnosed at
+  read time, not at first use.
+- Tests: cache invalidation on edit; malformed entry skipped and named;
+  absent file harmless.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-attribute-registry-b1j.1",
+    "depends_on_id": "orga-attribute-registry-b1j",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:22.972887Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] Completion of declared values corpus-wide
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-attribute-registry-b1j.2
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Completion from the registry.
+
+## Acceptance Criteria
+
+- A function on `org-property-allowed-value-functions` offers ATTR_VALUES for
+  declared names, so `org-set-property` completes declared values in any
+  corpus buffer; undeclared names are left entirely alone.
+- Boolean attributes complete to their two values; set/list attributes
+  complete per-member.
+- Enabling this is part of the package's setup documentation; a test drives
+  `org-property-get-allowed-values` directly.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-attribute-registry-b1j.2",
+    "depends_on_id": "orga-attribute-registry-b1j",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:23.104559Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] org-agents-check-attributes: lint a scope against the registry
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-attribute-registry-b1j.3
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-check-attributes: lint a scope against the registry.
+
+## Acceptance Criteria
+
+- Takes the same scope vocabulary as agents; reports (never edits): property
+  names in use but undeclared, values outside a declared ATTR_VALUES, values
+  that do not parse as the declared ATTR_TYPE.
+- Output is a navigable report buffer, one line per finding, file:line
+  clickable; a clean run says so.
+- Corpus-scope runs go through the ripgrep prefilter machinery where a
+  declared name gives a pattern, and fall back live otherwise — never a hard
+  error.
+- Tests over a fixture corpus cover each finding kind and the clean case.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-attribute-registry-b1j.3",
+    "depends_on_id": "orga-attribute-registry-b1j",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:23.236371Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Column formats from the registry, and the org-ql-search recipe
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-attribute-registry-b1j.4
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Column formats from the registry, and the documented recipe.
+
+Measured (docs/research/org-existing-facilities.md): `org-agenda-columns`
+already works inside an `org-ql-search` buffer — corpus-wide displayed
+attributes with write-back editing, today. The deliverable is leverage, not
+machinery.
+
+## Acceptance Criteria
+
+- A command inserts (or returns) a COLUMNS format string built from chosen
+  registry attributes, typed sensibly (numbers get summaries).
+- README gains a worked recipe: org-ql-search + org-agenda-columns +
+  registry-fed completion, end to end.
+- No new rendering code.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-attribute-registry-b1j.4",
+    "depends_on_id": "orga-attribute-registry-b1j",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:23.363723Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
 
 * TODO [#D] Code hygiene in org-agents v1    :hygiene:
 :PROPERTIES:
@@ -624,15 +1294,17 @@ modified.
 - [ ] no child grows a second safety mechanism: anything that evaluates user
       text goes through `org-agents--gate`
 
-* TODO [#D] AGENT_ACTION: let an agent act on what it matches    :feature:tinderbox:
+* DONE [#D] AGENT_ACTION: let an agent act on what it matches    :feature:tinderbox:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.1
 :LABELS:   ["feature","tinderbox","v1-deferred"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:54]
+:MODIFIED: [2026-08-19 Wed 18:19]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 18:19]
+:CLOSE_REASON: Superseded by the action-code epic (orga-action-code-wrk) of the dynamic-properties design, docs/2026-08-19-dynamic-properties-design.md. The design settles what this issue left open: edna-shaped declarative verbs rather than Lisp, arguments as data never evaluated, one explicit command with a printed dry-run as the only trigger, never on save or a timer, never inheritable through prototypes, destructive verbs confirm-always. The research base is docs/research/action-code-safety.md.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2142,6 +2814,270 @@ tree and org-ql matches through it, so without it the candidate set would be
 narrower than the scope's own file list — a lost match rather than a slow one.
 See `org-agents--rg-args` and README's honest limitation 4.
 
+* TODO [#B] Harden the query gate before any new feature
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-harden-the-gate-fkl
+:LABELS:   []
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Close the four verified gaps in the query gate before any new feature multiplies
+their surface. Evidence: docs/research/action-code-safety.md part 1, each gap
+verified against the shipped package. Nothing in this epic adds a capability;
+everything in it makes the existing approval story mean what it says.
+
+Ordering: this epic blocks every other epic of the dynamic-properties design
+(docs/2026-08-19-dynamic-properties-design.md).
+
+* TODO [#B] Gate and hash the form that actually runs, exclude included
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-harden-the-gate-fkl.1
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+The gate does not cover the form that actually runs.
+
+## Steps to Reproduce
+
+1. Read `org-agents--collect`: it gates QUERY, then byte-compiles
+   `(and QUERY org-agents-exclude)` — the exclude is spliced in after the gate.
+   Same shape in `org-agents-preview`.
+2. Set `org-agents-exclude` to a sexp holding a side effect (any call the gate
+   would refuse in a query).
+3. Update any agent: the side effect runs. The gate never saw it, and the
+   remembered hash covers only the query half.
+
+## Acceptance Criteria
+
+- The form handed to org-ql (query and exclude together) is what is gated and
+  what is hashed; approving a query never silently approves an exclude.
+- A test demonstrates that a gate-refusable exclude is refused, and that
+  changing the exclude invalidates a remembered approval.
+- Existing approvals in the wild are handled honestly: a stored hash of the old
+  shape no longer matches anything, so each agent re-prompts once.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-harden-the-gate-fkl.1",
+    "depends_on_id": "orga-harden-the-gate-fkl",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:22.142021Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#B] Mark every org-agents defcustom risky
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-harden-the-gate-fkl.2
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+No org-agents defcustom is marked risky, so all of them can be set file-locally.
+
+## Steps to Reproduce
+
+1. `(get 'org-agents-exclude 'risky-local-variable)` is nil; same for
+   `org-agents-safe-queries`, `org-agents-files`, `org-agents-prefilter`,
+   `org-agents-rg-executable`.
+2. Add a file-local block setting `org-agents-rg-executable` to a hostile
+   program. Emacs's local-variable prompt offers `!` (permanent) and `+`
+   (directory-wide); one keystroke trusts it forever.
+
+## Acceptance Criteria
+
+- All five defcustoms carry `:risky t`, and every defcustom the
+  dynamic-properties epics add is born risky.
+- A test asserts `risky-local-variable` on each (a list the test owns, so a new
+  unmarked defcustom fails it).
+- README's safety section states the property and why.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-harden-the-gate-fkl.2",
+    "depends_on_id": "orga-harden-the-gate-fkl",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:22.281148Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] The approval prompt must show what the hash covers
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-harden-the-gate-fkl.3
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+The approval prompt can display less than the hash covers.
+
+## Steps to Reproduce
+
+1. The hash site binds `print-level` and `print-length` to nil; the prompt site
+   does not.
+2. With a small `print-length` (some configurations set one), build a query
+   deeper than the limit: the prompt shows `...` where the interesting part is,
+   the user approves what they cannot see, and the hash remembers all of it.
+
+## Acceptance Criteria
+
+- The prompt renders under the same `print-level`/`print-length` bindings as
+  the hash.
+- A test approves a deep query under a small `print-length` and asserts the
+  prompt text contains the deep leaf.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-harden-the-gate-fkl.3",
+    "depends_on_id": "orga-harden-the-gate-fkl",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:22.409161Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] Approvals must be inspectable and revocable
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-harden-the-gate-fkl.4
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Remembered approvals can be neither inspected nor revoked.
+
+`org-agents-safe-queries` accumulates hashes; nothing shows which query a hash
+stands for, and the only way to unapprove is to hand-edit custom-file.
+
+## Acceptance Criteria
+
+- A command lists each remembered approval beside the query text it covers
+  (store the printed form alongside the hash from now on; legacy bare hashes
+  listed as such), and removes the one at point.
+- A negative list refuses a query permanently: refused beats remembered, and
+  the refusal survives restart the same way approvals do.
+- Tests cover list, revoke, refuse, and precedence.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-harden-the-gate-fkl.4",
+    "depends_on_id": "orga-harden-the-gate-fkl",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:22.562529Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] A refused-heads list, consulted before the safe list
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-harden-the-gate-fkl.5
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Predicate normalizers run after the gate, so a structurally safe head can
+expand into IO.
+
+## Steps to Reproduce
+
+1. The gate admits known org-ql predicates by head; org-ql then runs each
+   predicate's normalizer, which is arbitrary code from wherever the predicate
+   was defined.
+2. In this configuration `(semantic "x")` is such a head: its normalizer
+   spawns an `org db search` subprocess. A foreign file's agent query can
+   therefore cause a subprocess without tripping the gate.
+
+## Acceptance Criteria
+
+- A `defcustom org-agents-refused-heads` (`:risky t`) the gate consults before
+  its safe-list; refusal names the head and wins over any remembered approval.
+- Shipped non-empty with the known IO-bearing heads in this configuration, and
+  documented as the place such heads go.
+- Tests: a refused head is refused even when approved earlier; an ordinary
+  head is unaffected.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-harden-the-gate-fkl.5",
+    "depends_on_id": "orga-harden-the-gate-fkl",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:22.697412Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
 * TODO [#D] Report a missing scope file legibly, not as a bufferp type error
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
@@ -3223,6 +4159,300 @@ Pick one, and it is a matter of taste:
     "depends_on_id": "orga-parent-repo-housekeeping-ta4",
     "type": "parent-child",
     "created_at": "2026-08-19T17:30:26.368678Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] Prototypes with virtual reads
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prototypes-opa
+:LABELS:   []
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Prototypes with virtual reads: the design's Epic 3
+(docs/2026-08-19-dynamic-properties-design.md). An entry names a prototype;
+values resolve at read time — local, then prototype chain, then registry
+default — and are never written into the inheriting entry. Ships a resolver,
+an org-ql predicate, $NAME^ sugar, and the prefilter widening that keeps
+corpus agents sound. Blocks on the registry (Epic 2) for defaults.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prototypes-opa",
+    "depends_on_id": "orga-attribute-registry-b1j",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:38.238970Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] The resolver: PROTOTYPE chains, cycles, cache
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prototypes-opa.1
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+The resolver: PROTOTYPE chains, cycles, cache.
+
+`:PROTOTYPE: <name-or-id>` — a name resolves among entries of a `Prototypes`
+top-level section in the attributes file; an id: UUID resolves anywhere.
+Resolution order per attribute: local → prototype chain nearest-first →
+registry ATTR_DEFAULT → nil. Outline inheritance deliberately not in this
+order (containment is not inheritance; $NAME* already exists for that).
+
+## Acceptance Criteria
+
+- An API function resolves one attribute at a marker/entry through the chain,
+  with a visited set; a cycle is a user-error naming the cycle.
+- AGENT_* names never resolve through a prototype (behaviour does not travel;
+  see Epic 5), pinned by a test.
+- Cache keyed on the attributes file's and each prototype buffer's
+  modification tick; a test edits a prototype and sees the follower change.
+- A dangling PROTOTYPE (name/id resolving to nothing) is one clear diagnostic
+  naming the entry, not an error cascade.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prototypes-opa.1",
+    "depends_on_id": "orga-prototypes-opa",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:23.628737Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] (property-resolved NAME [VALUE]): the preamble-free predicate
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prototypes-opa.2
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+The org-ql predicate: (property-resolved NAME [VALUE]).
+
+Measured constraint (docs/research/org-existing-facilities.md): org-ql's
+preamble reads the entry's own drawer, so inherited values are invisible to
+(property ...) even with org-use-property-inheritance t; advice on
+org-entry-get is silently defeated the same way. The predicate must be
+preamble-free by construction.
+
+## Acceptance Criteria
+
+- org-ql-defpred property-resolved, no preamble, matching by the Epic 3
+  resolution order; existence and value forms.
+- Admitted by the gate as a pure read; structurally-safe test updated.
+- Differential test: an entry whose value arrives only via PROTOTYPE is
+  matched; the same query through plain (property ...) is not — pinning why
+  this predicate exists.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prototypes-opa.2",
+    "depends_on_id": "orga-prototypes-opa",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:23.765904Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-prototypes-opa.2",
+    "depends_on_id": "orga-prototypes-opa.1",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:38.830293Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] $NAME^ sugar in the expander
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prototypes-opa.3
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+$NAME^ sugar in the expander.
+
+## Acceptance Criteria
+
+- $NAME^ expands to (property-resolved "NAME") in truthiness position and to
+  the value/number coercions the existing $NAME rows define, mirroring the
+  $NAME* table; documented beside it in Commentary and README.
+- Expander tests cover each position, and one test asserts $NAME, $NAME* and
+  $NAME^ expand to three distinct predicates.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prototypes-opa.3",
+    "depends_on_id": "orga-prototypes-opa",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:23.918878Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-prototypes-opa.3",
+    "depends_on_id": "orga-prototypes-opa.2",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:39.036804Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#B] Prefilter widening for property-resolved: the soundness rule
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prototypes-opa.4
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Prefilter widening for property-resolved — the soundness rule.
+
+An inheriting entry never spells the value, so the ordinary property pattern
+under-matches (silent lost matches). Widening: a file containing a matching
+entry either spells a local :NAME: line or carries a :PROTOTYPE: line, so
+push the alternation `^[ \t]*:(NAME\+?|PROTOTYPE\+?):`.
+
+EXCEPTION: when the tested value equals the registry ATTR_DEFAULT, or the
+query is bare existence and a default is declared, an entry with neither line
+also matches — nothing can narrow; the conjunct stays residual.
+
+## Acceptance Criteria
+
+- Pushdown emits the alternation for property-resolved, except in the default
+  cases above, where it pushes nothing.
+- Differential tests over a fixture corpus with entries on both sides of the
+  default: org-ql's whole-corpus answer file-by-file against the narrowed
+  answer, superset asserted; fixtures include a follower whose file has no
+  local NAME line at all.
+- Mutation evidence: dropping the PROTOTYPE arm of the alternation, and
+  pushing despite the default exception, each fail a named test.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prototypes-opa.4",
+    "depends_on_id": "orga-prototypes-opa",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:24.061901Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-prototypes-opa.4",
+    "depends_on_id": "orga-prototypes-opa.2",
+    "type": "blocks",
+    "created_at": "2026-08-20T01:19:39.219191Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#D] Prototype documentation and the worked example
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-prototypes-opa.5
+:LABELS:   []
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 18:19]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Prototype documentation and the worked example.
+
+## Acceptance Criteria
+
+- README section: the resolution order, the orthogonality of $NAME* and
+  $NAME^, the virtual-reads decision and its consequence (grep does not see
+  inherited values; agents through property-resolved do), and the default
+  exception in the prefilter.
+- A worked Task prototype in the attributes file: declaration, two followers,
+  an agent that matches through inheritance.
+- docs/init-snippet.org updated.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-prototypes-opa.5",
+    "depends_on_id": "orga-prototypes-opa",
+    "type": "parent-child",
+    "created_at": "2026-08-20T01:19:24.207027Z",
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
