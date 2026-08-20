@@ -1416,6 +1416,129 @@ not a behaviour anyone would report as a bug rather than as magic."
         (should (member "EXTRA" (org-agents-attributes)))
         (should (= 2 reads))))))
 
+(ert-deftest org-agents-test-attributes-cache-invalidates-on-a-disk-edit ()
+  "An edit made with no buffer visiting the registry invalidates too.
+The other half of the composite key, and the half the mechanism is
+specified in terms of: where nothing is visiting the registry there is no
+tick to read, so the key is the file's modification time and size.  This
+test never lets a buffer near the file -- `should-not
+find-buffer-visiting' says so on both sides of the edit -- which is what
+`org-agents-test-attributes-cache-holds-and-invalidates' cannot do, since
+its `find-file-noselect' flips the key to its buffer spelling.
+
+Without this the file half is untested: MEASURED, reducing the key to the
+file NAME alone left the whole suite green, and left anyone who edits
+`~/org/attributes.org' from another Emacs -- or edits it, saves, and
+kills the buffer -- completing the pre-edit vocabulary for the rest of
+the session."
+  (org-agents-test--with-registry "\
+* S
+:PROPERTIES:
+:ATTR_TYPE:   string
+:ATTR_VALUES: aaa
+:END:
+"
+    (let ((reads 0)
+          (real (symbol-function 'org-agents--attributes-read)))
+      (cl-letf (((symbol-function 'org-agents--attributes-read)
+                 (lambda (&rest args) (cl-incf reads) (apply real args))))
+        (should-not (find-buffer-visiting registry))
+        (should (equal '("aaa") (plist-get (org-agents-attribute "S") :values)))
+        (should (= 1 reads))
+        ;; Rewritten on disk, by nothing that visits it, to a file of the
+        ;; very same SIZE: only the modification time separates the two.
+        ;; `set-file-times' rather than trusting the clock, because a
+        ;; rewrite within one timestamp's resolution would leave the two
+        ;; keys equal and this test asserting nothing.
+        (with-temp-file registry
+          (insert "\
+* S
+:PROPERTIES:
+:ATTR_TYPE:   string
+:ATTR_VALUES: bbb
+:END:
+"))
+        (set-file-times registry (time-add (current-time) 10))
+        (should-not (find-buffer-visiting registry))
+        (should (equal '("bbb") (plist-get (org-agents-attribute "S") :values)))
+        (should (= 2 reads))
+        ;; And the new answer is itself cached: the edit costs one read,
+        ;; not one per look-up afterwards.
+        (should (org-agents-attributes))
+        (should (= 2 reads))))))
+
+(ert-deftest org-agents-test-attributes-deleted-file-clears-the-cache ()
+  "A registry that has been deleted declares nothing, and the cache is emptied.
+Answering from the cache after the file went away would be a stale answer
+with no way back to a true one: `org-set-property' would go on completing
+a vocabulary no file holds, and the lint would go on validating against
+declarations nobody could read.  So the unreadable branch CLEARS the
+cache rather than answering from it.
+
+`org-agents-test-attributes-absent-file-is-empty' cannot catch this,
+because it starts from an empty cache -- the stale branch has nothing to
+return there.  MEASURED: making that branch answer `(cdr
+org-agents--attributes-cache)' left all of the suite green."
+  (org-agents-test--with-registry "\
+* S
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+"
+    (should (equal '("S") (org-agents-attributes)))
+    (should org-agents--attributes-cache)
+    (delete-file registry)
+    (let ((texts (org-agents-test--messages
+                   (should-not (org-agents-attributes))
+                   (should-not (org-agents-attribute "S")))))
+      ;; Silently, as an absent registry always is.
+      (should-not texts))
+    (should-not org-agents--attributes-cache)))
+
+(ert-deftest org-agents-test-attributes-setupfile-is-not-followed ()
+  "Reading the registry follows no `#+SETUPFILE:', and so cannot fetch.
+Enabling `org-mode' over the text is how the reader gets Org's own
+parsing, and `org-mode' collects keywords whatever `org-inhibit-startup'
+says.  MEASURED before the keyword was neutralized: a registry naming a
+setup file had `org-file-contents' called on it TWICE per read, and Org
+routes a URL there through `url-retrieve-synchronously' and a
+download-policy prompt -- from inside
+`org-property-allowed-value-functions', while the user answers an
+`org-set-property' prompt in an unrelated buffer.  A missing local one
+messaged from the same place.
+
+Nothing in a setup file could matter here: this reader wants headings and
+property drawers, and both are syntax rather than configuration."
+  (org-agents-test--with-registry "\
+#+SETUPFILE: /no/such/org-agents-setup.org
+#+setupfile: /no/such/lower-case.org
+
+* S
+:PROPERTIES:
+:ATTR_TYPE:   string
+:ATTR_VALUES: aaa bbb
+:END:
+Documented.
+"
+    (let ((fetched nil)
+          (real (symbol-function 'org-file-contents)))
+      (cl-letf (((symbol-function 'org-file-contents)
+                 (lambda (file &rest args)
+                   (push file fetched)
+                   (apply real file args))))
+        (let ((texts (org-agents-test--messages
+                       (should (equal '("aaa" "bbb")
+                                      (plist-get (org-agents-attribute "S")
+                                                 :values))))))
+          (should-not texts))
+        (should-not fetched))
+      ;; The declaration is read whole, so the neutralized line cost the
+      ;; parse nothing -- including the line number of the heading under
+      ;; it, which is what makes a diagnosis navigable.
+      (should (equal 4 (plist-get (org-agents-attribute "S") :line)))
+      (should (equal "Documented."
+                     (plist-get (org-agents-attribute "S") :doc))))))
+
 (ert-deftest org-agents-test-attributes-malformed-entry-named-once ()
   "A bad type costs its entry, is named, and is named exactly once.
 Once falls out of where the diagnosis is emitted: the READER says it, and
@@ -1656,6 +1779,41 @@ in the same words it says it for an agent's properties."
     (should-not (plist-get (org-agents-attribute "STATUS") :faces))
     ;; And no body is no documentation, rather than an empty string.
     (should-not (plist-get (org-agents-attribute "STATUS") :doc))))
+
+(ert-deftest org-agents-test-attributes-doc-stops-at-a-child-heading ()
+  "A declaration documents itself rather than quoting its children.
+The `:doc' body ends at the next heading of ANY level, and not at the end
+of the subtree.  A `** Examples' under a declaration is the obvious thing
+an author writes, and Epic 3 puts prototype entries under top-level
+sections of this same file -- so the difference is not hypothetical.
+
+MEASURED: bounding the body at `org-end-of-subtree' instead left the
+whole suite green while `:doc' became \"My own docs.\\n** Notes\\nChild
+prose...\" -- the children's raw Org text, carried into whatever
+displays it."
+  (org-agents-test--with-registry "\
+* S
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+My own docs.
+
+** Notes
+Child prose that is not S's documentation.
+
+*** Deeper
+Nor is this.
+* T
+:PROPERTIES:
+:ATTR_TYPE: number
+:END:
+"
+    (should (equal "My own docs." (plist-get (org-agents-attribute "S") :doc)))
+    ;; And a declaration whose next line is the next heading has no body
+    ;; at all, rather than the text of what follows it.
+    (should-not (plist-get (org-agents-attribute "T") :doc))
+    ;; The child headings declare nothing: only level-1 entries do.
+    (should (equal '("S" "T") (org-agents-attributes)))))
 
 (ert-deftest org-agents-test-attributes-boolean-values-are-not-declared ()
   "`:ATTR_VALUES:' on a boolean is named, and the pair still stands."

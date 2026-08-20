@@ -2542,6 +2542,20 @@ of that, and all three are wanted:
     cannot move point in a buffer the user is editing, and needs no
     opinion about the mode that buffer happens to be in.
 
+`#+SETUPFILE:' is neutralized in the COPY before the mode is enabled, and
+that is not cosmetic.  `org-mode' collects keywords whatever
+`org-inhibit-startup' says, and a `#+SETUPFILE:' is FOLLOWED: MEASURED,
+enabling the mode over a registry naming one called `org-file-contents'
+on it twice per read, and Org routes a URL there through
+`url-retrieve-synchronously' and its own download-policy prompt.  So a
+registry inheriting shared keywords the ordinary Org way would have made
+a blocking fetch -- or asked a question -- from inside
+`org-property-allowed-value-functions' while the user was answering an
+`org-set-property' prompt in an unrelated buffer, and a missing setup
+file would have messaged from there.  Nothing this reader wants is in a
+setup file: it reads headings and property drawers, and both are Org
+syntax rather than configuration.
+
 Never signals.  The caller has established that FILE is readable, and a
 file that stops being readable between that test and this read declares
 nothing and is named once: an error raised here would reach the user out
@@ -2555,6 +2569,10 @@ of `org-set-property' in some entirely unrelated buffer."
                                                         (point-max)))))))
         (with-temp-buffer
           (if text (insert text) (insert-file-contents file))
+          (goto-char (point-min))
+          (let ((case-fold-search t))
+            (while (re-search-forward "^\\([ \t]*\\)#\\+SETUPFILE:" nil t)
+              (replace-match "\\1# SETUPFILE:" t)))
           (let ((org-inhibit-startup t)
                 (org-element-use-cache nil))
             (delay-mode-hooks (org-mode))

@@ -215,6 +215,17 @@ There is nothing a registry file can hold that the package will evaluate,
 `read`, or run — which is the whole difference between this file and
 `AGENT_QUERY`, and why this one has no gate.
 
+Reading it fetches nothing either, which took one deliberate line. The
+reader enables `org-mode` over a copy of the text to get Org's own parsing,
+and `org-mode` *follows* a `#+SETUPFILE:` whatever `org-inhibit-startup`
+says — measured, twice per read, and through
+`url-retrieve-synchronously` for a URL. Since the read happens inside
+`org-property-allowed-value-functions`, that would have been a blocking
+fetch, or Org's download-policy prompt, arriving while you answered an
+`org-set-property` prompt in an unrelated buffer. So the keyword is
+neutralized in the copy before the mode is enabled: nothing a setup file
+could say matters to a reader that wants headings and drawers.
+
 A missing or unreadable registry declares nothing, silently. A malformed
 entry is named **once** — the diagnosis comes out of the reader, and the
 reader runs at most once per edit — and then a bad *type* costs its entry
