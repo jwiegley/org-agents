@@ -361,15 +361,17 @@ for resolution.
 ]
 #+end_src
 
-* TODO [#D] org-agents-faces-mode
+* DONE [#D] org-agents-faces-mode
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-appearance-06j.1
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 06:37]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 06:37]
+:CLOSE_REASON: Done, commits 7e2aef1, bef1bda, afcc10d, 9255441. org-agents-faces-mode plus global-org-agents-faces-mode: one font-lock keyword facing a headline from a declared attribute's RESOLVED value, prepend-and-appended so org-level-N survives underneath. Verified independently by the coordinator: a local value, a prototype-supplied value, and a registry default all resolve, with the prototype-supplied one facing identically to the local one; zero bytes changed across a forced save with org-agents-mode armed at the same time (md5 identical); modified-p nil after fontification; no overlays; keyword gone on disable. The review's mutation pass applied 27 mutations and every one was caught by the test NAMED for that behaviour, with the vacuous-font-lock-assertion trap explicitly ruled out. Cost is display-proportional and measured: a 142-char region costs 2 resolutions where the whole 400-entry buffer costs 400; a 40-line screenful of a 198 KB file is 1.7 ms, a whole pass 1.26x plain Org. Four review findings fixed: a second enable is now a no-op and follows an edit (bef1bda), an unresolvable id: is not re-read per region (afcc10d), and a face spelled nil is named (9255441).
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -414,15 +416,17 @@ org-agents-faces-mode.
 ]
 #+end_src
 
-* TODO [#D] Appearance documentation, and what is deliberately absent
+* DONE [#D] Appearance documentation, and what is deliberately absent
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-appearance-06j.2
 :LABELS:   []
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 06:37]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 06:37]
+:CLOSE_REASON: Done, commits 9d7a793, a8f29d0. README's appearance section with the ATTR_FACES syntax, the worked STATUS example, the zero-bytes property stated plainly, and both refusals recorded with their reasons -- no geometry ($Width/$Xpos describe a map view Org does not have) and no writes of any kind from appearance declarations, pointing at Epic 5. a8f29d0 says what the performance figures were measured against, so they cannot be read as universal. Documentation was verified by RUNNING the instructions, not reading them.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
