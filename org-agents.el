@@ -384,12 +384,72 @@ With NUMERIC non-nil, coerce a property's string value to a number."
 ;; from org-ql predicates and combinators run unremarked; anything else
 ;; needs the user's word for it, once, remembered by hash.
 ;;
-;; Refusal is checked first, and outranks `org-ql-ask-unsafe-queries':
-;; the switch governs whether the user is ASKED, and a head on
-;; `org-agents-refused-heads' is not a question.  What a predicate head
-;; vouches for is its own name; what its org-ql normalizer runs when the
-;; query is compiled is code from wherever that predicate was defined,
-;; and it runs past this gate no matter what the user answers.
+;; Refusal is checked first, and outranks `org-ql-ask-unsafe-queries' and
+;; structural safety both: the switch governs whether the user is ASKED,
+;; and a head on `org-agents-refused-heads' is not a question.  What a
+;; predicate head vouches for is its own name; what its org-ql normalizer
+;; runs when the query is compiled is code from wherever that predicate
+;; was defined, and it runs past this gate no matter what the user answers.
+;;
+;; Approval and refusal are keyed on the same hash but not looked up the
+;; same way, because their fail-safe directions are opposite.  An approval
+;; that stops matching asks again; a refusal that stops matching RUNS.  So
+;; an approval names the whole form and nothing else, while a refusal is
+;; looked up for the form and for the query inside it, and editing
+;; `org-agents-exclude' can therefore invalidate every approval -- as it
+;; should, the exclusion being part of what was approved -- without
+;; lifting a single refusal.
+
+(defcustom org-agents-exclude '(not (property "AGENT_MATCH"))
+  "Conjunct appended to every agent query and to previews.
+Keeps agents from matching generated aliases.  Appended last so cheap
+predicates short-circuit first; applied only on the Emacs side, never
+in the prefilter.  Set to nil to match aliases like any other entry.
+
+This value is conjoined into the form the gate approves, so Lisp here is
+gated exactly like Lisp in a query, and changing it invalidates every
+remembered approval: an approval names a form, and this is part of the
+form.  A REFUSAL is not invalidated by it -- see
+`org-agents-refused-queries' -- because an exclusion is not a place a
+decision to say no can be undone from.
+
+Risky: it is Lisp conjoined into every agent query and every preview."
+  :type 'sexp :risky t :group 'org-agents)
+
+(defun org-agents--effective-query (query)
+  "Return the form org-ql will be handed for QUERY.
+`org-agents-exclude' is conjoined in, unless it is nil.
+
+This is the form that is gated, the form that is hashed, and the form
+that is evaluated, and the three cannot diverge because there is one
+function saying what it is.  They did diverge: the gate was handed the
+query while the exclusion was spliced in afterwards, so approving a
+query silently approved an exclusion nobody had been shown."
+  (if org-agents-exclude
+      ;; nil conjoined here is a clause that never matches, which is not
+      ;; what turning the exclusion off means.
+      `(and ,query ,org-agents-exclude)
+    query))
+
+(defun org-agents--base-query (form)
+  "Return the query FORM was built from, undoing `org-agents--effective-query'.
+FORM itself where the exclusion is off or FORM was not built by appending
+the current one.
+
+Approval is keyed on the whole form, deliberately: what is approved has
+to be what runs.  Refusal cannot be keyed on that alone, or it would fail
+OPEN -- edit `org-agents-exclude' and every refusal ever made stops
+matching, without a single query being touched.  So the gate looks the
+base query up as well, and a refusal is recorded under both.  The
+asymmetry is the fail-safe direction of each: an approval that stops
+matching asks again, a refusal that stops matching runs."
+  (if (and org-agents-exclude
+           (proper-list-p form)
+           (= 3 (length form))
+           (eq (car form) 'and)
+           (equal (nth 2 form) org-agents-exclude))
+      (nth 1 form)
+    form))
 
 (defcustom org-agents-refused-heads '(semantic)
   "Predicate heads this package refuses to hand org-ql, whatever else says.
@@ -429,6 +489,19 @@ value evaluates nothing when `custom-file' is read back.")
 A form whose hash is here is refused before the safe list is consulted
 and before `org-ql-ask-unsafe-queries' is looked at, and the refusal
 outlives the session that made it, exactly as an approval does.
+
+Refusing through `org-agents-list-approvals' records TWO entries where
+the form was built by appending `org-agents-exclude': the whole form, and
+the query inside it.  That is what keeps a refusal in force when the
+exclusion is later edited -- see `org-agents--base-query'.  An entry added
+here by hand covers only the exact form it names.
+
+What a hash identifies is one printed form, not a query up to meaning: a
+refusal of `(and (todo) (evil))' does not cover `(and (evil) (todo))' or
+`(and (and (todo) (evil)))', which print differently and hash
+differently.  Where what the user objects to is a PREDICATE rather than a
+particular query, `org-agents-refused-heads' is the instrument that
+refuses it however the query around it is spelled.
 
 Entries have the same shape as `org-agents-safe-queries', so one listing
 can show an approval and a refusal side by side, each with the text its
@@ -497,6 +570,16 @@ run at every candidate entry with no prompt and no listing.")
 `member' answered for a list of bare hashes and for nothing else, so the
 moment a cons was written it would have stopped matching what it wrote."
   (cl-find hash entries :key #'org-agents--approval-hash :test #'equal))
+
+(defun org-agents--refusal-entry (form)
+  "The `org-agents-refused-queries' entry refusing FORM, or nil for none.
+FORM's own hash and that of `org-agents--base-query' are both looked up,
+so editing `org-agents-exclude' cannot lift a refusal."
+  (cl-loop for candidate in (delete-dups
+                             (list form (org-agents--base-query form)))
+           thereis (org-agents--approval-entry
+                    (org-agents--query-hash candidate)
+                    org-agents-refused-queries)))
 
 (defun org-agents--persist-approvals (var value)
   "Set VAR to VALUE, saved where customize has a file to save it in.
@@ -665,7 +748,7 @@ approval would answer for every query sharing it."
 
 (defun org-agents--gate (query &optional context)
   "Return non-nil when QUERY may be evaluated.
-Structurally safe queries always pass.  Unsafe queries pass when
+Structurally safe queries pass unless refused.  Unsafe queries pass when
 `org-ql-ask-unsafe-queries' is nil, when previously approved, or when
 the user confirms; in `noninteractive' (or CONTEXT `batch') they are
 skipped instead of prompting.
@@ -679,21 +762,22 @@ nothing about which head was refused, or that no approval can help."
     (user-error "org-agents: `%s' is refused by `org-agents-refused-heads'"
                 head))
   ;; Guarded on the list being non-empty so the common case does not pay
-  ;; for a sha1 nothing will be looked up in.
-  (when (and org-agents-refused-queries
-             (org-agents--approval-entry (org-agents--query-hash query)
-                                         org-agents-refused-queries))
+  ;; for a sha1 nothing will be looked up in.  Above the `or' below, and
+  ;; not a branch of it: a refusal outranks structural safety as well as
+  ;; every approval, since a form can be structurally safe and refused --
+  ;; that is what refusing a query the safe list would admit means.
+  (when (and org-agents-refused-queries (org-agents--refusal-entry query))
     (user-error
      "org-agents: this query is refused; see `org-agents-refused-queries'"))
   (or (org-agents--structurally-safe-p query)
       (not org-ql-ask-unsafe-queries)
-      (let ((hash (org-agents--query-hash query)))
+      (let ((hash (org-agents--query-hash query))
+            (text (org-agents--query-text query)))
         (or (gethash hash org-agents--session-approved)
             (org-agents--approval-entry hash org-agents-safe-queries)
             (if (or noninteractive (eq context 'batch))
                 (progn
-                  (message "org-agents: skipping unapproved query %s"
-                           (org-agents--query-text query))
+                  (message "org-agents: skipping unapproved query %s" text)
                   nil)
               ;; `%s' on an already-printed string, not `%S' on the form:
               ;; a second printing step would take whatever `print-length'
@@ -702,8 +786,11 @@ nothing about which head was refused, or that no approval can help."
               ;; the user must be shown whole, and the minibuffer wraps.
               (when (yes-or-no-p
                      (format "Query contains arbitrary Lisp: %s — run it? "
-                             (org-agents--query-text query)))
-                (puthash hash t org-agents--session-approved)
+                             text))
+                ;; The text, not `t': a session approval has to be
+                ;; listable and revocable too, and where customize has no
+                ;; file to write EVERY approval is a session approval.
+                (puthash hash text org-agents--session-approved)
                 ;; Only offer to remember where customize has a file to
                 ;; write.  Without one `customize-save-variable' writes
                 ;; nothing and says so in a message -- so asking would be
@@ -714,18 +801,23 @@ nothing about which head was refused, or that no approval can help."
                   ;; afterwards be read, and revoked, for what it is.
                   (org-agents--persist-approvals
                    'org-agents-safe-queries
-                   (cons (cons hash (org-agents--query-text query))
-                         org-agents-safe-queries)))
+                   (cons (cons hash text) org-agents-safe-queries)))
                 t))))))
 
 ;;;; Approval listing
 
-;; The two records the gate keeps are hashes, and a hash says nothing
-;; about what it stands for.  Every entry written from here on therefore
-;; carries the printed form beside its hash -- the same text the hash was
-;; taken of and the same text the prompt showed, by way of the one
-;; printer -- so a remembered decision can be read, revoked, or turned
-;; into a refusal instead of being taken on trust.
+;; The records the gate keeps are hashes, and a hash says nothing about
+;; what it stands for.  Every entry written from here on therefore carries
+;; the printed form beside its hash -- the same text the hash was taken of
+;; and the same text the prompt showed, by way of the one printer -- so a
+;; remembered decision can be read, revoked, or turned into a refusal
+;; instead of being taken on trust.
+;;
+;; All THREE records are listed, the session table included.  Listing only
+;; the two persistent ones said "nothing is remembered" to a user who had
+;; just approved something -- and on a setup where customize has no file to
+;; write, which is the setup `org-agents-safe-queries' documents, every
+;; approval this package makes is a session approval.
 
 (defconst org-agents--approvals-buffer "*org-agents approvals*"
   "Name of the buffer `org-agents-list-approvals' shows.")
@@ -735,14 +827,35 @@ nothing about which head was refused, or that no approval can help."
 An empty cell would not tell a legacy entry apart from one whose query
 really is empty text, and telling them apart is the point of listing.")
 
+(defconst org-agents--approvals-sources
+  '((org-agents-safe-queries . "approved")
+    (org-agents--session-approved . "approved (session)")
+    (org-agents-refused-queries . "refused"))
+  "Each record the listing shows, with the State it shows for it.
+In display order: what was saved, what holds only until Emacs is
+restarted, what is refused outright.")
+
+(defun org-agents--approvals-entries (var)
+  "The `(HASH . TEXT)' entries the record VAR names holds now.
+`org-agents--session-approved' is a hash table rather than a list, and
+only the hashes `org-agents-safe-queries' does not already account for
+are taken from it: the same decision listed twice would offer two rows
+that mean the same thing, and revoking the saved one clears the session
+copy anyway."
+  (if (eq var 'org-agents--session-approved)
+      (cl-loop for hash being the hash-keys of org-agents--session-approved
+               using (hash-values text)
+               unless (org-agents--approval-entry hash org-agents-safe-queries)
+               collect (cons hash (and (stringp text) text)))
+    (symbol-value var)))
+
 (defun org-agents--approvals-rows ()
-  "Rows for `org-agents-list-approvals': approvals first, then refusals.
-A row's id is `(VARIABLE . HASH)', so a hash recorded in both lists still
-yields two rows that the commands can tell apart."
-  (cl-loop for (var . state) in '((org-agents-safe-queries . "approved")
-                                  (org-agents-refused-queries . "refused"))
+  "Rows for `org-agents-list-approvals', one per remembered decision.
+A row's id is `(VARIABLE . HASH)', so a hash recorded in more than one
+record still yields rows the commands can tell apart."
+  (cl-loop for (var . state) in org-agents--approvals-sources
            append
-           (cl-loop for entry in (symbol-value var)
+           (cl-loop for entry in (org-agents--approvals-entries var)
                     for hash = (org-agents--approval-hash entry)
                     for text = (org-agents--approval-text entry)
                     collect
@@ -766,10 +879,38 @@ yields two rows that the commands can tell apart."
       (user-error "org-agents: no remembered decision on this line")))
 
 (defun org-agents--approvals-forget (var hash)
-  "Remove HASH's entry from the list VAR names, and save the result."
-  (org-agents--persist-approvals
-   var (cl-remove hash (symbol-value var)
-                  :key #'org-agents--approval-hash :test #'equal)))
+  "Remove HASH's entry from the record VAR names, and save the result.
+The session table is cleared whichever record the row came from: an
+approval dropped only where it was saved goes on working until Emacs is
+restarted, which is not what dropping one means."
+  (remhash hash org-agents--session-approved)
+  (unless (eq var 'org-agents--session-approved)
+    (org-agents--persist-approvals
+     var (cl-remove hash (symbol-value var)
+                    :key #'org-agents--approval-hash :test #'equal))))
+
+(defun org-agents--refusal-records (entry)
+  "The entries to record so ENTRY's form stays refused.
+ENTRY itself, and -- where its text reads back as a form built by
+appending the current `org-agents-exclude' -- the query inside that form
+as well.  Two records, because a refusal keyed on the whole form alone is
+lifted by the next edit to the exclusion: see `org-agents--base-query'.
+
+The text is read back only when re-printing it reproduces the text
+exactly, so what is refused is a form this package itself printed and not
+whatever a hand-edited entry happens to parse as.  A legacy entry carries
+no text at all, and is refused as the one hash it is."
+  (let* ((text (org-agents--approval-text entry))
+         (form (and text
+                    (ignore-errors
+                      (let ((parsed (car (read-from-string text))))
+                        (and (equal (org-agents--query-text parsed) text)
+                             (list parsed))))))
+         (base (and form (org-agents--base-query (car form)))))
+    (if (and form (not (equal base (car form))))
+        (list entry (cons (org-agents--query-hash base)
+                          (org-agents--query-text base)))
+      (list entry))))
 
 (defvar-keymap org-agents-approvals-mode-map
   :doc "Keymap for `org-agents-approvals-mode'."
@@ -783,14 +924,16 @@ yields two rows that the commands can tell apart."
 Each row is one remembered decision: what state it is in, the first
 twelve characters of its hash, and the query text that hash covers.  A
 row written by a version that recorded no text says so rather than
-showing an empty cell.
+showing an empty cell.  A row reading `approved (session)' was approved at
+a prompt and not saved, so it lasts until Emacs is restarted; it is
+listed, and revocable, exactly like a saved one.
 
 \\<org-agents-approvals-mode-map>\
 \\[org-agents-approvals-revoke] forgets the approval on this line, here
 and on disk; \\[org-agents-approvals-refuse] turns it into a refusal,
 which no later approval can undo; \\[org-agents-approvals-unrefuse] lifts
 a refusal, returning the query to needing approval rather than to having
-it; \\[tabulated-list-revert] rereads the two lists."
+it; \\[tabulated-list-revert] rereads all three records."
   (setq tabulated-list-format [("State" 18 t) ("Hash" 14 t) ("Query" 0 t)])
   (setq tabulated-list-padding 1)
   (add-hook 'tabulated-list-revert-hook #'org-agents--approvals-refresh nil t)
@@ -798,32 +941,33 @@ it; \\[tabulated-list-revert] rereads the two lists."
 
 (defun org-agents-approvals-revoke ()
   "Forget the approval on this line, in this session and on disk.
-The session table is cleared as well: an approval revoked only where it
-was saved goes on working until Emacs is restarted, which is not what
-revoking one means."
+Works on a session-only approval as well as a saved one -- there was no
+other way back from one of those short of restarting Emacs."
   (interactive nil org-agents-approvals-mode)
   (pcase-let ((`(,var . ,hash) (org-agents--approvals-at-point)))
-    (unless (eq var 'org-agents-safe-queries)
+    (when (eq var 'org-agents-refused-queries)
       (user-error "org-agents: this line is a refusal; `u' lifts one"))
     (org-agents--approvals-forget var hash)
-    (remhash hash org-agents--session-approved)
     (org-agents--approvals-redisplay)))
 
 (defun org-agents-approvals-refuse ()
   "Refuse the query on this line, however it was approved before.
-The approval is forgotten, the session copy with it, and the same entry
--- hash and text together -- is recorded as a refusal, which the gate
-consults before it consults anything else."
+The approval is forgotten, the session copy with it, and the entry --
+hash and text together -- is recorded as a refusal, which the gate
+consults before it consults anything else.  Where the form carries the
+current `org-agents-exclude', the query inside it is recorded too, so
+that editing the exclusion afterwards cannot lift the refusal."
   (interactive nil org-agents-approvals-mode)
   (pcase-let ((`(,var . ,hash) (org-agents--approvals-at-point)))
     (when (eq var 'org-agents-refused-queries)
       (user-error "org-agents: this line is already a refusal"))
-    (let ((entry (org-agents--approval-entry hash (symbol-value var))))
+    (let ((entry (org-agents--approval-entry
+                  hash (org-agents--approvals-entries var))))
       (org-agents--approvals-forget var hash)
-      (remhash hash org-agents--session-approved)
       (org-agents--persist-approvals
        'org-agents-refused-queries
-       (cons entry org-agents-refused-queries)))
+       (append (org-agents--refusal-records entry)
+               org-agents-refused-queries)))
     (org-agents--approvals-redisplay)))
 
 (defun org-agents-approvals-unrefuse ()
@@ -1549,35 +1693,6 @@ to avoid."
 ;; properties is text out of a file, so a value that cannot be used is
 ;; diagnosed here rather than left to fail, or to quietly do nothing, at
 ;; match time.
-
-(defcustom org-agents-exclude '(not (property "AGENT_MATCH"))
-  "Conjunct appended to every agent query and to previews.
-Keeps agents from matching generated aliases.  Appended last so cheap
-predicates short-circuit first; applied only on the Emacs side, never
-in the prefilter.  Set to nil to match aliases like any other entry.
-
-This value is conjoined into the form the gate approves, so Lisp here is
-gated exactly like Lisp in a query, and changing it invalidates every
-remembered approval: an approval names a form, and this is part of the
-form.
-
-Risky: it is Lisp conjoined into every agent query and every preview."
-  :type 'sexp :risky t :group 'org-agents)
-
-(defun org-agents--effective-query (query)
-  "Return the form org-ql will be handed for QUERY.
-`org-agents-exclude' is conjoined in, unless it is nil.
-
-This is the form that is gated, the form that is hashed, and the form
-that is evaluated, and the three cannot diverge because there is one
-function saying what it is.  They did diverge: the gate was handed the
-query while the exclusion was spliced in afterwards, so approving a
-query silently approved an exclusion nobody had been shown."
-  (if org-agents-exclude
-      ;; nil conjoined here is a clause that never matches, which is not
-      ;; what turning the exclusion off means.
-      `(and ,query ,org-agents-exclude)
-    query))
 
 (defcustom org-agents-files '("~/org/agents.org")
   "Where `org-agents-update-all' looks for agents.

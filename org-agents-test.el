@@ -426,6 +426,32 @@ receiving that form."
                 :type 'user-error)))
       (should (string-match-p "tags" (error-message-string err))))))
 
+(ert-deftest org-agents-test-gate-refuses-a-structurally-safe-query ()
+  "A refused QUERY is refused even where the safe list would admit it.
+The refusal check has to sit above the structural test and not inside the
+branch below it, or a refusal of a form built from real org-ql predicates
+-- the case that arises the moment the package defining a predicate is
+loaded, or a hash is added through customize -- would be looked up only
+for forms that were already unsafe.  Every other refused-query test uses
+an unsafe form, so nothing else here would notice."
+  (let* ((form '(and (todo) (tags "a")))
+         (org-agents-refused-queries
+          (list (cons (org-agents--query-hash form)
+                      (org-agents--query-text form))))
+         (org-agents-safe-queries nil)
+         (org-agents--session-approved (make-hash-table :test 'equal))
+         (noninteractive t))
+    (should (org-agents--structurally-safe-p form))
+    (let ((err (should-error (org-agents--gate form) :type 'user-error)))
+      (should (string-match-p "refused" (error-message-string err))))
+    ;; And the switch that turns asking off does not turn refusal off.
+    (let ((org-ql-ask-unsafe-queries nil))
+      (should-error (org-agents--gate form) :type 'user-error))
+    ;; A neighbouring safe query is unaffected.
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "must not prompt"))))
+      (should (org-agents--gate '(and (todo) (tags "b")))))))
+
 (ert-deftest org-agents-test-gate-refuses-call-in-predicate-argument ()
   "A known predicate must not vouch for arbitrary Lisp in its arguments."
   (let ((org-agents--session-approved (make-hash-table :test 'equal))
@@ -1031,6 +1057,185 @@ put back by hand."
               (should (equal (org-agents--query-text form)
                              (org-agents--approval-text (car restored))))))
         (set-default-toplevel-value 'org-agents-refused-queries outer)))))
+
+(ert-deftest org-agents-test-refusal-survives-an-exclude-change ()
+  "Editing `org-agents-exclude' must not lift a refusal.
+An approval names the whole form, so changing the exclusion invalidates
+one -- which is the fail-safe direction: it asks again.  Keying a REFUSAL
+the same way failed OPEN.  Every refusal the user had ever made stopped
+matching the moment the exclusion was edited, with no query touched at
+all, and where `org-ql-ask-unsafe-queries' is nil the refused form then
+ran with no prompt.  So a refusal records the query inside the form as
+well, and the gate looks both up."
+  (org-agents-test--with-custom-file
+    (let* ((query '(and (todo) (ignore)))
+           (org-agents-exclude '(not (property "AGENT_MATCH")))
+           (form (org-agents--effective-query query))
+           (hash (org-agents--query-hash form))
+           (noninteractive t))
+      (org-agents--persist-approvals
+       'org-agents-safe-queries
+       (list (cons hash (org-agents--query-text form))))
+      (org-agents-test--with-approvals-buffer
+        (goto-char (point-min))
+        (org-agents-approvals-refuse))
+      (should-error (org-agents--gate form) :type 'user-error)
+      ;; Both directions of an edit: a different exclusion, and none --
+      ;; the latter being what the option's own docstring recommends for
+      ;; matching aliases like any other entry.
+      (dolist (exclude '((not (property "AGENT_MATCH") (todo)) nil))
+        (let* ((org-agents-exclude exclude)
+               (changed (org-agents--effective-query query)))
+          ;; The whole form's own hash is gone from the record: what
+          ;; refuses it now is the lookup of the query inside it.
+          (should-not (equal changed form))
+          (unless (equal changed query)
+            (should-not (org-agents--approval-entry
+                         (org-agents--query-hash changed)
+                         org-agents-refused-queries)))
+          (let ((err (should-error (org-agents--gate changed) :type 'user-error)))
+            (should (string-match-p "refused" (error-message-string err))))
+          (let ((org-ql-ask-unsafe-queries nil))
+            (should-error (org-agents--gate changed) :type 'user-error)))))))
+
+(ert-deftest org-agents-test-session-approvals-are-listed-and-revocable ()
+  "A session-only approval is a row like any other, and `d' removes it.
+The listing read the two persistent records only, so on a setup where
+customize has no file to write -- the setup `org-agents-safe-queries'
+documents, and where EVERY approval is session-only -- it said \"nothing
+is remembered\" while the query went on running unprompted until Emacs was
+restarted, with no way back."
+  (let* ((custom-file nil)
+         (user-init-file nil)
+         (org-agents-safe-queries nil)
+         (org-agents-refused-queries nil)
+         (org-agents--session-approved (make-hash-table :test 'equal))
+         (org-ql-ask-unsafe-queries t)
+         (noninteractive nil)
+         (form '(and (todo) (ignore)))
+         (hash (org-agents--query-hash form)))
+    (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+      (should (org-agents--gate form)))
+    ;; Approved for the session, and saved nowhere: this is the state the
+    ;; listing used to be blind to.
+    (should (gethash hash org-agents--session-approved))
+    (should (null org-agents-safe-queries))
+    (org-agents-test--with-approvals-buffer
+      (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+        (should (string-match-p "session" text))
+        (should (string-match-p (regexp-quote (org-agents--query-text form))
+                                text)))
+      (goto-char (point-min))
+      (should (equal (cons 'org-agents--session-approved hash)
+                     (tabulated-list-get-id)))
+      (org-agents-approvals-revoke))
+    (should-not (gethash hash org-agents--session-approved))
+    ;; And the gate asks again rather than remembering: in batch, skips.
+    (let ((noninteractive t))
+      (should-not (org-agents--gate form)))))
+
+(ert-deftest org-agents-test-session-approval-can-be-refused ()
+  "`r' on a session row records the refusal, text and all.
+A session approval the user regrets is exactly the one they may want
+refused outright, and the row has to carry enough to record it with."
+  (org-agents-test--with-custom-file
+    (let* ((form '(and (todo) (ignore)))
+           (hash (org-agents--query-hash form))
+           (noninteractive t))
+      (puthash hash (org-agents--query-text form) org-agents--session-approved)
+      (org-agents-test--with-approvals-buffer
+        (goto-char (point-min))
+        (should (equal (cons 'org-agents--session-approved hash)
+                       (tabulated-list-get-id)))
+        (org-agents-approvals-refuse))
+      (should-not (gethash hash org-agents--session-approved))
+      (should (equal (org-agents--query-text form)
+                     (org-agents--approval-text
+                      (org-agents--approval-entry
+                       hash org-agents-refused-queries))))
+      (should-error (org-agents--gate form) :type 'user-error))))
+
+(ert-deftest org-agents-test-approvals-commands-refuse-the-wrong-row-kind ()
+  "Each listing key refuses a row of the kind it is not for.
+Without these guards `d' -- documented as forgetting an APPROVAL -- would
+delete a refusal from the record and from `custom-file', dropping the one
+decision no approval is allowed to override, and the suite noticed
+nothing: no test ever put point on a row of the wrong kind."
+  (org-agents-test--with-custom-file
+    (let* ((approved '(and (todo) (ignore)))
+           (refused '(and (todo) (ignore) (ignore)))
+           (approved-hash (org-agents--query-hash approved))
+           (refused-hash (org-agents--query-hash refused))
+           (noninteractive t))
+      (org-agents--persist-approvals
+       'org-agents-safe-queries
+       (list (cons approved-hash (org-agents--query-text approved))))
+      (org-agents--persist-approvals
+       'org-agents-refused-queries
+       (list (cons refused-hash (org-agents--query-text refused))))
+      (org-agents-test--with-approvals-buffer
+        ;; Approvals sort first, so point-min is the approval row and the
+        ;; refusal is the one below it.
+        (goto-char (point-min))
+        (should (equal (cons 'org-agents-safe-queries approved-hash)
+                       (tabulated-list-get-id)))
+        (let ((err (should-error (org-agents-approvals-unrefuse)
+                                 :type 'user-error)))
+          (should (string-match-p "approval" (error-message-string err))))
+        (forward-line 1)
+        (should (equal (cons 'org-agents-refused-queries refused-hash)
+                       (tabulated-list-get-id)))
+        (let ((err (should-error (org-agents-approvals-revoke) :type 'user-error)))
+          (should (string-match-p "refusal" (error-message-string err))))
+        (let ((err (should-error (org-agents-approvals-refuse) :type 'user-error)))
+          (should (string-match-p "already a refusal"
+                                  (error-message-string err)))))
+      ;; Nothing was removed by any of the three.
+      (should (equal (list approved-hash)
+                     (mapcar #'org-agents--approval-hash
+                             org-agents-safe-queries)))
+      (should (equal (list refused-hash)
+                     (mapcar #'org-agents--approval-hash
+                             org-agents-refused-queries)))
+      (should-error (org-agents--gate refused) :type 'user-error))))
+
+(ert-deftest org-agents-test-approvals-keys-reach-their-commands ()
+  "The keys the mode and README document are the keys that are bound.
+Every other listing test calls the commands as functions, so a keymap
+with the wrong keys in it -- or none -- left the suite green while the
+only user-facing route to revoking an approval had gone."
+  (dolist (binding '(("d" . org-agents-approvals-revoke)
+                     ("r" . org-agents-approvals-refuse)
+                     ("u" . org-agents-approvals-unrefuse)))
+    (should (eq (cdr binding)
+                (keymap-lookup org-agents-approvals-mode-map (car binding)))))
+  ;; And resolved through the listing buffer's own active map, which is
+  ;; what says the map above is the one the listing installs -- a keymap
+  ;; bound correctly and never made local would pass the check above.
+  (org-agents-test--with-custom-file
+    (let* ((form '(and (todo) (ignore)))
+           (hash (org-agents--query-hash form)))
+      (puthash hash (org-agents--query-text form) org-agents--session-approved)
+      (org-agents-test--with-approvals-buffer
+        (goto-char (point-min))
+        (call-interactively (keymap-lookup (current-local-map) "d")))
+      (should-not (gethash hash org-agents--session-approved)))))
+
+(ert-deftest org-agents-test-persist-approvals-says-what-it-could-do ()
+  "With no file to write, the change is made and described as temporary.
+This branch was reached by no test at all: an outright `error' planted in
+it left the suite green, and so would dropping its assignment -- which
+would leave the user told a revocation had happened while the revoked
+approval went on admitting its query."
+  (let* ((custom-file nil)
+         (user-init-file nil)
+         (org-agents-safe-queries '(("hash" . "(and (todo) (ignore))")))
+         (texts (org-agents-test--messages
+                  (org-agents--persist-approvals 'org-agents-safe-queries nil))))
+    (should (null org-agents-safe-queries))
+    (should (cl-find-if (lambda (text)
+                          (string-match-p "this session only" text))
+                        texts))))
 
 ;;;; Collection
 
