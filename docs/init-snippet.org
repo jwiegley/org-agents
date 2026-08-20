@@ -10,6 +10,13 @@ sibling. That is the right neighbourhood: =org-agents= requires =org-ql= and
 =org-ql-ext=, whose =property-ts= predicate is the one the examples below
 lean on.
 
+One thing about that neighbourhood is worth saying out loud: an agent query
+may NOT use =(semantic "...")=. org-ql compiles that predicate by running
+its normalizer, which spawns =org db search= past the evaluation gate, so
+=org-agents-refused-heads= ships refusing it and the query signals instead
+of running. Semantic search stays available as =M-s s=; see the option's
+comment in the block below for how to accept the subprocess instead.
+
 There is nothing else that must be configured. The candidate-file
 prefilter is ripgrep, which needs no DSN, no config file and no
 credential: it is found on =exec-path= or it is not, and where it is not
@@ -34,6 +41,7 @@ to the position it appears in.
              org-agents-update-buffer
              org-agents-update-all
              org-agents-preview
+             org-agents-list-approvals
              org-agents-mode
              global-org-agents-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
@@ -49,7 +57,7 @@ to the position it appears in.
    ("u" . org-agents-update-buffer)
    ("U" . org-agents-update-all))
   :custom
-  ;; The other four options are best left at their defaults:
+  ;; The other six options are best left at their defaults:
   ;; `org-agents-exclude' — (not (property "AGENT_MATCH")) — is what keeps
   ;; agents from consuming each other's aliases;
   ;; `org-agents-safe-queries' grows by answering "remember this approval
@@ -61,6 +69,16 @@ to the position it appears in.
   ;; with ripgrep where it can and scans live with one message where it
   ;; cannot — set it to `require' to be refused rather than kept waiting,
   ;; or to nil never to spawn anything;
+  ;; `org-agents-refused-heads' is `(semantic)', which is what makes
+  ;; `(semantic "...")' in an agent query SIGNAL rather than run: org-ql
+  ;; compiles that predicate by calling its normalizer, and the normalizer
+  ;; spawns `org db search' after the gate has finished and whatever the
+  ;; user answered — remove `semantic' from the list to accept that
+  ;; subprocess, since no approval overrides a refusal;
+  ;; `org-agents-refused-queries' is the negative twin of
+  ;; `org-agents-safe-queries', written by pressing `r' in
+  ;; `org-agents-list-approvals', which is also where an approval is read
+  ;; back and revoked;
   ;; and `org-agents-rg-executable' is "rg", resolved against
   ;; `exec-path' — name the binary here if ripgrep is installed under
   ;; another name, or somewhere a GUI Emacs's `exec-path' does not
@@ -117,8 +135,9 @@ price of not having to mark each file:
 
 =M-s a= sits deliberately beside =M-s s=: semantic search and agent preview are
 the two ways of asking "what would match?" before committing anything to a
-drawer. Preview is =org-ql-search= over the expanded, gated query with the
-agent exclusion appended, so what it shows is what an agent would render.
+drawer. Preview is =org-ql-search= over the expanded query with the agent exclusion
+appended, and it is the appended form that is gated, so what it shows is
+what an agent would render.
 
 No binding is needed for the dynamic block: Org's own =C-c C-x x= offers
 =org-agents= as a block type once the package has loaded, and =C-c C-x C-u=

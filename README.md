@@ -15,8 +15,8 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~2,700 lines), and one
-tests it, `org-agents-test.el` — 199 ERT tests, all of which run in a
+One file makes up the package, `org-agents.el` (~3,300 lines), and one
+tests it, `org-agents-test.el` — 232 ERT tests, all of which run in a
 plain `make test` with no external service. The 25 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
@@ -169,7 +169,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-update` | update the agent at point, or the block point is inside |
 | `org-agents-update-buffer` | update every agent in the current buffer |
 | `org-agents-update-all` | update every agent in the files `org-agents-files` names |
-| `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded, appended to `org-agents-exclude` and gated exactly as an agent's is, over `org-agenda-files` |
+| `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded, with `org-agents-exclude` appended, and the appended form gated exactly as an agent's is, over `org-agenda-files` |
 | `org-agents-insert-dblock` | insert an empty `org-agents` block at point |
 | `org-agents-list-approvals` | list every remembered approval and refusal, each with the query its hash covers; `d` forgets an approval, `r` turns it into a refusal, `u` lifts a refusal |
 | `org-agents-mode` | update this buffer's agents before each save |
@@ -359,18 +359,20 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 199 tests, no external service needed
+make test        # 232 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `199 tests, 199 results as expected, 0 unexpected` and
+`make test` reports `232 tests, 232 results as expected, 0 unexpected` and
 takes about twenty seconds. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `174 results as expected, 0
+set up. Where `rg` is not on `PATH` it reports `207 results as expected, 0
 unexpected, 25 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
-predecessor report green for months while proving nothing.
+predecessor report green for months while proving nothing. No test asserts
+the count, so these four figures drift whenever the suite grows: read them
+as "about this many", and trust `0 unexpected` rather than the total.
 
 The tests that describe what a machine WITHOUT ripgrep does — the live
 fallback, its one message, `require` refusing, `nil` never spawning — do
@@ -559,12 +561,33 @@ package's own flags do not override `--max-depth`, `--max-filesize`,
 
 ### Others, less sharp
 
+* `(semantic …)` in an agent query now signals rather than running. It is
+  the one change here that can stop a working agent: `org-ql-semantic.el`
+  defines `semantic` with a normalizer that runs `org db search` in a
+  subprocess, and a normalizer runs when org-ql compiles the query —
+  after the gate, so no answer to any prompt governs it. Remove `semantic`
+  from `org-agents-refused-heads` to accept that subprocess deliberately;
+  nothing else recovers it, because a refusal beats every approval.
 * Changing `org-agents-exclude` re-prompts for every previously approved
-  query, once each. By design: the gate approves the form that runs, the
+  query, once each — wherever the exclusion is non-nil, which is the
+  default; with it set to nil the form is the bare query and the old hashes
+  still match. By design: the gate approves the form that runs, the
   exclusion is part of that form, and an approval that survived a change to
   it would be an approval of something the user never saw. Anyone upgrading
   from a version that gated the query alone will see the same one-time
-  re-prompt, because the stored hashes are of the old shape.
+  re-prompt, because the stored hashes are of the old shape. A REFUSAL is
+  not affected either way: it is recorded for the query inside the form as
+  well, so an exclusion change can only make the gate stricter.
+* A refused query is one printed form, not a query up to meaning. Refusing
+  `(and (todo) (evil))` does not cover `(and (evil) (todo))`, which hashes
+  differently. Where the objection is to a *predicate*, put it in
+  `org-agents-refused-heads`, which refuses it however the query around it
+  is spelled.
+* An approval made at the prompt on a setup where customize has no file to
+  write lasts only until Emacs is restarted. `org-agents-list-approvals`
+  lists those rows as `approved (session)` and `d` revokes one, but nothing
+  can save one: see `org-agents-safe-queries` for what `custom-file` has to
+  be for an approval to survive.
 * Because the gate now reads `org-agents-exclude`, the spelling checks read
   it too. A `$PROP` reference there is refused by name — the exclusion is
   not put through the `$PROP` expander, so a reference in it would have

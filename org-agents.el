@@ -215,8 +215,11 @@
 ;; them as source and reports their own `(require 'cl)' against the require
 ;; lines here, then compiles this one and fails on any warning at all.
 ;;
-;; See docs/design.md for the evaluation gate and the renderers.  Do NOT
-;; read its push-down table: that table describes the PostgreSQL
+;; For the evaluation gate as it stands, see the `;;;; Gate' section below
+;; and README.md's "The query language": docs/design.md's own §Safety is
+;; superseded in part, and says at its head which four statements no
+;; longer describe the code.  See docs/design.md for the renderers.  Do
+;; NOT read its push-down table: that table describes the PostgreSQL
 ;; prefilter this package used to have, and its per-row justifications
 ;; are facts about SQL operators that no longer run -- a heading literal
 ;; is argued safe there by `ILIKE %lit%', and a property value is said to

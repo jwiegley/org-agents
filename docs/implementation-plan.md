@@ -9,7 +9,16 @@
 > conjunct, so every interface Task 5 specifies for `org-agents--skeleton`
 > and `org-agents--scope-conjunct` is wrong — **Task 6's CLI call**
 > (`org-db-cli-available-p`, `org-db-cli-query-files`), and Task 10's
-> differential suite. The rest of Tasks 3-9 describes shipped code.
+> differential suite. Superseded on 2026-08-19 by Epic 1 of the
+> dynamic-properties work, which rewrote the gate: **Task 3/4's gate
+> material** no longer describes shipped code — the `(member hash
+> org-agents-safe-queries)` lookup (an entry is now `(HASH . TEXT)`, read by
+> `org-agents--approval-entry`), the `org-agents-safe-queries` defcustom
+> without `:risky t` (every option carries it, and so does the session
+> table), and the `` `(and ,(plist-get agent :query) ,org-agents-exclude) ``
+> built AFTER the gate (`org-agents--effective-query` builds it before, and
+> that form is what is gated and hashed). The rest of Tasks 3-9 describes
+> shipped code.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
