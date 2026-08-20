@@ -225,7 +225,7 @@
 ;; semantics and is answered by one ripgrep run over the whole scope,
 ;; while the value question needs per-entry reading but only for the
 ;; DECLARED names and only in the files holding them.  MEASURED over a
-;; 3,616-file scope: 7 to 9 s warm and 64 to 110 s cold, against a
+;; 3,616-file scope: 7 to 10 s warm and 64 to 110 s cold, against a
 ;; single-tier command that was killed at 600 s with no report at all.  The fast enumerator
 ;; reports the same vocabulary as the slow one, and
 ;; `org-agents-test-attr-census-fast-equals-slow' is what says so.  And `org-agents-attribute-columns',
@@ -342,7 +342,10 @@
 ;; execute an idle timer while its prefilter is in flight.
 ;; `org-agents--update-agent' collects OUTSIDE its `atomic-change-group'
 ;; so that no timer's edits can land in this package's change group, and
-;; no save spawns a prefilter at all.
+;; no save spawns a prefilter at all.  That covers the `children' view;
+;; for a list or a table the wait happens inside Org's dblock writer, with
+;; the block body already deleted, and an edit landing there during the
+;; wait is NOT protected -- see `org-agents-rg-timeout'.
 ;;
 ;; A file the scope NAMES but nothing can open is reported by this package
 ;; rather than by org-ql, and the two kinds of scope get different answers:
@@ -1825,6 +1828,22 @@ collects OUTSIDE its `atomic-change-group' so that no timer's edits can
 land inside this package's change group -- and no save ever spawns a
 prefilter at all, since `org-agents--update-on-save' binds
 `org-agents-prefilter' to nil.
+
+What that mitigation does NOT cover, stated plainly rather than left to be
+met: the `children' view is the only one whose collect happens before Org
+touches the buffer.  A LIST or TABLE agent renders from
+`org-dblock-write:org-agents', which Org calls AFTER `org-prepare-dblock'
+has already deleted the block's body -- so the wait happens with the block
+emptied, and an idle timer that edits the buffer at that spot during the
+wait either has its text glued into the freshly rendered body or loses it
+when the writer's failure path puts the old body back.  DEMONSTRATED with
+a one-second stub and a 0.4 s timer: the timer ran, found the body already
+gone, and its line came back inside the rendered item.  Hoisting that
+collect too would mean parsing the block's parameters ahead of Org and
+matching its parser exactly, which trades a narrow exposure for a silent
+divergence; it is not done, and the exposure is real for anyone running a
+timer that edits Org buffers.  C-g escapes, and a corpus-scope agent
+updated by hand is the only way to reach the wait at all.
 
 Risky: a file-local nil takes the bound off, which is the unbounded block
 this exists to remove, and a file-local 0 expires every run and sends
@@ -3878,9 +3897,14 @@ function for the prompt this used to reach."
 
 (defun org-agents--attr-census-parse (raw files)
   "Parse RAW, `org-agents--rg-census-args' output, restricted to FILES.
-Answers `((KEY COUNT (FILE LINE...)...)...)', keys upcased and a trailing
-`+' stripped, sites in file order and grouped by file -- which is the
-shape the confirmation pass wants, because it visits files and not sites.
+Answers `((KEY COUNT (FILE NAME LINE...)...)...)', keys folded by
+`org-agents--attr-census-key' and a trailing `+' stripped, sites in file
+order and grouped by file -- which is the shape the confirmation pass
+wants, because it visits files and not sites.  NAME is nil from this
+producer: ripgrep cannot decode it, and
+`org-agents--attr-property-at-point' supplies it from the buffer.  The
+group is `(FILE NAME LINE...)' and not `(FILE LINE...)', which is why
+`org-agents--attr-confirm-candidate' reads its lines with `cddr'.
 
 RAW is BYTES.  Each line is `PATH\\0LINE:NAME'; the path is decoded with
 the file-name coding system, for the NFD/NFC reason
@@ -4388,20 +4412,20 @@ the file, and it is where that is measured.
 
 A PROGRESS REPORTER over the file loop where there are more than
 `org-agents--attr-progress-threshold' files.  A command that reads
-hundreds of files must say so rather than appear hung: MEASURED, the value
-tier is 9 to 20 s at realistic registry sizes, and its floor is the
-~4.5 ms it costs to open one file.  On the file loop and not per entry:
-the file count is known up front, and 45,000 entries would make the
-reporter the cost."
-  (let ((entries 0)
-        (parts nil)
-        (total (length files))
-        (done 0)
-        (reporter (and (> (length files) org-agents--attr-progress-threshold)
-                       (make-progress-reporter
-                        (format "org-agents: reading %d files..."
-                                (length files))
-                        0 (length files)))))
+hundreds of files must say so rather than appear hung: MEASURED over 483
+files of the author's corpus, this loop is 18.17 s when the files must be
+opened and 0.99 s when they are already visited -- 37.6 ms against 2.0 ms
+per file, so the floor is the OPEN and everything else here is noise
+beside it.  On the file loop and not per entry: the file count is known up
+front, and 45,000 entries would make the reporter the cost."
+  (let* ((entries 0)
+         (parts nil)
+         (total (length files))
+         (done 0)
+         (reporter (and (> total org-agents--attr-progress-threshold)
+                        (make-progress-reporter
+                         (format "org-agents: reading %d files..." total)
+                         0 total))))
     (dolist (file files)
       (condition-case err
           (with-current-buffer (org-agents--attr-visit file)
@@ -4416,7 +4440,6 @@ reporter the cost."
       (cl-incf done)
       (when reporter (progress-reporter-update reporter done)))
     (when reporter (progress-reporter-done reporter))
-    (ignore total)
     (cons entries (apply #'nconc (nreverse parts)))))
 
 (defun org-agents--attr-sort (findings)
@@ -4450,7 +4473,7 @@ produced by a different pass from the value findings."
 
 (defun org-agents--attr-name-findings (census confirm)
   "`(FINDINGS . UNCONFIRMED)' for the undeclared names in CENSUS.
-CENSUS is `((KEY COUNT (FILE LINE...)...)...)' from either producer --
+CENSUS is `((KEY COUNT (FILE NAME LINE...)...)...)' from either producer --
 `org-agents--attr-census-rg' or the live walk's own table.  One finding
 per NAME, not per line: over the author's corpus with no registry at all
 the per-line form is about 149,000 findings, and a 149,000-line buffer is
@@ -4557,11 +4580,22 @@ passes one.  It is the contract's third answer, so it is handled here;
 against `org-agents--rg-files-for' directly, because an assertion through
 this function cannot reach it.
 
-MEASURED on the author's corpus: 3 rare names narrow 3,673 files to 592
-and the walk is 8.75 s; 12 names including `CREATED' narrow to 3,648 and
-the walk is 20.19 s.  Narrowing helps enormously for a registry of rare
-names and not at all as soon as ONE declared name is widespread -- which
-is why the progress reporter is not optional.
+MEASURED on the author's corpus, and DECOMPOSED, because a single number
+here invites planning against the wrong one.  Two rare names
+(`NEXT_REVIEW', `HASH_sha512_256') narrow 3,616 files to 483: the
+narrowing itself -- one ripgrep run per name -- is 1.08 s, and the walk
+over those 483 files is 18.17 s when they have to be opened (37.6 ms per
+file) and 0.99 s when they are already visited (2.0 ms).  So the cost of
+this tier is dominated by OPENING files, not by narrowing and not by
+walking drawers, and an earlier figure of 8.75 s for a comparable file set
+was optimistic by about 2x.
+
+Narrowing helps enormously for a registry of rare names and not at all as
+soon as ONE declared name is widespread: a registry declaring `CREATED',
+which is in essentially every file of that corpus, narrows to the whole
+corpus and the command takes about four minutes.  That is inherent -- it
+is what \"check every declared value\" means -- and it is why the progress
+reporter is not optional.
 
 An empty registry declares nothing, so this answers no files and the value
 tier does not run.  That is exactly right for the first seeding run, and
@@ -4702,7 +4736,7 @@ makes the command usable at the scope it is most valuable at.  MEASURED:
 as one per-entry walk it was killed at 600 SECONDS with no report at all
 over the author's corpus -- and the first whole-corpus run is exactly how
 a registry gets seeded, so the command was unusable precisely where it was
-wanted.  It now finishes that scope in 7 to 9 s warm, 64 to 110 s cold --
+wanted.  It now finishes that scope in 7 to 10 s warm, 64 to 110 s cold --
 the spread is the OS page cache, as it is everywhere else here.
 
 Tier one, the VOCABULARY: which names are in use that nothing declares.
@@ -6424,7 +6458,18 @@ removes the only path where a subprocess wait sat inside a change group.
 With no BLOCK named, EVERY block of the agent is written, not just the
 first.  One agent may carry several -- a list and a table of one query --
 and writing one of them while leaving the others as they were, with
-nothing said about it, is a stale render kept silently.  The count
+nothing said about it, is a stale render kept silently.
+
+In BUFFER ORDER, and the first failure stops the run: a block whose
+render fails signals, so the blocks after it keep their previous
+contents.  The agent's own failure line is what says something is wrong
+-- this is not the silent staleness that refreshing every block removed
+-- but it does not say which blocks were reached, so a three-block agent
+whose middle block is misconfigured comes back with its third block as it
+was.  MEASURED, on an agent whose second block named a view that does not
+exist: bodies were rendered, empty, empty, with `updated 0 agents, 1
+failed'.  The markers are cleared in a cleanup form rather than in the
+loop for exactly that reason.  The count
 returned, and so the one `:AGENT_MATCHED:' records, is the FIRST block's
 in buffer order.  That is a definition rather than an approximation of
 \"the agent's count\", and there is no better one available: a block's
@@ -6449,14 +6494,19 @@ has always written that one, so no existing file's stamp changes meaning."
                           ;; None yet: one is opened, exactly as before.
                           (org-agents--update-block nil)
                         (let ((counts nil))
-                          (dolist (m blocks)
-                            ;; Read fresh: an earlier block's render has
-                            ;; shifted this one, and the marker is what
-                            ;; followed it.
-                            (push (org-agents--update-block
-                                   (marker-position m))
-                                  counts)
-                            (set-marker m nil))
+                          (unwind-protect
+                              (dolist (m blocks)
+                                ;; Read fresh: an earlier block's render
+                                ;; has shifted this one, and the marker is
+                                ;; what followed it.
+                                (push (org-agents--update-block
+                                       (marker-position m))
+                                      counts))
+                            ;; In the cleanup, because a failed render
+                            ;; signals out of the loop: the markers after
+                            ;; it were leaked, left pointing into a buffer
+                            ;; nothing would ever clear them from.
+                            (dolist (m blocks) (set-marker m nil)))
                           ;; The first block's count, whatever it was --
                           ;; including zero, which a `(or ...)' over the
                           ;; list would have skipped past.

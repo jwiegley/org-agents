@@ -16,7 +16,7 @@ candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
 One file makes up the package, `org-agents.el` (~8,700 lines), and one
-tests it, `org-agents-test.el` — 442 ERT tests, all of which run in a
+tests it, `org-agents-test.el` — 449 ERT tests, all of which run in a
 plain `make test` with no external service. The 40 that exercise the
 prefilter and the attribute census end to end need `rg` on `PATH`, and
 `make test` says so when it
@@ -389,8 +389,11 @@ a second to parse and a second and a half to confirm.
 reading, but only for the **declared** names, and only in the files that
 hold them. One ripgrep run per declared name narrows those.
 
-Measured over the author's 3,616-file `active` scope: **7 to 9 seconds
-warm, 64 to 110 seconds cold**, against >600 s and no report. (Cold versus
+Measured over the author's 3,616-file `active` scope: **7 to 10 seconds
+warm, 64 to 110 seconds cold**, against >600 s and no report. (Independently
+re-measured while adjudicating this work: 88 findings over 3,616 files, 14.2 s
+for the first run in a fresh process and 8.4 to 9.7 s for the four after it,
+with 0 files invisible to the census.) (Cold versus
 warm is an order of magnitude here for the same reason it is everywhere else
 in this file — the OS page cache. Two careful people measuring this will
 disagree by 10× before either thinks to say which state they were in.) With a registry declaring `CREATED`, which is in essentially
@@ -1000,6 +1003,14 @@ It used to write only the first, and leave the rest as they were **with
 nothing said about it**. A stale render kept silently is the same class of
 defect this package refuses elsewhere, so it is fixed rather than
 documented.
+
+The blocks are written in buffer order and **the first failure stops the
+run**, so the blocks after a failing one keep their previous contents. The
+agent's failure line is what says something is wrong — this is not the
+silent staleness above — but it does not say which blocks were reached.
+Measured on a three-block agent whose middle block named a view that does
+not exist: the first body rendered, the other two stayed empty, and the
+summary said `updated 0 agents, 1 failed`.
 
 `AGENT_MATCHED` records the **first** block's count, in buffer order. That
 is a definition, not an approximation, and there is no better one to be had:
@@ -1777,16 +1788,16 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 442 tests, no external service needed
+make test        # 449 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `442 tests, 442 results as expected, 0 unexpected` and
+`make test` reports `449 tests, 449 results as expected, 0 unexpected` and
 takes about half a minute. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `402 results as expected, 0
-unexpected, 40 skipped`, and prints one line saying why — `skip-unless` is
+set up. Where `rg` is not on `PATH` it reports `404 results as expected, 0
+unexpected, 45 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing. No test asserts
 the count, so these four figures drift whenever the suite grows: read them
@@ -1965,14 +1976,30 @@ save spawns a prefilter at all, whatever `org-agents-prefilter` says, so the
 only way to reach the wait is a command you typed. C-g still escapes, because
 the error handler catches `error` and not `quit`.
 
-Two details of the process are load-bearing and were both wrong on the first
-attempt. Completion is sentinel-driven, not a loop on `process-live-p`. And
-stderr goes to a separate pipe, never merged into stdout: merged, a warning
-line gets glued onto a NUL-delimited path, is kept as a file name, and a real
-file is then silently dropped from the candidate set — the one direction that
-loses matches. A separate stderr in turn forces `just-this-one` `nil` in
-`accept-process-output`; with `t` every run deadlocks, measured, with a pipe
-and with a buffer alike.
+That mitigation covers the `children` view, and **not** the block views, which
+is worth knowing if you run a timer that edits Org buffers. A list or a table
+renders from Org's dynamic-block writer, which Org calls *after* it has
+already deleted the block's body — so the prefilter wait happens with the
+block emptied, and an edit landing there during the wait is either glued into
+the rendered body or lost when a failed render puts the old body back.
+Demonstrated with a one-second stub and a 0.4 s timer. Hoisting that collect
+too would mean parsing the block's parameters ahead of Org and matching its
+parser exactly, which trades a narrow exposure for a silent divergence, so it
+is not done.
+
+Three details of the process are load-bearing and each was wrong on the first
+attempt. Completion is sentinel-driven, with `process-live-p` as a second
+signal and a bounded drain after it — neither alone: a loop on `process-live-p`
+alone returns while the output buffer is still empty, and the sentinel alone
+may never arrive. Which is the third detail, and it was a live defect:
+`accept-process-output` given a *process* argument returns instantly and never
+delivers that process's sentinel once the child has been reaped, so a run that
+finished before the wait began spun for the whole timeout — measured, 1.8
+million iterations in 3.5 s — and its correct answer was then thrown away as
+an expiry. The wait passes no process at all. And stderr goes to a separate
+pipe, never merged into stdout: merged, a warning line gets glued onto a
+NUL-delimited path, is kept as a file name, and a real file is then silently
+dropped from the candidate set — the one direction that loses matches.
 
 Finally, a signal death is not an exit. Measured: a child killed by SIGHUP
 reports `process-status` `signal` and `process-exit-status` **1** — the

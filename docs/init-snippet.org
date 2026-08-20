@@ -133,7 +133,7 @@ to the position it appears in.
   ;; an agent that legitimately stamps a corpus; nothing in a file can.
   ;; (org-agents-action-limit 100)
   ;;
-  ;; The other six options are best left at their defaults:
+  ;; The other seven options are best left at their defaults:
   ;; `org-agents-exclude' — (not (property "AGENT_MATCH")) — is what keeps
   ;; agents from consuming each other's aliases;
   ;; `org-agents-safe-queries' grows by answering "remember this approval
@@ -155,10 +155,20 @@ to the position it appears in.
   ;; `org-agents-safe-queries', written by pressing `r' in
   ;; `org-agents-list-approvals', which is also where an approval is read
   ;; back and revoked;
-  ;; and `org-agents-rg-executable' is "rg", resolved against
+  ;; `org-agents-rg-executable' is "rg", resolved against
   ;; `exec-path' — name the binary here if ripgrep is installed under
   ;; another name, or somewhere a GUI Emacs's `exec-path' does not
-  ;; reach.
+  ;; reach;
+  ;; and `org-agents-rg-timeout' is 30 seconds, which is the bound on how
+  ;; long a prefilter run may take before it is abandoned and the scope is
+  ;; scanned live instead — about 50× the slowest run measured over this
+  ;; corpus, so an expiry means something is wrong rather than merely
+  ;; slow.  An expiry costs a slow correct answer and never a wrong one.
+  ;; Like the six above it, this is on the owned list and marked risky:
+  ;; a file that could set it from its own local-variables block could set
+  ;; it to nil, which takes the bound off entirely — the very defect the
+  ;; bound removes — or to 0, which sends every corpus-scope agent down
+  ;; the live whole-corpus walk.
   ;;
   ;; Where `org-agents-update-all' looks: files (each scanned for
   ;; `:AGENT_QUERY:') or directories, or the symbol `agenda'.

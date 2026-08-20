@@ -6995,6 +6995,42 @@ a file whose agents found nothing new would stop reaching disk unchanged."
         (should (equal before (org-agents-test--masked-buffer-text))))
       (set-buffer-modified-p nil))))
 
+(ert-deftest org-agents-test-update-stops-at-a-failing-block ()
+  "A failed block stops the run, leaves the rest as they were, and says so.
+The documented rule is that every block of an agent is written, and this
+is its one exception: `org-agents--update-block' signals on a render that
+did not happen, which aborts the loop.  So the blocks AFTER the failing
+one keep their previous contents.  That is not silent -- the agent is
+reported failed, which is what distinguishes it from the staleness
+refresh-all removed -- but it is not obvious either, so it is written down
+in `org-agents--update-agent' and in README rather than left to be found.
+
+MEASURED on a three-block agent whose middle block names a view that does
+not exist: bodies rendered, empty, empty, `updated 0 agents, 1 failed',
+and `:AGENT_MATCHED:' left alone.
+
+The markers are the other half.  They are cleared in a cleanup form, so a
+failure part way through the loop does not leave the ones after it
+pointing into the buffer forever."
+  (org-agents-test--with-corpus
+    (with-current-buffer (find-file-noselect agent-file)
+      (set-window-buffer (selected-window) (current-buffer))
+      (goto-char (point-min))
+      (org-entry-put nil "AGENT_VIEW" "list")
+      (goto-char (point-max))
+      (insert "#+BEGIN: org-agents\n#+END:\n\n"
+              "#+BEGIN: org-agents :view nonesuch\n#+END:\n\n"
+              "#+BEGIN: org-agents\n#+END:\n")
+      (let ((msgs (org-agents-test--messages (org-agents-update-buffer))))
+        (should (cl-find-if (lambda (m) (string-match-p "1 failed" m)) msgs)))
+      (let ((bodies (org-agents-test--block-bodies)))
+        (should (= 3 (length bodies)))
+        ;; The first was written; the two after the failure were not.
+        (should (string-match-p "^- \\[\\[id:" (nth 0 bodies)))
+        (should (string-empty-p (string-trim (nth 1 bodies))))
+        (should (string-empty-p (string-trim (nth 2 bodies)))))
+      (set-buffer-modified-p nil))))
+
 (ert-deftest org-agents-test-update-finds-only-its-own-block ()
   "The block an agent renders into is one in the agent's own entry.
 A block under a child heading is that child's -- the writer reads the
