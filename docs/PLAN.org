@@ -39,15 +39,17 @@ property can request writes.
 ]
 #+end_src
 
-* TODO [#C] The action parser: verbs resolve by name, arguments stay data
+* DONE [#C] The action parser: verbs resolve by name, arguments stay data
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-action-code-wrk.1
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:10]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:10]
+:CLOSE_REASON: Done, commit f4039c5. The parser: tokens resolve by name construction to org-agents-action/NAME plus fboundp, arguments are data, parse errors abort before any verb runs, parsing is pure. Verified independently by the coordinator: a sexp-shaped argument is refused, and shell-command!, delete-file!, eval!, progn! and ../set-property! are all refused as tokens. The review fed 17 payloads (quoted and unquoted sexps, backquote+comma, #., #$, #s(), circular #1=, bytecode literal, format directives, embedded NUL and newline, 100 KB, unbalanced parens and quotes) with read/eval/intern/shell-command/call-process/load/byte-compile all advised: zero fired.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -86,15 +88,17 @@ AGENT_ACTION holds text like: set-property!(REVIEWED, today) tag!(+reviewed)
 ]
 #+end_src
 
-* TODO [#C] The verb vocabulary, destructive verbs confirm-always
+* DONE [#C] The verb vocabulary, destructive verbs confirm-always
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-action-code-wrk.2
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:10]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:10]
+:CLOSE_REASON: Done, commit ab66d69. Nine verbs over Org's own primitives. Destructive verbs confirm every time and batch REFUSES rather than assuming: verified independently by the coordinator with y-or-n-p and yes-or-no-p rebound to signal -- never reached, corpus byte-identical. No memoisation: a second run in the same session asks again. Two narrowings shipped as explicit refusals rather than as a lying report: todo! refuses a repeating entry, and writes no CLOSED stamp or state note, because Org's own org-auto-repeat-maybe and org-log-done would otherwise make the report describe an edit that did not happen.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -140,15 +144,17 @@ The verb vocabulary.
 ]
 #+end_src
 
-* TODO [#C] org-agents-apply-actions: dry run, then apply
+* DONE [#C] org-agents-apply-actions: dry run, then apply
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-action-code-wrk.3
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:10]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:10]
+:CLOSE_REASON: Done, commits 7412502 and c82f1fd. Dry run first -- file:line, verb, old -> new -- then apply only on confirmation, with applied/failed recorded per line and a mid-run failure reporting exactly what was and was not applied. Verified by the review over 240 intended edits across 30 entries: all corpus files md5-identical after the dry run, one question asked, header 'NOTHING WAS APPLIED'; a planner that writes during planning is caught by name. c82f1fd holds a run to what its dry run said, after the review found archive! saving a file while the summary said nothing was saved, and Org's own hooks editing entries the report never named. org-agents-action-limit caps the match set and is risky.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -196,15 +202,17 @@ org-agents-apply-actions: the one trigger.
 ]
 #+end_src
 
-* TODO [#B] Actions never run on save: the guarantee, held by a test
+* DONE [#B] Actions never run on save: the guarantee, held by a test
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-action-code-wrk.4
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:10]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:10]
+:CLOSE_REASON: GUARANTEE HELD. Commit f4039c5, pinned by tests. The review tripwired all nine verbs plus six internal functions and exercised 12 entry points -- save-buffer under org-agents-mode, global-org-agents-mode and global-org-agents-faces-mode; update/update-buffer/update-all; org-dblock-update; org-update-all-dblocks; an inline-query dblock with a bogus :action; the dblock writer directly; --update-on-save directly; and preview. Zero fired. Structurally there is no timer in the package and exactly one before-save-hook. Independently re-verified by the coordinator: no verb ran during a save with both modes armed, the matched file stayed byte-identical, and no archive file appeared.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -240,15 +248,17 @@ Actions never run on save — the guarantee, held by a test.
 ]
 #+end_src
 
-* TODO [#B] Actions are not inheritable: the guarantee, held by a test
+* DONE [#B] Actions are not inheritable: the guarantee, held by a test
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-action-code-wrk.5
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:10]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:10]
+:CLOSE_REASON: GUARANTEE HELD. Commit f4039c5, pinned by tests. Tested over five donors and two settings: an outline ancestor, an ancestor with org-use-property-inheritance t, with inheritance for AGENT_ACTION specifically, #+PROPERTY:, org-global-properties, a prototype reached by :PROTOTYPE: id:UUID, and a registry ATTR_DEFAULT. In every case the resolver answered nil and apply-actions found no action. Tighter than the issue asked: a prototype cannot supply the QUERY either, so a follower is not an agent at all. Independently re-verified by the coordinator against a prototype carrying both AGENT_QUERY and AGENT_ACTION.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -284,15 +294,17 @@ is written in file B, and per-file trust is meaningless.
 ]
 #+end_src
 
-* TODO [#D] Action documentation
+* DONE [#D] Action documentation
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-action-code-wrk.6
 :LABELS:   []
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:10]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:10]
+:CLOSE_REASON: Done, commits 013eba5 and dfbb213. README's verb table, the dry-run flow with a real transcript, the trust model in plain words, the extension guide, and both refusals with their reasons; dfbb213 documents what a run refuses. Documentation was verified by running it.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0

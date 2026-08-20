@@ -1,7 +1,12 @@
 # Dynamic properties for org-agents — design
 
-**Status:** Revision 1 — approved in conversation on 2026-08-19; the work is
-planned in `PLAN.org` under the five epics this document defines.
+**Status:** Revision 1 — approved in conversation on 2026-08-19, and **all five
+epics delivered on 2026-08-20**. What shipped is recorded in each epic's
+issues in `PLAN.org`; where the implementation departed from this document,
+the code and its tests are the authority and the departures are named in the
+epic close reasons. Two features were deliberately narrowed rather than
+shipped with a report that would misdescribe them: `todo!` refuses a
+repeating entry, and writes no `CLOSED` stamp or state note.
 
 **Sources.** The Tinderbox v9.2 manual (`tbxman920.txt`), read for what
 Tinderbox *does* rather than what its summaries say; three research documents
