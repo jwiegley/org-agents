@@ -2840,7 +2840,19 @@ cannot pass by comparing nil to nil.
 
 The fixture is `org-agents-test--attr-census-corpus' plus two files that
 cannot be written as ordinary text: a latin-1 one, and a CRLF one.  See
-`org-agents--rg-census-pattern' for what each of those measured."
+`org-agents--rg-census-pattern' for what each of those measured.
+
+TWO guards keep it from asserting nothing, and it needed both: without
+ripgrep, `org-agents-check-attributes' takes the WALK for a corpus scope
+too -- its ROOT is nil -- so this test compared the slow path with
+itself and PASSED in 0.035 s where a real run takes 2.3 s, counted among
+the passes while its four siblings correctly skipped.  MEASURED with the
+census pattern broken: green without ripgrep, red with it.  So
+`skip-unless' says out loud that it cannot run, as README's policy
+requires; and the fast arm COUNTS the census runs, so a future change
+that stopped taking the census here fails rather than quietly comparing
+the walk with itself."
+  (skip-unless (executable-find "rg"))
   (org-agents-test--with-attr-corpus org-agents-test--registry-example
       org-agents-test--attr-census-corpus
     ;; A latin-1 name.  MEASURED: with the census pattern spelling its key
@@ -2866,13 +2878,29 @@ cannot be written as ordinary text: a latin-1 one, and a CRLF one.  See
      (funcall F "crlf.org")
      "* CRLF entry\r\n:PROPERTIES:\r\n:CARRIAGE: x\r\n:END:\r\n" 'binary)
     (let ((all (append files (list (funcall F "latin1.org")
-                                   (funcall F "crlf.org")))))
+                                   (funcall F "crlf.org"))))
+          (census-runs 0)
+          (walk-runs 0))
       ;; Fast: a corpus scope, which has a root and so takes the census.
-      (org-agents-check-attributes 'all)
+      (cl-letf* ((real (symbol-function 'org-agents--attr-census-rg))
+                 ((symbol-function 'org-agents--attr-census-rg)
+                  (lambda (&rest args)
+                    (setq census-runs (1+ census-runs))
+                    (apply real args))))
+        (org-agents-check-attributes 'all))
       (let ((fast (org-agents-test--attr-undeclared-names)))
         ;; Slow: an explicit list, which names its files and so walks.
-        (org-agents-check-attributes all)
+        (cl-letf* ((real (symbol-function 'org-agents--attr-census-rg))
+                   ((symbol-function 'org-agents--attr-census-rg)
+                    (lambda (&rest args)
+                      (setq walk-runs (1+ walk-runs))
+                      (apply real args))))
+          (org-agents-check-attributes all))
         (let ((slow (org-agents-test--attr-undeclared-names)))
+          ;; The two arms really were the two enumerators.  Comparing the
+          ;; walk with itself is how this test went vacuous once already.
+          (should (= 1 census-runs))
+          (should (= 0 walk-runs))
           (should slow)
           (should fast)
           (should (equal fast slow))
