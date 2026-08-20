@@ -413,8 +413,27 @@ What this measures, on the author's 3,669-file corpus, for
 | `directory-files-recursively` over the corpus | 0.27 s, 3,669 files |
 | one ripgrep run | 0.09 s, 314 files |
 | the whole of `org-agents--scope-files` | 0.73 s |
-| org-ql over those 314 files | 12.1 s, 764 matches, 320 buffers |
-| org-ql over all 3,669 files, same query | did not finish in nine minutes |
+| org-ql over those 314 files | 4–26 s, 764 matches, 320 buffers |
+| org-ql over all 3,669 files, same query | 172 s, 764 matches, 3,675 buffers |
+
+**Read those last two rows as orders of magnitude, not as benchmarks.** They
+move by more than the difference between them, for two reasons that have nothing
+to do with this package. Measured on one machine, one query, one corpus: the same
+314 files took 26 s cold and 3.9 s once the OS page cache was warm — 6.6× — and
+the same 600-file slice took 103 s at the batch default `gc-cons-threshold` of
+800,000 against 22 s at 512 MB — 4.7×, because opening thousands of Org buffers
+makes garbage faster than the collector's default budget expects. The 172 s above
+is at `gc-cons-threshold` 128 MB, which is what the author's own configuration
+sets; at the batch default the same run did not finish in nine minutes. Two
+careful people measuring this disagreed by an order of magnitude before either
+thought to say which of those two states they were in.
+
+The row that does *not* move is the ripgrep run: 0.09 s, indifferent to both. And
+the number that actually explains the design is the buffer count — **320 against
+3,669**. org-ql's own preamble makes a file with no `:NEXT_REVIEW:` line a cheap
+scan, so the 3,355 files ripgrep removes were never the expensive part; what they
+cost is 3,355 `find-file-noselect` calls with full `org-mode` initialisation. The
+prefilter buys buffers and memory, not regexp work.
 
 There is no staleness window. ripgrep reads the bytes on disk as they are
 now, so a file that *newly* satisfies a pushed conjunct is in the candidate

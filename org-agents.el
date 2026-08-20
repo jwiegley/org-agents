@@ -1540,9 +1540,12 @@ exists to make unnecessary."
              scope reason))
           (let ((base (org-agents--scope-base-files scope)))
             ;; Said once, and naming the count: on the author's corpus
-            ;; this walk is 3,634 files and a query that had not finished
-            ;; after nine minutes, which is a shocking thing to happen
-            ;; without explanation, and a file count explains it.
+            ;; this walk is 3,634 files and a query of 172 seconds, which
+            ;; is a shocking thing to happen without explanation, and a
+            ;; file count explains it.  (Longer at a low
+            ;; `gc-cons-threshold' -- past nine minutes at the batch
+            ;; default -- since opening this many Org buffers makes
+            ;; garbage faster than the default budget expects.)
             (message (concat "org-agents: scope `%s' not narrowed (%s);"
                              " scanning %d files live")
                      scope reason (length base))
