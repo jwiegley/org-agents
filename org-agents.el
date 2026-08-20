@@ -2281,29 +2281,44 @@ a product code than a thousand.  Anchored at both ends, so `3 4' -- which
 is what `org-entry-get' answers for a `:N: 3' beside a `:N+: 4' -- is not
 a number, and is reported as one thing rather than passing as two.")
 
-(defconst org-agents--attributes-reserved '("Prototypes")
+(defconst org-agents--prototypes-section "Prototypes"
+  "The top-level registry heading whose subtree holds the prototypes.
+Spelled once, here, and read by two things that must not drift apart: the
+declaration reader below skips it, because it declares no attribute, and
+`org-agents--prototypes-scan' scans exactly its subtree.  See the
+`Prototypes' section of this file for what a prototype is.")
+
+(defconst org-agents--attributes-reserved
+  (list org-agents--prototypes-section)
   "Top-level registry headings that declare no attribute.
 Skipped SILENTLY, where any other top-level entry with no `:ATTR_TYPE:'
-is named.  `Prototypes' is reserved here, in this epic, because Epic 3
-puts its prototype entries in a top-level section of this same file --
-and reserving the name now is what keeps that epic from having to change
-this reader's contract in order to add one heading.")
+is named.  `Prototypes' is reserved because the prototype entries live in
+a top-level section of this same file, and taking the name from
+`org-agents--prototypes-section' is what keeps the heading this reader
+skips and the heading the resolver scans from becoming two headings.")
 
 (defvar org-agents--attributes-cache nil
   "`(KEY . ALIST)' for the registry as last read, or nil.
-KEY is `org-agents--attributes-cache-key' as it stood at the time of the
+KEY is `org-agents--file-cache-key' as it stood at the time of the
 read, and ALIST is `(NAME . PLIST)' in file order.  One cons rather than
 a hash table keyed by file name: `org-agents-attributes-file' names ONE
 file, and a table keyed on it would grow one entry that never got a
 second.")
 
 (defvar org-agents--attributes-fresh nil
-  "Non-nil while `org-agents--attributes-cache' is known to be up to date.
+  "Non-nil while the registry file's caches are known to be up to date.
+Both of them: `org-agents--attributes-cache' and
+`org-agents--prototypes-cache' are read out of the same file, keyed the
+same way, and brought up to date together -- see
+`org-agents--warm-attributes'.  It also suppresses revalidation of
+`org-agents--prototype-id-cache', whose entries are keyed on files of
+their own.
+
 Bound by `org-agents--with-attributes' and by nothing else, around a
 BATCH of look-ups that all want the same answer.
 
 The cache hit itself is one `equal', but computing the key it is compared
-against is not free: `org-agents--attributes-cache-key' calls
+against is not free: `org-agents--file-cache-key' calls
 `file-truename' and `find-buffer-visiting', and the second of those walks
 the whole buffer list and truenames each buffer's file name.  And
 `org-agents-check-attributes' looks a name up once per drawer line while
@@ -2319,9 +2334,10 @@ command, and this package never writes it.")
 
 (defmacro org-agents--with-attributes (&rest body)
   "Run BODY with the registry read at most once, however often it is asked.
-The key is computed and the cache brought up to date ONCE, here, and
-every `org-agents-attribute' and `org-agents-attributes' inside BODY then
-answers from it with no further look at the file system -- see
+The key is computed and both caches the registry file feeds are brought up
+to date ONCE, here, and every `org-agents-attribute',
+`org-agents-attributes' and `org-agents-resolve-property' inside BODY then
+answers from them with no further look at the file system -- see
 `org-agents--attributes-fresh' for what that saves and why it is sound.
 
 For a batch of look-ups over a corpus.  A single completion needs nothing
@@ -2329,7 +2345,7 @@ of this: it wants the freshest answer there is, which is what the cache
 gives it unwrapped."
   (declare (indent 0) (debug t))
   `(progn
-     (org-agents--attributes-alist)
+     (org-agents--warm-attributes)
      (let ((org-agents--attributes-fresh t))
        ,@body)))
 
@@ -2558,23 +2574,29 @@ type worth both."
      "LEVEL=1")
     (nreverse declarations)))
 
-(defun org-agents--attributes-read (file)
-  "FILE's declarations as an alist of `(NAME . PLIST)', in file order.
-Scanned in a temporary buffer, filled either from the BUFFER visiting
-FILE where there is one or from the file itself.  Three things fall out
-of that, and all three are wanted:
+(defun org-agents--in-org-copy (file fn)
+  "Call FN in a temporary Org buffer holding FILE's text, and answer what it does.
+Filled either from the BUFFER visiting FILE where there is one or from
+the file itself.  Three things fall out of that, and all three are
+wanted:
 
-  - An UNSAVED edit to the registry is what the next completion sees.
-    That is the case that matters: the user adds a value to
-    `:ATTR_VALUES:' and expects the very next `org-set-property' to
-    complete it.
-  - Nothing here visits the registry.  `find-file-noselect' would leave
-    the user's own file visited by a buffer they never opened -- and it
-    would flip `org-agents--attributes-cache-key' from its file half to
+  - An UNSAVED edit to FILE is what the next reader sees.  That is the
+    case that matters: the user adds a value to `:ATTR_VALUES:', or
+    changes a prototype's property, and expects the very next look-up to
+    answer for it.
+  - Nothing here visits FILE.  `find-file-noselect' would leave the
+    user's own file visited by a buffer they never opened -- and it
+    would flip `org-agents--file-cache-key' from its file half to
     its buffer half on the very first read, forcing a second one.
-  - The scan runs in an Org buffer of this function's own making, so it
+  - FN runs in an Org buffer of this function's own making, so it
     cannot move point in a buffer the user is editing, and needs no
     opinion about the mode that buffer happens to be in.
+
+The copy is character-for-character FILE's text apart from
+`#+SETUPFILE:', whose neutralization below is length-preserving on
+purpose -- so a position found in one is the same position in the other,
+which is what lets `org-agents--prototype-id-read' take a position from
+`org-id' and use it here.
 
 `#+SETUPFILE:' is neutralized in the COPY before the mode is enabled, and
 that is not cosmetic.  `org-mode' collects keywords whatever
@@ -2593,7 +2615,9 @@ syntax rather than configuration.
 Never signals.  The caller has established that FILE is readable, and a
 file that stops being readable between that test and this read declares
 nothing and is named once: an error raised here would reach the user out
-of `org-set-property' in some entirely unrelated buffer."
+of `org-set-property' in some entirely unrelated buffer.  So FN must not
+be a function that has a signal of its own to raise -- both callers only
+read text."
   (condition-case err
       (let ((text (when-let* ((buffer (find-buffer-visiting file)))
                     (with-current-buffer buffer
@@ -2610,22 +2634,33 @@ of `org-set-property' in some entirely unrelated buffer."
           (let ((org-inhibit-startup t)
                 (org-element-use-cache nil))
             (delay-mode-hooks (org-mode))
-            (org-agents--attributes-scan file))))
+            (funcall fn))))
     (error (message "org-agents: cannot read %s: %s"
                     (abbreviate-file-name file) (error-message-string err))
            nil)))
 
-(defun org-agents--attributes-cache-key (file)
-  "What the registry cache is keyed on, or nil when FILE cannot be read.
-Two halves, because the registry is a FILE that may or may not be
-visited.  Where a buffer is visiting it, the key carries that buffer and
+(defun org-agents--attributes-read (file)
+  "FILE's declarations as an alist of `(NAME . PLIST)', in file order.
+Read in a copy: `org-agents--in-org-copy' says which copy, and why the
+registry is never visited to read it."
+  (org-agents--in-org-copy file
+                           (lambda () (org-agents--attributes-scan file))))
+
+(defun org-agents--file-cache-key (file)
+  "What a cache over FILE is keyed on, or nil when FILE cannot be read.
+Two halves, because the file may or may not be visited.  Where a buffer
+is visiting it, the key carries that buffer and
 its `buffer-chars-modified-tick' -- the same pair `org-ql--value-at' keys
 its own node cache on -- so an UNSAVED edit invalidates.  Where no buffer
 is visiting it, there is no tick to read and the key is the file's
 modification time and size, which is all `file-attributes' has to offer.
 
 Nil for a file that cannot be read, which is how a missing registry
-declares nothing without anything being opened to find that out."
+declares nothing without anything being opened to find that out.
+
+Not registry-specific, and the name says so: the registry's declarations,
+the prototypes read out of the same file, and each file an id-named
+prototype was read from are all keyed by this one function."
   (when (file-readable-p file)
     (let* ((true (file-truename file))
            (buffer (find-buffer-visiting true)))
@@ -2653,20 +2688,35 @@ the batch established it once on entry, and recomputing it per look-up is
 what made a corpus-wide lint quadratic."
   (if org-agents--attributes-fresh
       (cdr org-agents--attributes-cache)
-    (org-agents--attributes-alist-1)))
+    (let ((file (expand-file-name org-agents-attributes-file)))
+      (org-agents--attributes-alist-1 file
+                                      (org-agents--file-cache-key file)))))
 
-(defun org-agents--attributes-alist-1 ()
-  "Read `org-agents--attributes-alist' answer, consulting the file system.
+(defun org-agents--attributes-alist-1 (file key)
+  "Read `org-agents--attributes-alist' answer for FILE, whose key is KEY.
 Split out so that the fresh-cache short circuit above it is one branch
-and this is the whole of the work it skips."
+and this is the whole of the work it skips -- and so that
+`org-agents--warm-attributes' can hand FILE and KEY to this reader and to
+the prototype reader beside it, having computed the key ONCE for both."
+  (cond
+   ((null key) (setq org-agents--attributes-cache nil))
+   ((equal key (car org-agents--attributes-cache))
+    (cdr org-agents--attributes-cache))
+   (t (cdr (setq org-agents--attributes-cache
+                 (cons key (org-agents--attributes-read file)))))))
+
+(defun org-agents--warm-attributes ()
+  "Bring both of the registry file's caches up to date, keying it ONCE.
+The declarations and the prototypes come out of the same file, so one
+`org-agents--file-cache-key' answers for both -- and it has to be one
+call rather than two, because that key is the expensive half: see
+`org-agents--attributes-fresh' for the measurement.
+
+Called by `org-agents--with-attributes' and by nothing else."
   (let* ((file (expand-file-name org-agents-attributes-file))
-         (key (org-agents--attributes-cache-key file)))
-    (cond
-     ((null key) (setq org-agents--attributes-cache nil))
-     ((equal key (car org-agents--attributes-cache))
-      (cdr org-agents--attributes-cache))
-     (t (cdr (setq org-agents--attributes-cache
-                   (cons key (org-agents--attributes-read file))))))))
+         (key (org-agents--file-cache-key file)))
+    (org-agents--attributes-alist-1 file key)
+    (org-agents--prototypes-alist-1 file key)))
 
 (defun org-agents-attribute (name)
   "The registry's declaration of NAME as a plist, or nil when it has none.
@@ -3170,6 +3220,432 @@ implements is this function's own, and
     (when (called-interactively-p 'interactive)
       (message "%s" format))
     format))
+
+;;;; Prototypes
+
+;; Prototypes, in Eastgate Tinderbox's sense.  An entry names a MASTER
+;; entry in `:PROTOTYPE:' and reads through it whatever it does not
+;; spell for itself.  The master may be ANYWHERE -- a named entry of the
+;; registry file's `Prototypes' section, or any entry in the corpus
+;; named by its `:ID:' -- so this is a relation between entries and not
+;; a fact about the outline.  A master may name a master of its own, and
+;; the chain is walked nearest-first.
+;;
+;; Reads are VIRTUAL.  Nothing is ever written into the inheriting
+;; entry, and that is the whole of the design decision: a prototype can
+;; be changed once and every follower changes with it, an entry's drawer
+;; goes on saying only what the user put there, and no update has to
+;; find and rewrite the followers of a master that moved.  The price is
+;; stated rather than hidden: grep does not see an inherited value.  A
+;; reader who wants one must ask this package, which is what
+;; `property-resolved' below is for.
+;;
+;; The resolution order, per attribute, and it is Tinderbox's:
+;;
+;;   1. the entry's OWN drawer, with no inheritance whatever;
+;;   2. the prototype chain, nearest hop first;
+;;   3. the registry's `:ATTR_DEFAULT:';
+;;   4. nil.
+;;
+;; Outline inheritance is deliberately NOT in that order.  Containment
+;; is not inheritance -- a task filed under a project is not a kind of
+;; project -- and the outline axis already has a spelling of its own,
+;; `$NAME*', which is `org-entry-get' with INHERIT.  The two axes are
+;; orthogonal, and a query says which one it means.
+;;
+;; Two names never travel, for two separate reasons.  `AGENT_*' because
+;; behaviour does not: a master that lent its `:AGENT_QUERY:' would make
+;; every follower an agent, and a registry default for such a name would
+;; make every entry in the corpus one.  `PROTOTYPE' because a DEFAULT for
+;; it would hand every entry in the corpus a prototype -- one declaration
+;; and the whole corpus follows one master, which is the kind of thing a
+;; user should have to write down entry by entry.  Both get the local
+;; value and nothing else: no chain, no default.
+;;
+;; Below the Registry because every step of the order above ends in it.
+
+(defconst org-agents--prototype-property "PROTOTYPE"
+  "The property naming an entry's prototype.
+The only non-`AGENT_' property this package reads by name.  Spelled once,
+here: the resolver reads it, the diagnostics name it, and the ripgrep
+prefilter's widened pattern is built out of it, and those three must
+agree.")
+
+(defconst org-agents--prototype-opaque-re "\\`AGENT_\\|\\`PROTOTYPE\\'"
+  "Property names that resolve LOCALLY and by nothing else.
+No chain and no registry default -- the two members are refused for two
+different reasons, and both are in the section comment above:
+`AGENT_...' because behaviour does not travel, `PROTOTYPE' because a
+declared default for it would hand every entry in the corpus a master.
+
+Only the DEFAULT arm of the `PROTOTYPE' refusal is reachable, and saying
+so is worth more than the tidier claim it replaces.  The chain arm cannot
+be reached at all: the walk finds its first hop with `org-entry-get' and
+each later hop from the previous hop's plist, never through this
+resolver, so a `PROTOTYPE' that has a local value answers with it at step
+3 and one that has none has no chain to walk.  The claim \"the walk would
+read its own answer\" was written here first and MEASURED false -- with
+A -> B -> C, dropping `PROTOTYPE' from this regexp changes nothing about
+what an entry following A resolves `PROTOTYPE' to.  What it does change
+is what an entry with NO `:PROTOTYPE:' line resolves it to, which is why
+`org-agents-test-prototype-property-does-not-travel' declares one.
+
+Matched case-insensitively, because Org matches a property key that way:
+`:agent_query:' is the same name as `:AGENT_QUERY:', and a resolver that
+disagreed with `org-entry-get' about which name it had been handed would
+be a hole in exactly the refusal this exists for.")
+
+(defconst org-agents--prototype-uuid-re
+  "\\`[[:xdigit:]]\\{8\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}\
+-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{12\\}\\'"
+  "What a bare `:PROTOTYPE:' value must look like to be read as an ID.
+`org-id-new' with the default `org-id-method' produces exactly this
+shape, so a reference written without the `id:' prefix is still
+unambiguous -- no Org heading looks like it.  A reference that DOES carry
+the prefix is an id whatever follows it, which is what keeps a corpus
+using some other `org-id-method' working.")
+
+(defvar org-agents--prototypes-cache nil
+  "`(KEY . ALIST)' for the registry file's prototypes as last read, or nil.
+KEY is `org-agents--file-cache-key' of `org-agents-attributes-file', and
+ALIST is `(NAME . PLIST)' in file order.  One cons, and for the same
+reason `org-agents--attributes-cache' is one: the prototypes come out of
+the one file that option names.")
+
+(defvar org-agents--prototype-id-cache nil
+  "Prototypes resolved by `:ID:', as `(ID KEY . PLIST)' in most-recent order.
+KEY is `org-agents--file-cache-key' of the file the entry was read from,
+which is a DIFFERENT file per id -- so this is an alist where
+`org-agents--prototypes-cache' is one cons.  An entry whose file's key has
+moved is re-read; inside `org-agents--with-attributes' no key is
+recomputed at all.")
+
+(defvar org-agents--prototype-warned nil
+  "A hash table of prototype diagnostics already said, or nil for none.
+Keyed on the reference or the cycle rather than on the text, so twenty
+entries naming one missing prototype cost one message -- see
+`org-agents--prototype-report'.
+
+Bound to a fresh table by `org-agents--collect' and by
+`org-agents-preview', around one whole update: a dangling reference or a
+cycle is a fact about the corpus, and an update should say it once.  When
+it is nil the reporter still messages, because silence is worse; a caller
+that runs the resolver over many entries of its own -- a fontifier, say
+-- inherits the obligation to bind it.")
+
+(defun org-agents--prototype-report (key format &rest args)
+  "Say FORMAT with ARGS once per KEY, and answer nil.
+`message' and never `user-error', and the argument is
+`org-agents--attr-warn''s carried one step further.  The resolver runs
+from a predicate body at every candidate entry, and
+`org-agents--collect' hands ONE form to `org-ql-select': a signal from
+inside org-ql's generated matcher aborts that agent's whole update, and
+`org-agents-update-all' -- which catches `user-error' per agent -- would
+then report the agent as failed on account of one drawer's typo.
+
+Answers nil so that a caller can end with it: the failed look-up and the
+diagnosis are one expression."
+  (unless (and org-agents--prototype-warned
+               (gethash key org-agents--prototype-warned))
+    (when org-agents--prototype-warned
+      (puthash key t org-agents--prototype-warned))
+    (apply #'message format args))
+  nil)
+
+(defun org-agents--prototype-warn (name file reason)
+  "Say that the prototype NAME in FILE is REASON.
+`org-agents--attr-warn' for the section beside the declarations, and said
+once per edit for the same reason: this is called from the READER, and
+`org-agents--prototypes-alist' calls that at most once per cache key."
+  (message "org-agents: prototype `%s' in %s: %s"
+           name (abbreviate-file-name file) reason))
+
+(defun org-agents--prototype-opaque-p (name)
+  "Non-nil when NAME is a name no prototype and no default may answer for.
+See `org-agents--prototype-opaque-re' for the two members and the two
+arguments."
+  (and (stringp name)
+       (let ((case-fold-search t))
+         (string-match-p org-agents--prototype-opaque-re name))
+       t))
+
+(defun org-agents--prototype-where (pom)
+  "Where POM is, as one string, for a diagnostic to name it by.
+A heading, a file and a line, so that a dangling `:PROTOTYPE:' can be
+navigated to rather than hunted for.  A buffer visiting no file is named
+by its buffer name, which is what a read in a temporary copy has."
+  (org-with-point-at pom
+    (let ((file (buffer-file-name (or (buffer-base-buffer) (current-buffer)))))
+      (format "`%s' in %s:%d"
+              (or (ignore-errors (org-get-heading t t t t)) "?")
+              (if file (abbreviate-file-name file) (buffer-name))
+              (line-number-at-pos)))))
+
+(defun org-agents--prototype-at-point (key file)
+  "The prototype entry at point as a plist, read out of FILE at KEY.
+KEY is what a cycle is detected by: a downcased name for a prototype the
+registry names, and `FILE:POSITION' for one found by its `:ID:', so that
+two spellings of one entry cannot walk past each other.
+
+`:properties' is `(org-entry-properties nil \\='standard)', which is
+exact rather than convenient: MEASURED, it joins `:T:' with `:T+:'
+exactly as `org-entry-get' does, so ONE read answers for every attribute
+the entry carries at once.  Its synthesized `CATEGORY' is never reached,
+because a special property is answered locally before the chain is
+walked at all."
+  (list :name (org-get-heading t t t t)
+        :key key
+        :properties (org-entry-properties nil 'standard)
+        :prototype (org-entry-get nil org-agents--prototype-property)
+        :file file
+        :line (line-number-at-pos)))
+
+(defun org-agents--prototypes-scan (file)
+  "Read every prototype in the current buffer, which holds FILE's text.
+The subtree of the FIRST top-level heading whose text is
+`org-agents--prototypes-section', and every entry below it at any depth:
+a section that groups its masters is a section, not a second kind of
+declaration.  FILE is named only so that a diagnosis can say where an
+entry is.
+
+A duplicate name is diagnosed and the first declaration stands, which is
+the registry's own rule for a duplicate.  Names are matched
+case-insensitively, as `org-agents-attribute' matches a declaration --
+and a heading is not a property key, so here that is a convention rather
+than a consequence.  The diagnosis is what makes it a safe one."
+  (let ((prototypes nil))
+    (goto-char (point-min))
+    (unless (org-at-heading-p) (outline-next-heading))
+    (while (and (org-at-heading-p)
+                (not (and (= 1 (org-current-level))
+                          (equal (org-get-heading t t t t)
+                                 org-agents--prototypes-section))))
+      (outline-next-heading))
+    (when (org-at-heading-p)
+      (let ((end (save-excursion (org-end-of-subtree t t) (point))))
+        (while (and (outline-next-heading) (< (point) end))
+          (let ((name (org-get-heading t t t t)))
+            (cond
+             ((or (null name) (string-empty-p name)))
+             ((assoc-string name prototypes t)
+              (org-agents--prototype-warn
+               name file "declared twice; the first declaration stands"))
+             (t (push (cons name (org-agents--prototype-at-point
+                                  (downcase name) file))
+                      prototypes)))))))
+    (nreverse prototypes)))
+
+(defun org-agents--prototypes-read (file)
+  "FILE's prototypes as an alist of `(NAME . PLIST)', in file order.
+Read in a copy: `org-agents--in-org-copy' says which copy, and why the
+registry is never visited to read it."
+  (org-agents--in-org-copy file
+                           (lambda () (org-agents--prototypes-scan file))))
+
+(defun org-agents--prototypes-alist ()
+  "The registry file's prototypes, read at most once per edit to it.
+A missing or unreadable file names no prototype and says nothing about
+it, exactly as it declares no attribute: the reference that then fails to
+resolve is what gets diagnosed, once, by the resolver.
+
+Inside `org-agents--with-attributes' the key is not recomputed at all."
+  (if org-agents--attributes-fresh
+      (cdr org-agents--prototypes-cache)
+    (let ((file (expand-file-name org-agents-attributes-file)))
+      (org-agents--prototypes-alist-1 file
+                                      (org-agents--file-cache-key file)))))
+
+(defun org-agents--prototypes-alist-1 (file key)
+  "Read `org-agents--prototypes-alist' answer for FILE, whose key is KEY.
+The unreadable branch CLEARS the cache, for the reason
+`org-agents--attributes-alist' gives: a file that has been deleted names
+nothing from that moment."
+  (cond
+   ((null key) (setq org-agents--prototypes-cache nil))
+   ((equal key (car org-agents--prototypes-cache))
+    (cdr org-agents--prototypes-cache))
+   (t (cdr (setq org-agents--prototypes-cache
+                 (cons key (org-agents--prototypes-read file)))))))
+
+(defun org-agents--prototype-id (ref)
+  "The id REF names, or nil when REF is a prototype NAME.
+An `id:' prefix says so outright; a bare `org-id-new' UUID says so by its
+shape -- see `org-agents--prototype-uuid-re'.  Everything else is a name,
+and a name is looked up in the registry's `Prototypes' section."
+  (cond ((string-prefix-p "id:" ref t) (substring ref 3))
+        ((string-match-p org-agents--prototype-uuid-re ref) ref)))
+
+(defun org-agents--prototype-id-read (id)
+  "The prototype whose `:ID:' is ID, as a plist, or nil when nothing knows it.
+`org-id-find' is deliberately NOT called, and the reason is in its
+source: when the location table has no answer it calls
+`org-id-update-id-locations', which rescans every agenda and extra file
+and WRITES `org-id-locations-file' -- or signals \"Please turn on
+`org-id-track-globally'\" where that option is nil.  This runs from a
+predicate body once per candidate entry, so one mistyped id would either
+rescan the corpus per entry or abort the update.  The two steps
+`org-id-find' takes BEFORE its rescan are the two steps taken here:
+`org-id-find-id-file' consults the table, and the entry is then found in
+a copy of that file.
+
+Found in a copy rather than at `org-id-find-id-in-file''s position, so
+that an unsaved edit to the master is what the follower reads -- the same
+choice, and the same `org-agents--in-org-copy', that the registry reader
+makes."
+  (when-let* ((file (org-id-find-id-file id)))
+    (org-agents--in-org-copy
+     file
+     (lambda ()
+       (catch 'found
+         (goto-char (point-min))
+         (unless (org-at-heading-p) (outline-next-heading))
+         (while (org-at-heading-p)
+           (when (equal id (org-entry-get nil "ID"))
+             (throw 'found
+                    (org-agents--prototype-at-point
+                     (format "%s:%d" file (point)) file)))
+           (outline-next-heading))
+         nil)))))
+
+(defun org-agents--prototype-id-entry (id)
+  "The prototype whose `:ID:' is ID, from the cache or by reading for it.
+Keyed on `org-agents--file-cache-key' of the file it was read from, so an
+unsaved edit to a master out in the corpus invalidates it -- the same
+guarantee the registry's own prototypes get, extended to the file each id
+happens to live in."
+  (let* ((cell (assoc id org-agents--prototype-id-cache))
+         (cached (cddr cell)))
+    (if (and cell
+             (or org-agents--attributes-fresh
+                 (equal (cadr cell)
+                        (org-agents--file-cache-key
+                         (plist-get cached :file)))))
+        cached
+      (when-let* ((found (org-agents--prototype-id-read id))
+                  (key (org-agents--file-cache-key (plist-get found :file))))
+        (setq org-agents--prototype-id-cache
+              (cons (cons id (cons key found))
+                    (assoc-delete-all id org-agents--prototype-id-cache)))
+        found))))
+
+(defun org-agents--prototype-entry (ref pom)
+  "The prototype REF names, as a plist, or nil with ONE diagnostic.
+POM is the entry that named it, so that the diagnostic can say where the
+reference was written.  Keyed on the reference and not on the text, so a
+hundred entries naming one missing master cost one message naming the
+first of them."
+  (or (if-let* ((id (org-agents--prototype-id ref)))
+          (org-agents--prototype-id-entry id)
+        (cdr (assoc-string ref (org-agents--prototypes-alist) t)))
+      (org-agents--prototype-report
+       (concat "dangling\0" (downcase ref))
+       "org-agents: no prototype `%s' named by %s"
+       ref (org-agents--prototype-where pom))))
+
+(defun org-agents--prototype-chain (name ref pom)
+  "Look NAME up along the prototype chain starting at REF, or answer nil.
+Nearest hop first, and the walk stops at the first hop that carries NAME.
+POM is the entry the chain hangs from, named in a diagnostic.
+
+A hop already visited is a CYCLE, and a cycle is a `user-error' naming
+the hops in order: it is a broken corpus rather than a missing value, and
+the caller that must not signal calls
+`org-agents-resolve-property-quietly' instead.  The visited set is keyed
+on each hop's own `:key', so a master reached once by name and once by id
+is one hop and not two.
+
+A dangling reference ends the walk with the value nil, having already
+been diagnosed by `org-agents--prototype-entry'."
+  (let ((visited (make-hash-table :test #'equal))
+        (path nil)
+        (value nil))
+    (while (and ref (null value))
+      (let ((entry (org-agents--prototype-entry ref pom)))
+        (cond
+         ((null entry) (setq ref nil))
+         ((gethash (plist-get entry :key) visited)
+          (user-error "org-agents: prototype cycle at %s: %s"
+                      (org-agents--prototype-where pom)
+                      (string-join (nreverse (cons (plist-get entry :name)
+                                                   path))
+                                   " -> ")))
+         (t
+          (puthash (plist-get entry :key) t visited)
+          (push (plist-get entry :name) path)
+          (setq value (cdr (assoc-string
+                            name (plist-get entry :properties) t)))
+          (setq ref (and (null value) (plist-get entry :prototype)))))))
+    value))
+
+(defun org-agents-resolve-property (name &optional pom)
+  "Resolve attribute NAME at POM through prototypes, and answer TEXT or nil.
+POM is a marker or a position, and defaults to point.  The answer is the
+string a drawer holds, or the registry's declared default, or nil: an Org
+property value is text, and nothing here parses it.
+
+The order, which is the section comment's order above:
+
+  1. `AGENT_...' and `PROTOTYPE' answer from the entry's own drawer and
+     stop -- see `org-agents--prototype-opaque-re'.
+  2. So does a special property: a prototype's `CATEGORY' is not this
+     entry's, and a `DEADLINE' is entry structure rather than a drawer
+     line at all.
+
+     A BELT, and its own test says so.  MEASURED, no change to THIS file
+     can tell the clause from its absence, because Org will not hand a
+     special name out of a drawer at all: a master whose drawer holds
+     `:DEADLINE: <2030-01-01 Tue>', `:TODO: DONE', `:ITEM: fake' and
+     `:PRIORITY: A' answers `org-entry-properties' with neither the
+     deadline nor the keyword, at `standard', at `special' and at `all'
+     alike.  So the chain cannot carry a special, and `CATEGORY' -- the
+     one Org does synthesize -- is one `org-entry-get' answers for at
+     every entry anyway.  That measurement is what the clause's
+     unreachability rests on, and
+     `org-agents-test-prototype-special-property-is-local-only' pins it,
+     so a later Org that reported drawer specials would fail a test
+     rather than change an answer.
+  3. The entry's own drawer, through `org-entry-get' with INHERIT NIL.
+     Raw `org-entry-get' and not `org-agents--entry-get': a present but
+     EMPTY `:NAME:' answers \"\", which is non-nil, and org-ql's own
+     `property' matches it -- so this must too, or `property-resolved'
+     and `property' would disagree about an entry neither prototypes nor
+     defaults are involved in.
+
+     The INHERIT argument is nil and must stay nil.  MEASURED: an
+     inheriting read answers from an ancestor's drawer, from a
+     `#+PROPERTY:' file keyword, and from `org-global-properties' -- the
+     first spelled by a line no drawer pattern matches, the last spelled
+     in no file at all.  Any of them in this step would be a value the
+     ripgrep prefilter's widened pattern cannot see, which is a lost
+     match with no error.  See `org-agents--pushdown-fns'.
+  4. The prototype chain, nearest first.
+  5. The registry's `:ATTR_DEFAULT:'.
+
+Signals a `user-error' naming the cycle where the chain has one.  A
+caller that runs at every entry of a corpus wants
+`org-agents-resolve-property-quietly', which reports instead."
+  (cond
+   ((org-agents--prototype-opaque-p name) (org-entry-get pom name))
+   ((org-agents--attr-special-p name) (org-entry-get pom name))
+   (t (or (org-entry-get pom name)
+          (org-agents--prototype-chain
+           name
+           (org-entry-get pom org-agents--prototype-property)
+           pom)
+          (plist-get (org-agents-attribute name) :default)))))
+
+(defun org-agents-resolve-property-quietly (name &optional pom)
+  "`org-agents-resolve-property', with a cycle reported rather than signalled.
+The one demotion site, and it is documented here rather than spread over
+the callers: a `user-error' out of a predicate body or out of residual
+Lisp aborts the whole update from inside org-ql's generated matcher.  The
+signalling function stays for a command and for a caller that wants to be
+told."
+  (condition-case err
+      (org-agents-resolve-property name pom)
+    (user-error
+     (let ((text (error-message-string err)))
+       (org-agents--prototype-report (concat "cycle\0" text) "%s" text)))))
 
 ;;;; Links
 

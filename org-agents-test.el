@@ -1320,15 +1320,20 @@ agree with a reader that had lost count in the same direction.")
 
 (defmacro org-agents-test--with-registry (text &rest body)
   "Run BODY with `registry' bound to a temp registry file holding TEXT.
-`org-agents-attributes-file' is that file and the cache is empty, so no
-test can read the developer's own registry, or a previous test's parse of
-another one.  Buffers visiting the file are killed afterwards, because
-the file is about to be deleted."
+`org-agents-attributes-file' is that file and every cache the file feeds
+is empty -- the declarations, the prototypes read out of its `Prototypes'
+section, the id-resolved prototypes, and the table of prototype
+diagnostics already said -- so no test can read the developer's own
+registry, or a previous test's parse of another one.  Buffers visiting
+the file are killed afterwards, because the file is about to be deleted."
   (declare (indent 1))
   `(let* ((dir (make-temp-file "org-agents-registry" t))
           (registry (expand-file-name "attributes.org" dir))
           (org-agents-attributes-file registry)
           (org-agents--attributes-cache nil)
+          (org-agents--prototypes-cache nil)
+          (org-agents--prototype-id-cache nil)
+          (org-agents--prototype-warned nil)
           (org-element-use-cache nil))
      (unwind-protect (progn (with-temp-file registry (insert ,text)) ,@body)
        (dolist (buf (buffer-list))
@@ -2362,8 +2367,8 @@ version 3.2x and the other 7.7x, which is the quadratic term showing.
 Asserted as a COUNT rather than as a duration, and asserted twice over: a
 corpus with six times the property lines must cost the same one key."
   (let ((keys 0)
-        (real (symbol-function 'org-agents--attributes-cache-key)))
-    (cl-letf (((symbol-function 'org-agents--attributes-cache-key)
+        (real (symbol-function 'org-agents--file-cache-key)))
+    (cl-letf (((symbol-function 'org-agents--file-cache-key)
                (lambda (&rest args) (cl-incf keys) (apply real args))))
       (org-agents-test--with-attr-corpus org-agents-test--registry-example
           '(("a.org" . "\
@@ -2669,6 +2674,593 @@ nil \"COLUMNS\" t)' and so answers for the agenda buffer itself."
         (org-entry-delete nil "COLUMNS")
         (org-agents-attribute-columns '("STATUS"))
         (should-not (org-entry-get nil "COLUMNS"))))))
+
+;;;; Prototypes
+
+(defconst org-agents-test--prototype-registry "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_VALUES:  open wip blocked done
+:ATTR_DEFAULT: open
+:END:
+Where the item stands.
+
+* OWNER
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+Who has it.
+
+* REVIEWS
+:PROPERTIES:
+:ATTR_TYPE: number
+:END:
+How many times this has been through review.
+
+* Prototypes
+** Task
+:PROPERTIES:
+:OWNER:       johnw
+:REVIEWS:     7
+:CATEGORY:    masters
+:DEADLINE:    <2030-01-01 Tue>
+:AGENT_QUERY: (todo)
+:AGENT_VIEW:  table
+:END:
+The master every task follows.
+
+** Urgent Task
+:PROPERTIES:
+:PROTOTYPE: Task
+:OWNER:     ada
+:END:
+A task that is urgent, which is a Task in every other respect.
+"
+  "A registry declaring three attributes and two prototypes.
+One file, because prototypes live in a `Prototypes' section of the
+registry rather than in a file of their own -- which is what keeps this
+epic from adding an option.
+
+The three attributes are chosen so that each step of the resolution
+order is visible on its own: `OWNER' is spelled by BOTH prototypes, so
+nearest-first shows; `REVIEWS' only by `Task', so the far end of the
+chain shows; and `STATUS' by NEITHER, so the registry default is the only
+thing that can answer for it.")
+
+(defconst org-agents-test--prototype-corpus
+  '(("follower.org" . "\
+* TODO Ship the widget
+:PROPERTIES:
+:PROTOTYPE: Urgent Task
+:END:
+* TODO Ship the gadget
+:PROPERTIES:
+:PROTOTYPE: Urgent Task
+:OWNER:     zoe
+:END:
+* TODO Ship on its own
+:PROPERTIES:
+:REVIEWS: 1
+:END:
+"))
+  "Three followers: one plain, one overriding locally, one with no prototype.")
+
+(defmacro org-agents-test--at-entry (file heading &rest body)
+  "Run BODY with point on the entry of FILE whose heading text holds HEADING.
+FILE is visited rather than copied, so a test may edit it and see what
+the resolver then reads."
+  (declare (indent 2))
+  `(with-current-buffer (find-file-noselect ,file)
+     (goto-char (point-min))
+     (should (re-search-forward (concat "^\\*+.*" (regexp-quote ,heading))
+                                nil t))
+     (org-back-to-heading t)
+     ,@body))
+
+(ert-deftest org-agents-test-prototype-resolves-through-a-chain ()
+  "A follower reads what it does not spell, through the chain, nearest first.
+`OWNER' is spelled by both hops, so the answer is the NEAR one; `REVIEWS'
+only by the far one, so the walk does not stop at the first hop that
+lacks the attribute."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      org-agents-test--prototype-corpus
+    (org-agents-test--at-entry (funcall F "follower.org") "Ship the widget"
+      (should (equal "ada" (org-agents-resolve-property "OWNER")))
+      (should (equal "7" (org-agents-resolve-property "REVIEWS"))))))
+
+(ert-deftest org-agents-test-prototype-local-value-wins ()
+  "A value the entry spells for itself outranks every prototype."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      org-agents-test--prototype-corpus
+    (org-agents-test--at-entry (funcall F "follower.org") "Ship the gadget"
+      (should (equal "zoe" (org-agents-resolve-property "OWNER")))
+      ;; And the chain still answers for what the entry does not spell.
+      (should (equal "7" (org-agents-resolve-property "REVIEWS"))))))
+
+(ert-deftest org-agents-test-prototype-default-is-the-last-resort ()
+  "`:ATTR_DEFAULT:' answers where neither the entry nor its chain does.
+`STATUS' is spelled by no entry in the fixture at all, so the registry is
+the only thing that can answer for it -- and an attribute the registry
+does not declare answers nil rather than something."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      org-agents-test--prototype-corpus
+    (org-agents-test--at-entry (funcall F "follower.org") "Ship the widget"
+      (should (equal "open" (org-agents-resolve-property "STATUS")))
+      (should-not (org-agents-resolve-property "UNDECLARED")))
+    ;; An entry with no prototype at all reaches the default too.
+    (org-agents-test--at-entry (funcall F "follower.org") "Ship on its own"
+      (should (equal "open" (org-agents-resolve-property "STATUS")))
+      (should (equal "1" (org-agents-resolve-property "REVIEWS"))))))
+
+(ert-deftest org-agents-test-prototype-outline-ancestor-is-not-consulted ()
+  "Containment is not inheritance: the local step must NOT inherit.
+This is the test the prefilter's soundness argument rests on.  An
+inheriting local read answers from three places no drawer line of the
+entry's own file spells: an ANCESTOR's drawer, a `#+PROPERTY:' file
+keyword, and `org-global-properties' -- the last of which is in no file
+at all.  Were any of them in the resolution order, the pushed
+alternation could not see the value and the file would be lost with no
+error.
+
+`$NAME*' is the outline axis and is spelled differently on purpose; see
+`org-agents-test-expand-three-axes-are-three-predicates'."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      '(("outline.org" . "\
+#+PROPERTY: OWNER fromkeyword
+* Parent
+:PROPERTIES:
+:STATUS: blocked
+:END:
+** Child
+:PROPERTIES:
+:REVIEWS: 2
+:END:
+"))
+    (let ((org-use-property-inheritance t)
+          (org-global-properties '(("GLOB" . "fromglobal"))))
+      (org-agents-test--at-entry (funcall F "outline.org") "Child"
+        ;; The premise: an inheriting read DOES answer, all three ways.
+        (should (equal "blocked" (org-entry-get nil "STATUS" t)))
+        (should (equal "fromkeyword" (org-entry-get nil "OWNER" t)))
+        (should (equal "fromglobal" (org-entry-get nil "GLOB" t)))
+        ;; And the resolver answers none of them.
+        (should (equal "open" (org-agents-resolve-property "STATUS")))
+        (should-not (org-agents-resolve-property "OWNER"))
+        (should-not (org-agents-resolve-property "GLOB"))))))
+
+(ert-deftest org-agents-test-prototype-cycle-names-the-cycle ()
+  "A cycle in the chain is a `user-error' naming the hops, in order.
+Signalled by the public API, which a command and a fontifier call
+directly; `org-agents-resolve-property-quietly' is what a predicate body
+uses, and it reports instead -- see
+`org-agents-test-prototype-cycle-is-reported-once'."
+  (org-agents-test--with-attr-corpus "\
+* Prototypes
+** A
+:PROPERTIES:
+:PROTOTYPE: B
+:END:
+** B
+:PROPERTIES:
+:PROTOTYPE: A
+:END:
+"
+      '(("cyc.org" . "\
+* TODO Round and round
+:PROPERTIES:
+:PROTOTYPE: A
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "cyc.org") "Round and round"
+      (let ((err (should-error (org-agents-resolve-property "OWNER")
+                              :type 'user-error)))
+        (should (string-match-p "cycle" (error-message-string err)))
+        (should (string-match-p "A -> B -> A" (error-message-string err)))))))
+
+(ert-deftest org-agents-test-prototype-cycle-is-reported-once ()
+  "Twenty entries into one cycle cost ONE message and no signal.
+A `user-error' out of a predicate body aborts the agent's whole update --
+`org-agents-update-all' catches `user-error' per agent and would report
+the agent as failed on account of one drawer's typo -- so the quiet
+resolver demotes the signal to a report, deduplicated by
+`org-agents--prototype-warned'."
+  (org-agents-test--with-attr-corpus "\
+* Prototypes
+** A
+:PROPERTIES:
+:PROTOTYPE: B
+:END:
+** B
+:PROPERTIES:
+:PROTOTYPE: A
+:END:
+"
+      '(("cyc.org" . "\
+* TODO Round and round
+:PROPERTIES:
+:PROTOTYPE: A
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "cyc.org") "Round and round"
+      (let* ((org-agents--prototype-warned (make-hash-table :test #'equal))
+             (texts (org-agents-test--messages
+                      (dotimes (_ 20)
+                        (should-not
+                         (org-agents-resolve-property-quietly "OWNER"))))))
+        (should (= 1 (length texts)))
+        (should (string-match-p "A -> B -> A" (car texts)))))))
+
+(ert-deftest org-agents-test-prototype-dangling-is-one-diagnostic ()
+  "A `:PROTOTYPE:' naming nothing is ONE message, and resolution answers nil.
+Twenty entries naming the same missing prototype say it once and name an
+entry, because the report is keyed on the REFERENCE while its text names
+where the reference was first met.  A `user-error' here would cost the
+whole update for one typo."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      '(("dangle.org" . "\
+* TODO Names nothing
+:PROPERTIES:
+:PROTOTYPE: Nosuchthing
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "dangle.org") "Names nothing"
+      (let* ((org-agents--prototype-warned (make-hash-table :test #'equal))
+             (texts (org-agents-test--messages
+                      (dotimes (_ 20)
+                        ;; The registry default still answers, which is
+                        ;; what makes this a diagnostic and not a failure.
+                        (should (equal "open"
+                                       (org-agents-resolve-property "STATUS")))
+                        (should-not
+                         (org-agents-resolve-property "OWNER"))))))
+        (should (= 1 (length texts)))
+        (should (string-match-p "Nosuchthing" (car texts)))
+        (should (string-match-p "Names nothing" (car texts)))))))
+
+(ert-deftest org-agents-test-prototype-agent-properties-never-travel ()
+  "Behaviour does not travel: no `AGENT_' name resolves through a prototype.
+A prototype that lent its `:AGENT_QUERY:' would make every follower an
+agent, and a declared `:ATTR_DEFAULT:' for such a name would make every
+entry in the corpus one.  So an `AGENT_' name is resolved from the
+entry's own drawer and from nothing else -- no chain, no default."
+  (org-agents-test--with-attr-corpus "\
+* AGENT_VIEW
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_DEFAULT: table
+:END:
+Deliberately declared, to prove a default cannot smuggle behaviour in.
+
+* Prototypes
+** Task
+:PROPERTIES:
+:AGENT_QUERY: (todo)
+:AGENT_VIEW:  list
+:AGENT_SCOPE: all
+:OWNER:       johnw
+:END:
+"
+      '(("f.org" . "\
+* TODO Follows a master that is an agent
+:PROPERTIES:
+:PROTOTYPE:  Task
+:AGENT_VIEW: table
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "f.org") "Follows a master"
+      ;; Nothing behavioural travels.
+      (should-not (org-agents-resolve-property "AGENT_QUERY"))
+      (should-not (org-agents-resolve-property "AGENT_SCOPE"))
+      ;; Not even where the registry declares a default for it.
+      (should (equal "table" (org-agents-resolve-property "AGENT_VIEW")))
+      ;; Case is Org's, not ours: a lower-case spelling is the same name.
+      (should-not (org-agents-resolve-property "agent_query"))
+      ;; And an ordinary attribute still travels, so the refusal is
+      ;; specific rather than a chain that does not work.
+      (should (equal "johnw" (org-agents-resolve-property "OWNER"))))))
+
+(ert-deftest org-agents-test-prototype-property-does-not-travel ()
+  "`PROTOTYPE' itself resolves locally, and no DEFAULT may supply one.
+A declared `:ATTR_DEFAULT:' for `PROTOTYPE' would hand every entry in the
+corpus a master -- one line in the registry and the whole corpus follows
+one prototype -- so the name is opaque and step 5 never reaches it.
+
+This is the reachable half of that refusal, and the only half.  MEASURED:
+the chain arm cannot be reached, because the walk finds its hops with
+`org-entry-get' rather than through the resolver, so with A -> B -> C an
+entry following A resolves `PROTOTYPE' to `\"A\"' whether the name is
+opaque or not.  A test resting on that would assert nothing."
+  (org-agents-test--with-attr-corpus "\
+* PROTOTYPE
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_DEFAULT: A
+:END:
+Declared on purpose, to prove a default cannot supply a master.
+
+* OWNER
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+
+* Prototypes
+** A
+:PROPERTIES:
+:PROTOTYPE: B
+:END:
+** B
+:PROPERTIES:
+:PROTOTYPE: C
+:END:
+** C
+:PROPERTIES:
+:OWNER: johnw
+:END:
+"
+      '(("f.org" . "\
+* TODO Follows A
+:PROPERTIES:
+:PROTOTYPE: A
+:END:
+* TODO Follows nothing at all
+:PROPERTIES:
+:OWNER: solo
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "f.org") "Follows A"
+      ;; The reference the entry spells, and never the next hop.
+      (should (equal "A" (org-agents-resolve-property "PROTOTYPE")))
+      ;; The chain is walked to its end for an ordinary attribute.
+      (should (equal "johnw" (org-agents-resolve-property "OWNER"))))
+    ;; The half that discriminates: an entry that names no master has
+    ;; none, whatever the registry declares.
+    (org-agents-test--at-entry (funcall F "f.org") "Follows nothing at all"
+      (should-not (org-agents-resolve-property "PROTOTYPE"))
+      (should (equal "solo" (org-agents-resolve-property "OWNER"))))))
+
+(ert-deftest org-agents-test-prototype-special-property-is-local-only ()
+  "A special property is the entry's own, whatever a prototype says.
+And the PREMISE that makes the resolver's special-property clause a belt
+rather than a load-bearing step, which is the half of this test that will
+fail first if it ever stops holding.
+
+MEASURED, and asserted below: Org will not hand a special name out of a
+DRAWER at all.  A master whose drawer holds `:DEADLINE: <2030-01-01
+Tue>', `:TODO: DONE', `:ITEM: fake' and `:PRIORITY: A' answers
+`org-entry-properties' with neither the deadline nor the keyword, at
+`standard', at `special' and at `all' alike -- so a prototype cannot
+carry a special along the chain, and `CATEGORY', the one Org does
+synthesize, is one `org-entry-get' answers for at every entry anyway.
+
+So NO mutation of the package can make this test fail, and that is
+recorded rather than papered over: it is a PREMISE test, of the same kind
+as the other MEASURED pins in this suite.  Should a later Org start
+reporting drawer-spelled specials, the `org-entry-properties' assertions
+below fail, and the resolver's special-property clause becomes reachable
+and worth a fixture of its own.
+
+Pushing such a name into the prefilter is a different matter and is
+never merely useless -- see
+`org-agents-test-rg-property-resolved-special-property-is-residual'."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      '(("f.org" . "\
+* TODO Follows the master
+:PROPERTIES:
+:PROTOTYPE: Task
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "f.org") "Follows the master"
+      ;; The master spells `:CATEGORY: masters', and it does not travel.
+      (should-not (equal "masters" (org-agents-resolve-property "CATEGORY")))
+      (should (equal (org-entry-get nil "CATEGORY")
+                     (org-agents-resolve-property "CATEGORY")))
+      ;; And `org-entry-get' does answer for it, at an entry whose file
+      ;; says nothing about categories at all.
+      (should (org-entry-get nil "CATEGORY"))
+      ;; The master's drawer spells `:DEADLINE:' too, and it does not
+      ;; travel either.
+      (should-not (org-agents-resolve-property "DEADLINE")))
+    ;; The premise, measured here rather than quoted from a report.
+    (with-temp-buffer
+      (insert "* Master\n:PROPERTIES:\n:DEADLINE: <2030-01-01 Tue>\n"
+              ":TODO: DONE\n:ITEM: fake\n:PRIORITY: A\n"
+              ":CATEGORY: masters\n:END:\n")
+      (org-mode)
+      (goto-char (point-min))
+      (should (equal '(("CATEGORY" . "masters"))
+                     (org-entry-properties nil 'standard)))
+      (dolist (which '(standard special all))
+        (dolist (name '("DEADLINE" "TODO"))
+          (should-not (cdr (assoc name (org-entry-properties nil which)))))))))
+
+(ert-deftest org-agents-test-prototype-cache-invalidates-on-an-unsaved-edit ()
+  "An UNSAVED edit to a prototype is what the next resolution sees.
+The cache is keyed on `org-agents--file-cache-key', whose buffer half is
+`buffer-chars-modified-tick', so the case that matters -- the user
+changes a master and expects the followers to change with it -- needs no
+save."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      org-agents-test--prototype-corpus
+    (org-agents-test--at-entry (funcall F "follower.org") "Ship the widget"
+      (should (equal "ada" (org-agents-resolve-property "OWNER"))))
+    (with-current-buffer (find-file-noselect registry)
+      (goto-char (point-min))
+      (should (re-search-forward "^:OWNER:     ada$" nil t))
+      (replace-match ":OWNER:     grace"))
+    (org-agents-test--at-entry (funcall F "follower.org") "Ship the widget"
+      (should (equal "grace" (org-agents-resolve-property "OWNER"))))))
+
+(ert-deftest org-agents-test-prototype-cache-reads-once-per-batch ()
+  "Inside `org-agents--with-attributes' the registry is read once, and keyed once.
+Both halves matter: the READ is the file system, and the KEY is a
+`file-truename' plus a `find-buffer-visiting' that walks the whole buffer
+list -- which is what made a corpus-wide lint quadratic before Epic 2
+batched it.  The prototype cache must be warmed by the same batch, or the
+first in-batch lookup reads a cold cache while the flag claims it is
+fresh."
+  (let ((reads 0)
+        (keys 0)
+        (real-read (symbol-function 'org-agents--prototypes-read))
+        (real-key (symbol-function 'org-agents--file-cache-key)))
+    (cl-letf (((symbol-function 'org-agents--prototypes-read)
+               (lambda (&rest args) (cl-incf reads) (apply real-read args)))
+              ((symbol-function 'org-agents--file-cache-key)
+               (lambda (&rest args) (cl-incf keys) (apply real-key args))))
+      (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+          org-agents-test--prototype-corpus
+        (org-agents-test--at-entry (funcall F "follower.org") "Ship the widget"
+          (setq reads 0 keys 0)
+          (org-agents--with-attributes
+            (dotimes (_ 10)
+              (should (equal "ada" (org-agents-resolve-property "OWNER")))
+              (should (equal "7" (org-agents-resolve-property "REVIEWS")))
+              (should (equal "open" (org-agents-resolve-property "STATUS")))))
+          (should (= 1 reads))
+          (should (= 1 keys)))))))
+
+(ert-deftest org-agents-test-prototype-id-reference-resolves-anywhere ()
+  "`:PROTOTYPE: id:UUID' names a master ANYWHERE in the corpus.
+Independent of the outline and of the registry file both, which is what
+makes a prototype a Tinderbox prototype rather than a second inheritance
+axis.  It works where `org-id-locations' knows the id, which is the
+ordinary configuration; a test has to arrange that explicitly."
+  (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+      '(("masters.org" . "\
+* Master out in the corpus
+:PROPERTIES:
+:ID:      1f2e3d4c-5b6a-7890-abcd-ef0123456789
+:OWNER:   corpus-master
+:REVIEWS: 99
+:END:
+")
+        ("f.org" . "\
+* TODO Follows an id
+:PROPERTIES:
+:PROTOTYPE: id:1f2e3d4c-5b6a-7890-abcd-ef0123456789
+:END:
+* TODO Follows a bare uuid
+:PROPERTIES:
+:PROTOTYPE: 1f2e3d4c-5b6a-7890-abcd-ef0123456789
+:END:
+"))
+    (let ((org-id-locations-file (expand-file-name ".org-id-locations" dir)))
+      (puthash "1f2e3d4c-5b6a-7890-abcd-ef0123456789"
+               (funcall F "masters.org") org-id-locations)
+      (org-agents-test--at-entry (funcall F "f.org") "Follows an id"
+        (should (equal "corpus-master" (org-agents-resolve-property "OWNER")))
+        (should (equal "99" (org-agents-resolve-property "REVIEWS"))))
+      ;; Written without the `id:' prefix it is the same reference.
+      (org-agents-test--at-entry (funcall F "f.org") "Follows a bare uuid"
+        (should (equal "corpus-master" (org-agents-resolve-property "OWNER")))))))
+
+(ert-deftest org-agents-test-prototype-missing-attributes-file-resolves-nothing ()
+  "No registry: no named prototype, no default, one diagnostic, no error.
+`org-agents--file-cache-key' answers nil for a file that cannot be read,
+the caches clear, and `(plist-get nil :default)' is nil -- which is also
+exactly the branch in which the pushed alternation is sound, so this is
+worth a test of its own rather than a remark."
+  (let* ((dir (make-temp-file "org-agents-noreg" t))
+         (org-agents-attributes-file (expand-file-name "nope.org" dir))
+         (org-agents--attributes-cache nil)
+         (org-agents--prototypes-cache nil)
+         (org-agents--prototype-id-cache nil)
+         (org-agents--prototype-warned (make-hash-table :test #'equal))
+         (file (expand-file-name "f.org" dir))
+         (org-use-property-inheritance nil))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "* TODO Follows a master that is not there\n"
+                    ":PROPERTIES:\n:PROTOTYPE: Task\n:OWNER: local\n:END:\n"))
+          (org-agents-test--at-entry file "Follows a master"
+            (let ((texts (org-agents-test--messages
+                           ;; A local value still answers.
+                           (should (equal "local"
+                                          (org-agents-resolve-property "OWNER")))
+                           (should-not
+                            (org-agents-resolve-property "STATUS")))))
+              (should (= 1 (length texts)))
+              (should (string-match-p "Task" (car texts))))))
+      (dolist (buf (buffer-list))
+        (when-let* ((f (buffer-file-name buf)))
+          (when (string-prefix-p (file-name-as-directory dir) f)
+            (with-current-buffer buf (set-buffer-modified-p nil))
+            (kill-buffer buf))))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-prototype-duplicate-name-first-wins ()
+  "Two prototypes of one name: the first stands, and it is said once.
+The registry's own rule for a duplicate declaration, applied to the
+section beside it -- a heading is not a property key, so first-wins is a
+convention rather than a consequence, and the diagnosis is what makes it
+safe."
+  (org-agents-test--with-attr-corpus "\
+* Prototypes
+** Task
+:PROPERTIES:
+:OWNER: first
+:END:
+** Task
+:PROPERTIES:
+:OWNER: second
+:END:
+"
+      '(("f.org" . "\
+* TODO Follows Task
+:PROPERTIES:
+:PROTOTYPE: Task
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "f.org") "Follows Task"
+      (let ((texts (org-agents-test--messages
+                     (should (equal "first"
+                                    (org-agents-resolve-property "OWNER"))))))
+        (should (= 1 (length texts)))
+        (should (string-match-p "declared twice" (car texts)))))))
+
+(ert-deftest org-agents-test-prototype-section-is-found-anywhere-in-the-file ()
+  "The `Prototypes' section is a top-level heading, wherever it sits.
+And only entries BELOW it are prototypes: a declaration after the
+section is a declaration, not a master."
+  (org-agents-test--with-attr-corpus "\
+* OWNER
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+
+* Prototypes
+** Task
+:PROPERTIES:
+:OWNER: johnw
+:END:
+*** Nested Task
+:PROPERTIES:
+:PROTOTYPE: Task
+:REVIEWS:   3
+:END:
+
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_DEFAULT: open
+:END:
+"
+      '(("f.org" . "\
+* TODO Follows a nested master
+:PROPERTIES:
+:PROTOTYPE: Nested Task
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "f.org") "Follows a nested master"
+      ;; A prototype at any depth below the section is a prototype.
+      (should (equal "3" (org-agents-resolve-property "REVIEWS")))
+      (should (equal "johnw" (org-agents-resolve-property "OWNER")))
+      ;; And the declaration AFTER the section is still a declaration.
+      (should (equal "open" (org-agents-resolve-property "STATUS")))
+      ;; `STATUS' is no prototype, so naming it as one dangles.
+      (should-not (org-agents-resolve-property "NOSUCH")))
+    (should (equal (org-agents-attributes) '("OWNER" "STATUS")))))
 
 ;;;; Collection
 
