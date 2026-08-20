@@ -180,7 +180,7 @@ blocked and waiting on review at once.
 | Field | Meaning |
 | --- | --- |
 | `ATTR_TYPE` | `string`, `number`, `date`, `boolean`, `set`, or `list`. Required — this property is what makes an entry a declaration. |
-| `ATTR_VALUES` | the values the attribute admits, whitespace-separated. A `:ETC` among them leaves the vocabulary **open**, which is Org's own spelling of that. |
+| `ATTR_VALUES` | the values the attribute admits, whitespace-separated. A `:ETC` among them leaves the vocabulary **open**, which is Org's own spelling of that; `:ETC` *alone* declares no vocabulary at all, and completion defers as though the field were absent. |
 | `ATTR_DEFAULT` | the default, as text. |
 | `ATTR_FACES` | `VALUE FACE \| VALUE FACE …` — value/face pairs separated by a vertical bar. Parsed and stored, and read by nothing yet. |
 
@@ -254,8 +254,10 @@ and takes the first non-nil answer, so any answer at all shadows every
 `_ALL` declaration in the corpus for that name. Measured: a hook answering
 for `STATUS` beat a `:STATUS_ALL: a b c` in the entry's own drawer. So the
 package answers `nil` both for an undeclared name and for a declared one
-carrying no `ATTR_VALUES`, and your existing `_ALL` declarations go on
-working untouched.
+carrying no `ATTR_VALUES` — and for one whose whole vocabulary is `:ETC`,
+where answering would shadow the `_ALL` declarations while offering
+nothing, since Org strips `:ETC` and would then have an empty list — and
+your existing `_ALL` declarations go on working untouched.
 
 Fifteen names can never reach it: the fourteen in `org-special-properties`,
 plus `CATEGORY`, all of which Org answers for in clauses of its own. A

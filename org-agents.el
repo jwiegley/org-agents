@@ -2693,6 +2693,14 @@ vocabulary into a closed one: `org-read-property-value' reads
 REQUIRE-MATCH off the `org-unrestricted' text property that `:ETC' is
 what puts there.
 
+A vocabulary of `:ETC' and nothing else is not an answer, though, and is
+the one case where the marker alone must be declined.  MEASURED: Org
+removes `:ETC' from the list this hook hands it and is then left with an
+empty one, so `org-property-get-allowed-values' answered nil -- while the
+non-nil answer had already shadowed the `NAME_ALL' declarations that
+would otherwise have supplied the corpus's own values.  Offering nothing
+where Org would have offered something is worse than declining.
+
 A `boolean' answers its two values because the READER synthesized them,
 so there is no type dispatch here at all; a `set' or a `list' answers its
 member vocabulary, which is what completing one member needs.  And
@@ -2701,7 +2709,8 @@ for them in clauses of its own -- which the reader says once, at the
 declaration."
   (when-let* ((attr (org-agents-attribute property))
               (values (plist-get attr :values)))
-    (mapcar #'copy-sequence values)))
+    (when (cl-remove ":ETC" values :test #'equal)
+      (mapcar #'copy-sequence values))))
 
 ;; The lint.  It reads a scope and says what the registry does not account
 ;; for, and it edits NOTHING: a normalisation that looked like a kindness

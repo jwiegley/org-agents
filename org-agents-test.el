@@ -1917,6 +1917,44 @@ declaration in the corpus for a name the registry merely gave a type."
     (should (equal (org-property-get-allowed-values (point) "STATUS")
                    '("a" "b" "c")))))
 
+(ert-deftest org-agents-test-allowed-values-etc-alone-defers ()
+  "A vocabulary of `:ETC' and nothing else is not an answer either.
+`:ETC' is Org's marker for \"these are defaults, other values are allowed
+too\", so a vocabulary that HAS members and ends in `:ETC' is answered
+and left open -- the control below.  Alone it is a declaration of
+openness with no defaults in it, and MEASURED, answering it does the one
+thing this hook must never do: `org-property-get-allowed-values' removes
+`:ETC' from the list and is left with an empty one, so the prompt offers
+nothing at all -- while the non-nil answer has already shadowed the
+`NAME_ALL' declaration that would have supplied the corpus's own values."
+  (org-agents-test--with-completion "\
+* S
+:PROPERTIES:
+:ATTR_TYPE:   string
+:ATTR_VALUES: :ETC
+:END:
+"
+      ":S_ALL: aa bb\n"
+    (should (equal '(":ETC") (plist-get (org-agents-attribute "S") :values)))
+    (should-not (org-agents-allowed-values "S"))
+    (should (equal (org-property-get-allowed-values (point) "S")
+                   '("aa" "bb"))))
+  ;; The control: with a member beside it, `:ETC' is answered and carries
+  ;; the `org-unrestricted' property Org puts there, which is what
+  ;; `org-read-property-value' reads REQUIRE-MATCH off.
+  (org-agents-test--with-completion "\
+* S
+:PROPERTIES:
+:ATTR_TYPE:   string
+:ATTR_VALUES: open :ETC
+:END:
+"
+      ":S_ALL: aa bb\n"
+    (should (equal '("open" ":ETC") (org-agents-allowed-values "S")))
+    (let ((values (org-property-get-allowed-values (point) "S")))
+      (should (equal '("open") values))
+      (should (get-text-property 0 'org-unrestricted (car values))))))
+
 (ert-deftest org-agents-test-allowed-values-boolean-two-values ()
   "A boolean completes to its two values, with no type dispatch here.
 The READER synthesizes them onto the declaration, which is why this
