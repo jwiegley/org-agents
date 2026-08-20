@@ -20,9 +20,11 @@ comment in the block below for how to accept the subprocess instead.
 One thing is not turned on for you: completion of declared attribute
 values. It is a function on Org's own
 =org-property-allowed-value-functions=, and a library has no business
-adding itself to a user's hook at load time, so the =:hook= entry in the
-block below is what arms it. See *The attribute registry* further down for
-the file it reads.
+adding itself to a user's hook at load time, so the =:init= =add-hook= in
+the block below is what arms it. Point =org-agents-attributes-file= at the
+Org file that declares your attributes — the default is
+=~/org/attributes.org=, and one that is not there declares nothing and says
+nothing about it. =docs/attributes-example.org= is a whole one, written out.
 
 There is nothing else that must be configured. The candidate-file
 prefilter is ripgrep, which needs no DSN, no config file and no
@@ -49,6 +51,7 @@ to the position it appears in.
              org-agents-update-all
              org-agents-preview
              org-agents-list-approvals
+             org-agents-check-attributes
              org-agents-mode
              global-org-agents-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from

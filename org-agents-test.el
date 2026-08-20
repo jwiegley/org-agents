@@ -1827,6 +1827,316 @@ nobody put there."
       (dolist (value cached)
         (should-not (text-properties-at 0 value))))))
 
+;; `org-agents-check-attributes'.  It REPORTS and never edits, so every
+;; test here that touches a corpus also says the corpus came out
+;; unchanged, and the one that says it loudest is
+;; `org-agents-test-check-attributes-never-edits'.
+
+(defmacro org-agents-test--with-attr-corpus (registry corpus &rest body)
+  "Run BODY over a temp CORPUS with REGISTRY declaring its attributes.
+CORPUS is an alist of `(RELATIVE-NAME . TEXT)'.  `dir' is the corpus root
+and `org-directory' is it; `files' holds the absolute names in CORPUS's
+order, `F' maps a relative name to its absolute one, and
+`org-agenda-files' is `files' so that the `agenda' scope reaches this
+corpus and nothing else.
+
+`dir' deliberately SHADOWS the registry directory that
+`org-agents-test--with-registry' binds under the same name: the registry
+lives outside the corpus, so that a test which lints `all' does not lint
+the registry file, and the corpus root is the `dir' a test body wants.
+`registry' still names the registry file."
+  (declare (indent 2))
+  `(org-agents-test--with-registry ,registry
+     (let* ((dir (make-temp-file "org-agents-attr-corpus" t))
+            (org-directory dir)
+            (F (lambda (name) (expand-file-name name dir)))
+            (org-use-property-inheritance nil)
+            (org-element-use-cache nil)
+            (org-id-track-globally nil)
+            (org-id-locations (make-hash-table :test #'equal))
+            (org-id-files nil)
+            (org-agents-prefilter 'auto)
+            (files nil))
+       (ignore F)
+       (unwind-protect
+           (progn
+             (pcase-dolist (`(,name . ,text) ,corpus)
+               (let ((file (expand-file-name name dir)))
+                 (make-directory (file-name-directory file) t)
+                 (with-temp-file file (insert text))
+                 (setq files (nconc files (list file)))))
+             (let ((org-agenda-files files))
+               ,@body))
+         (dolist (buf (buffer-list))
+           (when-let* ((f (buffer-file-name buf)))
+             (when (string-prefix-p (file-name-as-directory dir) f)
+               (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf))))
+         (delete-directory dir t)))))
+
+(defconst org-agents-test--attr-findings-corpus
+  '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:STATUS: nope
+:REVIEWS: many
+:WIDGET: x
+:END:
+"))
+  "One entry carrying one of each of the three kinds of finding.
+`:STATUS:' is declared and its value is outside the vocabulary,
+`:REVIEWS:' is declared and its value is not a number, and `:WIDGET:' is
+not declared at all.  The three sit on lines 3, 4 and 5, which is what
+the report has to say.")
+
+(defun org-agents-test--attr-report-lines ()
+  "The lines of the report buffer, and nothing else."
+  (with-current-buffer org-agents--attributes-buffer
+    (split-string (buffer-substring-no-properties (point-min) (point-max))
+                  "\n" t)))
+
+(defun org-agents-test--attr-finding-lines ()
+  "The report lines that are findings -- `FILE:LINE: TEXT' and no other."
+  (cl-remove-if-not (lambda (line) (string-match-p "\\`/.*:[0-9]+: " line))
+                    (org-agents-test--attr-report-lines)))
+
+(ert-deftest org-agents-test-check-attributes-finds-each-kind ()
+  "One finding per kind, each at its own line, each navigable.
+The line SHAPE is load-bearing and is asserted as such: with the findings
+written `FILE:LINE: TEXT', `compilation-mode' parses every one of them --
+MEASURED, 3 of 3 -- so `RET', `next-error' and `M-g n' all work in this
+buffer with nothing written for them."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      org-agents-test--attr-findings-corpus
+    (org-agents-check-attributes files)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 3 (length lines)))
+      (should (string-match-p (format "\\`%s:3: " (regexp-quote (car files)))
+                              (nth 0 lines)))
+      (should (string-match-p "STATUS" (nth 0 lines)))
+      (should (string-match-p "nope" (nth 0 lines)))
+      (should (string-match-p "open wip blocked done" (nth 0 lines)))
+      (should (string-match-p (format "\\`%s:4: " (regexp-quote (car files)))
+                              (nth 1 lines)))
+      (should (string-match-p "REVIEWS" (nth 1 lines)))
+      (should (string-match-p "is not a number" (nth 1 lines)))
+      (should (string-match-p (format "\\`%s:5: " (regexp-quote (car files)))
+                              (nth 2 lines)))
+      (should (string-match-p "WIDGET" (nth 2 lines)))
+      (should (string-match-p "not declared" (nth 2 lines))))
+    ;; And every one of them is a `compilation-mode' error, which is what
+    ;; makes the buffer navigable without a line of navigation code.
+    (with-current-buffer org-agents--attributes-buffer
+      (should (derived-mode-p 'compilation-mode))
+      (compilation--ensure-parse (point-max))
+      (goto-char (point-min))
+      (let ((parsed 0))
+        (while (not (eobp))
+          (when (get-text-property (line-beginning-position)
+                                   'compilation-message)
+            (cl-incf parsed))
+          (forward-line 1))
+        (should (= 3 parsed))))))
+
+(ert-deftest org-agents-test-check-attributes-clean-run-says-so ()
+  "A run with nothing to report says so in the buffer, not only in passing.
+A command that popped an empty buffer would look broken, and the counts
+are what say the run really looked at something: a scope that resolved to
+no file at all reads as clean otherwise."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:ID: 11111111-1111-1111-1111-111111111111
+:STATUS: open wip
+:REVIEWS: 3
+:OPEN: true
+:END:
+"))
+    (org-agents-check-attributes files)
+    (should-not (org-agents-test--attr-finding-lines))
+    (let ((text (string-join (org-agents-test--attr-report-lines) "\n")))
+      (should (string-match-p "no findings" text))
+      ;; The counts, because a clean report over nothing is not a clean run.
+      (should (string-match-p "1 file" text))
+      (should (string-match-p "1 entry" text))
+      (should (string-match-p "3 declarations" text)))))
+
+(ert-deftest org-agents-test-check-attributes-never-edits ()
+  "The corpus comes out byte for byte as it went in, and unmodified.
+This is a lint.  It reads a drawer line, says what is wrong with it, and
+touches nothing -- so a normalisation that looked like a kindness would
+be a command rewriting a corpus nobody asked it to rewrite."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      org-agents-test--attr-findings-corpus
+    (let ((before (mapcar (lambda (file)
+                            (with-temp-buffer
+                              (insert-file-contents file)
+                              (buffer-string)))
+                          files)))
+      (org-agents-check-attributes files)
+      (should (equal before
+                     (mapcar (lambda (file)
+                               (with-temp-buffer
+                                 (insert-file-contents file)
+                                 (buffer-string)))
+                             files)))
+      (dolist (file files)
+        (when-let* ((buffer (find-buffer-visiting file)))
+          (should-not (buffer-modified-p buffer)))))))
+
+(ert-deftest org-agents-test-check-attributes-exempts-org-own-properties ()
+  "Org's own vocabulary, and this package's, are never asked about.
+Without the exemptions this entry alone yields seven findings, and the
+author's corpus yields about thirty-seven thousand: `ID' is in neither
+`org-special-properties' nor `org-default-properties' and was MEASURED at
+36,991 uses, and `ARCHIVE_TIME' at 21,572.  `ATTR_' matters for a
+different reason -- the registry commonly lives inside the scope being
+checked, and would otherwise report every one of its own declarations."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:ID: 11111111-1111-1111-1111-111111111111
+:CATEGORY: notes
+:CUSTOM_ID: entry
+:ARCHIVE_TIME: 2020-01-01 Wed 10:00
+:AGENT_QUERY: (todo)
+:ATTR_TYPE: string
+:STATUS_ALL: open wip
+:END:
+"))
+    (org-agents-check-attributes files)
+    (should-not (org-agents-test--attr-finding-lines))))
+
+(ert-deftest org-agents-test-check-attributes-accumulated-and-lower-case-keys ()
+  "A key is looked up as Org looks one up, and an accumulation is named.
+Two things Org does that a naive walk gets wrong, both MEASURED against
+one drawer.  A key matches case-insensitively, so `:status: open' is a
+value of the declared `STATUS' and not an undeclared property.  And a `+'
+line ACCUMULATES: `org-entry-get' answers `3 4' for a `:REVIEWS: 3'
+beside a `:REVIEWS+: 4', and `3 4' is not a number -- so the finding is
+real, and it belongs on the line that caused it rather than on the line
+that was fine until that one arrived."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:status: open
+:REVIEWS: 3
+:REVIEWS+: 4
+:END:
+"))
+    (org-agents-check-attributes files)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 1 (length lines)))
+      (should (string-match-p (format "\\`%s:5: " (regexp-quote (car files)))
+                              (car lines)))
+      (should (string-match-p "REVIEWS" (car lines)))
+      (should (string-match-p "3 4" (car lines)))
+      (should (string-match-p "is not a number" (car lines))))))
+
+(ert-deftest org-agents-test-check-attributes-scope-vocabulary ()
+  "The four scope spellings an agent takes, each reaching the same corpus.
+Read by the very same `org-agents--read-scope' an agent's
+`:AGENT_SCOPE:' goes through, so the two vocabularies cannot drift."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      org-agents-test--attr-findings-corpus
+    (dolist (scope (list 'agenda 'all 'active files
+                         (org-agents--read-scope "agenda")
+                         (org-agents--read-scope (format "%S" files))))
+      (org-agents-check-attributes scope)
+      (let ((lines (org-agents-test--attr-finding-lines)))
+        (should (= 3 (length lines)))
+        (should (string-match-p "WIDGET" (nth 2 lines)))))
+    ;; And a directory relative to `org-directory', which is the one
+    ;; spelling `org-agenda-files' could not answer for.
+    (make-directory (expand-file-name "sub" dir) t)
+    (with-temp-file (expand-file-name "sub/c.org" dir)
+      (insert "* Sub\n:PROPERTIES:\n:GADGET: y\n:END:\n"))
+    (org-agents-check-attributes (org-agents--read-scope "sub"))
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 1 (length lines)))
+      (should (string-match-p "GADGET" (car lines))))))
+
+(ert-deftest org-agents-test-check-attributes-corpus-scope-never-refuses ()
+  "A corpus scope falls back to a live scan, and `require' has nothing to
+refuse.
+The pattern this command pushes is `org-agents--rg-drawer-pattern', a
+provable SUPERSET of the files that could hold a finding, and it is
+always there -- so the branch that raises a `user-error' under
+`org-agents-prefilter' set to `require' is unreachable from here.  Which
+is the point: an agent may be told its query cannot be answered
+affordably, but a lint that refused to run would fail its own contract.
+
+Absent ripgrep the scan is live, with one message naming the count,
+exactly as an agent's is."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      org-agents-test--attr-findings-corpus
+    (let ((org-agents-rg-executable "no-such-program-xyzzy"))
+      (let* ((msgs (org-agents-test--messages
+                     (org-agents-check-attributes 'all)))
+             (ours (cl-remove-if-not
+                    (lambda (m) (string-match-p "not narrowed" m)) msgs)))
+        (should (= 3 (length (org-agents-test--attr-finding-lines))))
+        (should (= 1 (length ours)))
+        (should (string-match-p "ripgrep not found" (car ours)))
+        (should (string-match-p "scanning 1 files live" (car ours))))
+      ;; And `require' does not signal, because there is a pattern to push.
+      (let ((org-agents-prefilter 'require))
+        (org-agents-check-attributes 'all)
+        (should (= 3 (length (org-agents-test--attr-finding-lines))))))))
+
+(ert-deftest org-agents-test-check-attributes-unreadable-file-does-not-abort ()
+  "A file that cannot be opened costs that file, not the whole run.
+The other file's findings are reported and the bad one is named, on a
+line of the same navigable shape -- so the report says what it could not
+read rather than quietly reading less than it was asked to."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:WIDGET: x
+:END:
+")
+        ("bad.org" . "* Entry\n"))
+    (let ((bad (nth 1 files))
+          (real (symbol-function 'find-file-noselect)))
+      (cl-letf (((symbol-function 'find-file-noselect)
+                 (lambda (file &rest args)
+                   (if (equal (file-truename file) (file-truename bad))
+                       (error "Opening `%s': bad coding system" file)
+                     (apply real file args)))))
+        (org-agents-check-attributes files))
+      (let ((lines (org-agents-test--attr-finding-lines)))
+        (should (= 2 (length lines)))
+        (should (string-match-p "WIDGET" (car lines)))
+        (should (string-match-p "bad\\.org" (nth 1 lines)))
+        (should (string-match-p "bad coding system" (nth 1 lines)))))))
+
+(ert-deftest org-agents-test-attr-drawer-pattern-is-printable-ascii ()
+  "The drawer pattern is printable ASCII, like every other pushed pattern.
+`org-agents-test-rg-patterns-are-printable-ascii' walks the patterns
+`org-agents--rg-patterns' builds, and a standalone `defconst' is outside
+what that walk reaches.  The rule is the same one and holds for the same
+reason: ripgrep decodes as UTF-8 while Emacs may decode an Org file as
+latin-1, so a non-ASCII pattern can match LESS than Org does.
+
+That it is a superset is asserted too, and directly: Org reads a property
+only from a line inside a drawer, and `org-property-start-re' is what
+opens one."
+  (should (equal org-agents--rg-drawer-pattern
+                 (encode-coding-string org-agents--rg-drawer-pattern
+                                       'us-ascii)))
+  ;; Every drawer opener Org itself accepts is matched by the pattern, the
+  ;; escapes translated from ripgrep's dialect into Emacs's.
+  (let ((emacs-form (replace-regexp-in-string
+                     "\\[ \\\\t\\]" "[ \t]" org-agents--rg-drawer-pattern)))
+    (dolist (line '(":PROPERTIES:" "  :PROPERTIES:" "\t:PROPERTIES:"
+                    ":PROPERTIES:  "))
+      (should (string-match-p org-property-start-re line))
+      (should (string-match-p emacs-form line)))))
+
 ;;;; Collection
 
 (defmacro org-agents-test--with-corpus (&rest body)
@@ -2099,8 +2409,8 @@ common, and the agent would silently match nothing at all."
         (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
           (cl-letf (((symbol-function 'org-agents--rg-available-p)
                      (lambda () t))
-                    ((symbol-function 'org-agents--rg-files)
-                     (lambda (_conjuncts _root) (list a)))
+                    ((symbol-function 'org-agents--rg-files-for)
+                     (lambda (_patterns _root) (list a)))
                     ((symbol-function 'org-agents--scope-base-files)
                      (lambda (_scope) (list link b))))
             ;; The base spelling is what is returned: it is the name the
@@ -2230,12 +2540,17 @@ property that was wrong."
         (let ((agent (plist-put (org-agents--read-agent) :scope 'active)))
           (cl-letf (((symbol-function 'org-agents--rg-available-p)
                      (lambda () t))
-                    ((symbol-function 'org-agents--rg-files)
-                     (lambda (conjuncts _root) (setq asked conjuncts) (list a)))
+                    ((symbol-function 'org-agents--rg-files-for)
+                     (lambda (patterns _root) (setq asked patterns) (list a)))
                     ((symbol-function 'org-agents--scope-base-files)
                      (lambda (_scope) (list link b))))
             (let ((matches (org-agents--collect agent)))
-              (should (equal asked '((property "NEXT_REVIEW"))))
+              ;; The seam is the PATTERNS, which is what reaches
+              ;; ripgrep: the query's one pushable conjunct, compiled.
+              (should (equal asked
+                             (org-agents--rg-patterns
+                              '(property "NEXT_REVIEW"))))
+              (should (equal asked '("^[ \\t]*:NEXT_REVIEW\\+?:")))
               (should (= 1 (length matches)))
               (should (equal "Fix widget"
                              (org-element-property :raw-value (car matches)))))))))))
@@ -2265,8 +2580,8 @@ with \"nothing was narrowed\" that this backend exists to remove."
         (setq agent (plist-put agent :scope 'active))
         (cl-letf (((symbol-function 'org-agents--rg-available-p)
                    (lambda () t))
-                  ((symbol-function 'org-agents--rg-files)
-                   (lambda (_conjuncts _root)
+                  ((symbol-function 'org-agents--rg-files-for)
+                   (lambda (_patterns _root)
                      (list (expand-file-name "elsewhere.org" dir)))))
           (should (null (org-agents--scope-files agent)))
           (should (null (org-agents--collect agent))))
@@ -2276,8 +2591,8 @@ with \"nothing was narrowed\" that this backend exists to remove."
         ;; assertion cannot hold for want of anything to lose.
         (cl-letf (((symbol-function 'org-agents--rg-available-p)
                    (lambda () t))
-                  ((symbol-function 'org-agents--rg-files)
-                   (lambda (_conjuncts _root) nil)))
+                  ((symbol-function 'org-agents--rg-files-for)
+                   (lambda (_patterns _root) nil)))
           (should (org-agents--scope-base-files 'active))
           (should (null (org-agents--scope-files agent)))
           (should (null (org-agents--collect agent))))
@@ -2286,8 +2601,8 @@ with \"nothing was narrowed\" that this backend exists to remove."
         ;; exists to make unnecessary.
         (cl-letf (((symbol-function 'org-agents--rg-available-p)
                    (lambda () t))
-                  ((symbol-function 'org-agents--rg-files)
-                   (lambda (_conjuncts _root) nil))
+                  ((symbol-function 'org-agents--rg-files-for)
+                   (lambda (_patterns _root) nil))
                   ((symbol-function 'org-agents--scope-base-files)
                    (lambda (&rest _) (error "must not walk the corpus"))))
           (should (null (org-agents--scope-files agent))))))))

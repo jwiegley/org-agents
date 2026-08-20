@@ -169,8 +169,12 @@
 ;;
 ;; What reads it: `org-agents-allowed-values', which on
 ;; `org-property-allowed-value-functions' makes `org-set-property'
-;; complete declared values in any Org buffer.  It is not added to that
-;; hook for you -- the hook is Org's and it is the user's.
+;; complete declared values in any Org buffer -- it is not added to that
+;; hook for you, the hook is Org's and it is the user's -- and
+;; `org-agents-check-attributes', which lints a scope against the
+;; registry and REPORTS, never edits: a name in use that nothing
+;; declares, a value outside its declared vocabulary, a value that does
+;; not parse as its declared type.
 ;;
 ;; Updating on save:
 ;;
@@ -282,6 +286,7 @@
 (require 'org-ql)
 (require 'org-ql-search)                ; `org-agents-preview' delegates to it
 (require 'org-ql-ext)
+(require 'compile)                      ; `org-agents-check-attributes' report
 
 ;; `org-ql-select' expands into a call to this, which org-ql does not
 ;; autoload: without the declaration the compiler reports it as possibly
@@ -1350,6 +1355,13 @@ over the corpus costs 0.10 to 0.45.
              live walk of the whole corpus.
   nil        Never run ripgrep; read every scope live.
 
+`require' refuses a QUERY, and one caller is deliberately outside it:
+`org-agents-check-attributes' scans live rather than refusing, with the
+same message naming the file count.  It is a lint the user typed rather
+than an agent a save set off, and one that declined to run would be
+failing its own contract rather than declining an expense on anyone's
+behalf.
+
 Risky: this chooses whether a subprocess is spawned at all."
   :type '(choice (const :tag "Use ripgrep when it is available" auto)
                  (const :tag "Require ripgrep; refuse a scope without it"
@@ -1466,6 +1478,25 @@ drawer.  Case is left to `--ignore-case': measured both ways, a drawer
 key `:next_review:' answers a query for \"NEXT_REVIEW\" and the
 reverse."
   (concat "^[ \\t]*:" (org-agents--rg-quote name) "\\+?:"))
+
+(defconst org-agents--rg-drawer-pattern "^[ \\t]*:PROPERTIES:"
+  "The ripgrep pattern for a property drawer's opening line.
+A provable SUPERSET of the files that could hold a property at all, and
+therefore of the files `org-agents-check-attributes' could have a finding
+in: Org reads a property only from a line inside a drawer whose opener
+matches `org-property-start-re', `^[ \\t]*:PROPERTIES:[ \\t]*$'.
+`--ignore-case' is in `org-agents--rg-args' already, so a lower-case
+`:properties:' is covered; the trailing `[ \\t]*$' is dropped because
+narrower is the unsound direction here and the anchor buys nothing.
+Spelled with a literal backslash and `t', because the pattern is handed
+to a Rust regexp and not to Emacs's -- see `org-agents--rg-quote'.
+
+Unlike a per-name pattern this narrows LITTLE on a property-heavy corpus,
+and that is the honest answer rather than a shortcoming.  A pattern built
+from the registry's own names would be much narrower and UNSOUND for the
+first thing the check looks for: an undeclared property name lives, by
+definition, in a file that may hold no declared name at all, so such a
+pattern would drop exactly the files the check exists to find.")
 
 (defun org-agents--rg-patterns (conjunct)
   "The ripgrep patterns CONJUNCT compiles to, as a list of regexp strings.
@@ -1688,8 +1719,16 @@ comparison is needed once only, against the scope's own file list --
     (dolist (file b) (puthash file t seen))
     (cl-remove-if-not (lambda (file) (gethash file seen)) a)))
 
-(defun org-agents--rg-files (conjuncts root)
-  "Candidate files under ROOT for CONJUNCTS.
+(defun org-agents--rg-conjunct-patterns (conjuncts)
+  "Every ripgrep pattern CONJUNCTS offer, flattened in order.
+`cl-loop ... append' rather than `mapcan', because `mapcan' is
+destructive on the lists `org-agents--rg-patterns' returns and one of
+them is a `list' of a shared constant."
+  (cl-loop for conjunct in conjuncts
+           append (org-agents--rg-patterns conjunct)))
+
+(defun org-agents--rg-files-for (patterns root)
+  "Candidate files under ROOT for ready-made ripgrep PATTERNS.
 Three kinds of answer, and conflating any two of them is a bug:
 
   a LIST          ripgrep answered.  The empty list is such an answer,
@@ -1699,9 +1738,10 @@ Three kinds of answer, and conflating any two of them is a bug:
                   one of its terms would be WIDER, and therefore sound,
                   but a partial answer from a broken tool is not a thing
                   to build on and the live fallback is merely slower.
-  t               no conjunct offered a pattern, so nothing was narrowed
-                  at all.  Distinct from the empty list, which is the
-                  narrowest possible answer.
+  t               no pattern was offered, so nothing was narrowed at
+                  all.  Distinct from the empty list, which is the
+                  narrowest possible answer, and what an EMPTY PATTERNS
+                  yields.
 
 Each pattern is a separate invocation and the resulting file sets are
 INTERSECTED.  Independent runs rather than clever reuse, because they
@@ -1715,19 +1755,26 @@ to avoid."
   (let ((candidates t)
         (failed nil))
     (catch 'org-agents--rg-done
-      (dolist (conjunct conjuncts)
-        (dolist (pattern (org-agents--rg-patterns conjunct))
-          (let ((answer (org-agents--rg-run pattern root)))
-            (unless (listp answer)
-              (setq failed t)
-              (throw 'org-agents--rg-done nil))
-            (setq candidates
-                  (if (eq candidates t)
-                      answer
-                    (org-agents--intersect-files candidates answer)))
-            (when (null candidates)
-              (throw 'org-agents--rg-done nil))))))
+      (dolist (pattern patterns)
+        (let ((answer (org-agents--rg-run pattern root)))
+          (unless (listp answer)
+            (setq failed t)
+            (throw 'org-agents--rg-done nil))
+          (setq candidates
+                (if (eq candidates t)
+                    answer
+                  (org-agents--intersect-files candidates answer)))
+          (when (null candidates)
+            (throw 'org-agents--rg-done nil)))))
     (if failed 'unavailable candidates)))
+
+(defun org-agents--rg-files (conjuncts root)
+  "Candidate files under ROOT for CONJUNCTS.
+`org-agents--rg-files-for' over the patterns CONJUNCTS offer, and every
+word of that function's contract holds here unchanged.  The split exists
+because `org-agents-check-attributes' has no query and therefore no
+conjuncts, and pushes one ready-made pattern instead."
+  (org-agents--rg-files-for (org-agents--rg-conjunct-patterns conjuncts) root))
 
 ;;;; Collection
 
@@ -2022,43 +2069,58 @@ protect costs about 0.1 to 0.5 seconds."
              (gethash (file-truename file) wanted))))
      base)))
 
-(defun org-agents--scope-files (agent)
-  "Resolve AGENT's scope to files, narrowing an unbounded scope with ripgrep.
+(defun org-agents--narrowed-files (scope patterns what refuse)
+  "Resolve SCOPE to files, narrowing an unbounded one with ready-made PATTERNS.
 A scope that NAMES its files is returned as it stands: prefiltering an
 `agenda' scope or an explicit list would spend a subprocess to narrow a
 set that is already small, and measured, that makes the common case 5 to
 25 times slower to reach the same answer.
 
-For an unbounded scope, the query's superset-safe conjuncts are turned
-into ripgrep patterns and the answer is intersected with the scope's own
-file list.  An EMPTY answer is an answer -- the agent renders nothing --
-and only a failure, a missing ripgrep, a query with nothing to push, or
-`org-agents-prefilter' set to nil sends this down the fallback below.
+For an unbounded scope the PATTERNS are run and the answer is intersected
+with the scope's own file list.  An EMPTY answer is an answer -- the
+caller sees nothing -- and only a failure, a missing ripgrep, no pattern
+at all, or `org-agents-prefilter' set to nil sends this down the fallback
+below.
+
+WHAT names the kind of thing that had nothing to push, and appears in the
+reason a fallback and a refusal both quote: `conjunct' for an agent,
+whose patterns come from its query.
+
+REFUSE says whether `org-agents-prefilter' set to `require' refuses this
+caller's unnarrowable scope, which is a question about the CALLER and not
+about the scope.  An agent passes non-nil: `require' exists so that
+someone would rather be told an agent cannot be answered affordably than
+wait for a live walk of the whole corpus.  `org-agents-check-attributes'
+passes nil, and here is the argument.  A refusal is only ever a refusal
+to run a QUERY; a lint that declined to run would not be declining an
+expense on the user's behalf, it would be failing its own contract, and
+it is a command the user typed rather than something a save set off.  The
+live scan still says so, with its file count, so the cost is explained
+either way.  Spelled as an argument and not as a `let' around the option,
+because a caller quietly rebinding a user's setting is exactly what this
+must not do.
 
 The base files are gathered only where they will be used: for an
 unbounded scope, gathering them is the recursive walk the prefilter
 exists to make unnecessary."
-  (let ((scope (plist-get agent :scope)))
-    (if (not (org-agents--needs-prefilter-p scope))
-        (org-agents--scope-base-files scope)
+  (if (not (org-agents--needs-prefilter-p scope))
+      (org-agents--scope-base-files scope)
       ;; Before anything is spawned, so a mistyped directory is named as
       ;; one rather than as a prefilter failure.
       (let* ((root (org-agents--scope-root scope))
-             (conjuncts (org-agents--prefilter-conjuncts
-                         (plist-get agent :query)))
              (reason
               (cond ((null org-agents-prefilter) "prefiltering off")
-                    ((null conjuncts) "no pushable conjunct")
+                    ((null patterns) (format "no pushable %s" what))
                     ((not (org-agents--rg-available-p)) "ripgrep not found")))
              (candidates (unless reason
-                           (org-agents--rg-files conjuncts root))))
+                           (org-agents--rg-files-for patterns root))))
         (cond ((eq candidates 'unavailable) (setq reason "ripgrep failed"))
               ;; Belt: every pattern declined, so nothing ran and nothing
               ;; was narrowed.  `t' is not the empty answer.
-              ((eq candidates t) (setq reason "no pushable conjunct")))
+              ((eq candidates t) (setq reason (format "no pushable %s" what))))
         (cond
          (reason
-          (when (eq org-agents-prefilter 'require)
+          (when (and refuse (eq org-agents-prefilter 'require))
             (user-error
              ;; `%s': only a reserved name or a directory reaches this,
              ;; and `%S' would quote the directory twice over.
@@ -2081,7 +2143,17 @@ exists to make unnecessary."
             base))
          ((null candidates) nil)
          (t (org-agents--same-files (org-agents--scope-base-files scope)
-                                    candidates)))))))
+                                    candidates))))))
+
+(defun org-agents--scope-files (agent)
+  "Resolve AGENT's scope to files, narrowing an unbounded scope with ripgrep.
+`org-agents--narrowed-files' over the patterns AGENT's query offers, and
+every word of that function's contract holds here unchanged."
+  (org-agents--narrowed-files
+   (plist-get agent :scope)
+   (org-agents--rg-conjunct-patterns
+    (org-agents--prefilter-conjuncts (plist-get agent :query)))
+   "conjunct" t))
 
 (defun org-agents--self-match-p (element marker)
   "Non-nil when ELEMENT is the very entry MARKER points at.
@@ -2605,6 +2677,261 @@ declaration."
   (when-let* ((attr (org-agents-attribute property))
               (values (plist-get attr :values)))
     (mapcar #'copy-sequence values)))
+
+;; The lint.  It reads a scope and says what the registry does not account
+;; for, and it edits NOTHING: a normalisation that looked like a kindness
+;; would be a command rewriting a corpus nobody asked it to rewrite.
+
+(defconst org-agents--attributes-exempt
+  (append '("ID")
+          '("ARCHIVE_TIME" "ARCHIVE_FILE" "ARCHIVE_OLPATH"
+            "ARCHIVE_CATEGORY" "ARCHIVE_TODO" "ARCHIVE_ITAGS")
+          org-special-properties
+          org-default-properties)
+  "Property names `org-agents-check-attributes' never asks the registry about.
+Org's own, in two lists it publishes: `org-special-properties', the
+fourteen `org-property-get-allowed-values' short-circuits before this
+package is ever consulted, and `org-default-properties', the
+twenty-seven Org itself writes or reads.
+
+Plus `ID', which `org-id' writes and which is in NEITHER of those lists
+-- MEASURED at 36,991 uses in the author's corpus, so leaving it out
+would drown every real finding in one name.  Plus the six
+`org-archive-subtree' writes from `org-archive-save-context-info',
+MEASURED at 21,572 and 21,476 uses for the first two alone.
+
+Names matching `org-agents--attributes-exempt-re' are exempt as well.")
+
+(defconst org-agents--attributes-exempt-re
+  "\\`\\(?:AGENT_\\|ATTR_\\)\\|_ALL\\'"
+  "Property names exempt by SHAPE rather than by listing.
+`AGENT_' is this package's own vocabulary and `ATTR_' is the registry
+file's own -- which matters because the registry commonly lives inside
+the scope being checked, and would otherwise have every one of its own
+declarations reported as an undeclared property.
+
+A `_ALL' suffix is Org's allowed-values convention and not a user
+attribute: `STATUS_ALL' is a declaration ABOUT `STATUS', not a property
+of its own, and reporting it would be reporting the vocabulary as a
+violation of itself.")
+
+(defun org-agents--attr-exempt-p (key)
+  "Non-nil when the drawer KEY is one the registry is never asked about.
+Case-insensitively against `org-agents--attributes-exempt', because Org
+matches a property key that way, and by shape against
+`org-agents--attributes-exempt-re'.  Tested BEFORE the registry is
+consulted, so an exempt name is never reported as undeclared."
+  (or (and (member-ignore-case key org-agents--attributes-exempt) t)
+      (and (string-match-p org-agents--attributes-exempt-re key) t)))
+
+(defun org-agents--attr-line-finding (key value joined)
+  "What is wrong with the drawer line KEY / VALUE, or nil when nothing is.
+JOINED is a function of a property name answering what `org-entry-get'
+answers for it at this entry -- which is not the text of any one line,
+and is why it is asked for separately.
+
+Three kinds of finding, which is all this reports:
+
+  - a name in use that the registry does not declare;
+  - a value that does not parse as the declared `:ATTR_TYPE:';
+  - a value outside the declared `:ATTR_VALUES:'.
+
+Four things Org does that a naive reading of a drawer gets wrong, each
+MEASURED against one drawer holding `:STATUS: open', `:STATUS+: extra',
+`:status: lower', `:REVIEWS: 3' and `:STATUS_ALL: open wip'.
+
+Keys match case-INSENSITIVELY, so `:status:' is a value of a declared
+`STATUS'.  Hence `org-agents-attribute', which looks a name up the way
+Org does.
+
+A `+' key ACCUMULATES: `org-entry-get' answered \"lower extra\" for
+`STATUS' there, and answers \"3 4\" for a `:REVIEWS: 3' beside a
+`:REVIEWS+: 4'.  So for a scalar type -- one value, however many lines
+spell it -- the value to judge is the JOINED one, and the line to report
+it on is the `+' line that made it that: the earlier line was fine until
+this one arrived.  For a `set' or a `list' a `+' line simply contributes
+more members, and its own fragment is judged.
+
+A value written with nothing after it is no value: `org-agents--entry-get'
+says so for the registry's own fields, and the same rule holds here.  The
+NAME is still in use, so an undeclared one is still reported; there is
+just no value to typecheck.
+
+And `org-entry-properties' is not what walks the drawer, because it
+answered `(\"CATEGORY\" \"STATUS_ALL\" \"REVIEWS\" \"STATUS\")' for that
+drawer: it SYNTHESIZES `CATEGORY', which is on no line, and collapses the
+three `STATUS' spellings into one.  A finding must point at a line that
+exists."
+  (unless (org-agents--attr-exempt-p key)
+    (let* ((accumulates (string-suffix-p "+" key))
+           (name (if accumulates (substring key 0 -1) key))
+           (attr (org-agents-attribute name)))
+      (cond
+       ((null attr)
+        (format "%s is not declared in %s" name
+                (abbreviate-file-name
+                 (expand-file-name org-agents-attributes-file))))
+       (t
+        (let* ((type (plist-get attr :type))
+               (values (plist-get attr :values))
+               (text (if (and accumulates (not (memq type '(set list))))
+                         (funcall joined name)
+                       value)))
+          (cond
+           ((or (null text) (string-blank-p text)) nil)
+           ((not (org-agents-attribute-valid-p type text))
+            (format "%s: `%s' is not a %s" name text type))
+           ((not (org-agents-attribute-valid-p type text values))
+            (format "%s: `%s' is not one of %s" name text
+                    (string-join values " "))))))))))
+
+(defun org-agents--attr-buffer-findings (file)
+  "`(ENTRIES . FINDINGS)' for the current buffer, whose file is FILE.
+Every heading is counted, so a clean report can say what it looked at,
+and every line of every property drawer is one finding site.
+
+The drawer is found with `org-get-property-block' -- Org's own answer to
+where an entry's properties are -- and walked with `org-property-re',
+Org's own answer to what a property line is.  The block's range excludes
+the `:PROPERTIES:' and `:END:' lines, both of which `org-property-re'
+would otherwise match as keys."
+  (let ((entries 0)
+        (findings nil))
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (org-map-entries
+      (lambda ()
+        (cl-incf entries)
+        (let ((heading (point))
+              (block (org-get-property-block)))
+          (when block
+            (save-excursion
+              (goto-char (car block))
+              (beginning-of-line)
+              (while (< (point) (cdr block))
+                (when (looking-at org-property-re)
+                  (when-let*
+                      ((text (org-agents--attr-line-finding
+                              (match-string-no-properties 2)
+                              (match-string-no-properties 3)
+                              (lambda (name)
+                                (org-entry-get heading name)))))
+                    (push (format "%s:%d: %s" file (line-number-at-pos) text)
+                          findings)))
+                (forward-line 1))))))))
+    (cons entries (nreverse findings))))
+
+(defun org-agents--attr-findings (files)
+  "`(ENTRIES . FINDINGS)' over FILES, continuing past one that cannot be read.
+The per-file `condition-case' is the same guard `org-agents-update-all'
+carries and for the same reason: `find-file-noselect' can fail or ask a
+question of its own -- a file grown past `large-file-warning-threshold',
+one changed on disk since it was last visited, a coding system that
+cannot decode it -- and one such file must not take the whole run with
+it.  The file is NAMED, on a line of the same navigable shape, so the
+report says what it could not read rather than quietly reading less than
+it was asked to."
+  (let ((entries 0)
+        (findings nil))
+    (dolist (file files)
+      (condition-case err
+          (with-current-buffer (find-file-noselect file)
+            (pcase-let ((`(,n . ,fs) (org-agents--attr-buffer-findings file)))
+              (cl-incf entries n)
+              (setq findings (nconc findings fs))))
+        (error
+         (setq findings
+               (nconc findings
+                      (list (format "%s:1: cannot be read: %s" file
+                                    (error-message-string err))))))))
+    (cons entries findings)))
+
+(defconst org-agents--attributes-buffer "*org-agents attributes*"
+  "Name of the buffer `org-agents-check-attributes' shows.")
+
+(defun org-agents--attr-clean-line (files entries)
+  "The one line a run over FILES and ENTRIES with no findings writes.
+A command that popped an empty buffer would look broken, and the counts
+are what say the run really looked at something: a scope that resolved to
+no file at all reads as clean otherwise, and reads as clean loudly."
+  (let ((declarations (length (org-agents-attributes))))
+    (format (concat "org-agents: no findings; every property in scope is"
+                    " declared and valid\n(%d file%s, %d entr%s,"
+                    " %d declaration%s)")
+            (length files) (if (= 1 (length files)) "" "s")
+            entries (if (= 1 entries) "y" "ies")
+            declarations (if (= 1 declarations) "" "s"))))
+
+(defun org-agents--attr-report (findings files entries)
+  "Show FINDINGS over FILES and ENTRIES, and return how many there were.
+`compilation-mode', and not one line of navigation code.  MEASURED: with
+findings of the shape `FILE:LINE: TEXT' inserted into a buffer,
+`compilation-mode' parsed every one of them as an error -- so `RET',
+`next-error' and `M-g n' all work here for free.
+
+The lines go in FIRST and the mode is set after, because the mode makes
+the buffer read-only.  `default-directory' is set after that in turn,
+because `compilation-mode' runs `kill-all-local-variables': it is
+`org-directory', so that a relative name could never resolve against
+wherever the command happened to be called from.  Every path emitted is
+absolute, so that is belt rather than braces."
+  (let ((buffer (get-buffer-create org-agents--attributes-buffer)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (if findings
+            (dolist (finding findings) (insert finding "\n"))
+          (insert (org-agents--attr-clean-line files entries) "\n")))
+      (compilation-mode)
+      (setq-local default-directory (expand-file-name org-directory))
+      (goto-char (point-min)))
+    (display-buffer buffer)
+    (message "org-agents: %d finding%s over %d file%s"
+             (length findings) (if (= 1 (length findings)) "" "s")
+             (length files) (if (= 1 (length files)) "" "s"))
+    (length findings)))
+
+;;;###autoload
+(defun org-agents-check-attributes (scope)
+  "Report every property in SCOPE the registry does not account for.
+SCOPE takes the same values `:AGENT_SCOPE:' does -- `agenda' (the
+default), `active', `all', a directory relative to `org-directory', or a
+`read'-able list of file names -- and is read by the very same
+`org-agents--read-scope', so the two vocabularies cannot drift.
+
+Three kinds of finding, and NOTHING is edited:
+
+  - a property name in use that the registry does not declare;
+  - a value that does not parse as its `:ATTR_TYPE:';
+  - a value outside its `:ATTR_VALUES:'.
+
+Org's own vocabulary is never asked about, nor this package's, nor the
+registry file's own -- see `org-agents--attributes-exempt'.  Without
+those exemptions `ID' alone would be about 37,000 findings on the
+author's corpus.
+
+A corpus scope is narrowed through the same ripgrep machinery an agent
+uses, and with `org-agents--rg-drawer-pattern' -- a provable superset of
+the files that could hold a finding -- then falls back to a live scan
+with one message naming the file count, exactly as an agent's does.  It
+never refuses, and `org-agents-prefilter' set to `require' does not make
+it: an agent may fairly be told its query cannot be answered affordably,
+where a lint that declined to run would fail its own contract.  Nor is
+the option rebound behind the user's back -- see the REFUSE argument of
+`org-agents--narrowed-files'.
+
+The findings go into a `compilation-mode' buffer, one per line, each
+`FILE:LINE:' and so navigable with `RET' and `next-error'.  A run with
+nothing to report says so there, with its counts, rather than popping an
+empty buffer."
+  (interactive
+   (list (org-agents--read-scope
+          (completing-read "Scope: " org-agents--scope-names nil nil
+                           "agenda"))))
+  (let* ((files (org-agents--narrowed-files
+                 scope (list org-agents--rg-drawer-pattern) "pattern" nil))
+         (found (org-agents--attr-findings files)))
+    (org-agents--attr-report (cdr found) files (car found))))
 
 ;;;; Links
 

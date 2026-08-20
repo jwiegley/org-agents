@@ -171,6 +171,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-update-all` | update every agent in the files `org-agents-files` names |
 | `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded, with `org-agents-exclude` appended, and the appended form gated exactly as an agent's is, over `org-agenda-files` |
 | `org-agents-insert-dblock` | insert an empty `org-agents` block at point |
+| `org-agents-check-attributes` | report every property in a scope the attribute registry does not account for — undeclared names, values outside a declared vocabulary, values that do not parse as their declared type. Reports and never edits; the findings land in a `compilation-mode` buffer, so `RET` and `next-error` navigate them |
 | `org-agents-list-approvals` | list every remembered approval and refusal, each with the query its hash covers; `d` forgets an approval, `r` turns it into a refusal, `u` lifts a refusal |
 | `org-agents-mode` | update this buffer's agents before each save |
 | `global-org-agents-mode` | turn `org-agents-mode` on in every Org buffer whose text mentions `:AGENT_QUERY:` |
