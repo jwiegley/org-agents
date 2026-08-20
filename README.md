@@ -576,7 +576,9 @@ draws nothing.
 A face the registry names and Emacs does not is a **diagnostic, not an
 error**. It is said once per attribute and face, that one mapping is
 skipped, and the rest of the buffer is faced normally — a typo in the
-registry must not cost the fontification of the file you are reading.
+registry must not cost the fontification of the file you are reading. That
+includes a face spelled `nil` or `t`: neither is a face, so both are named
+rather than silently drawing nothing.
 `facep` is therefore checked at use and never when the registry is read: a
 face a theme defines later would otherwise be rejected for good.
 

@@ -5652,16 +5652,25 @@ its own mapping and must not cost the rest of the buffer's fontification
 -- so the walk goes on to the next declaration, which is what lets a
 later one still face the headline.  `facep' is checked here, at USE, and
 never in the reader: `org-agents--attr-parse-faces' says why, which is
-that a face this names may well be defined by a theme loaded afterwards."
+that a face this names may well be defined by a theme loaded afterwards.
+
+The MAPPING is what the `when-let*' requires, and not the face it holds.
+`:ATTR_FACES: done nil' interns the symbol nil -- a plausible way to
+spell \"draw this one plainly\", and a leftover from an edit -- and a
+clause requiring the cdr would drop it before `facep' ever saw it: no
+face and no diagnostic, which is the one bug this section exists to
+prevent said of the one face name that reads as false.  So the cons cell
+is what is bound, and its cdr is tested rather than required."
   (catch 'org-agents--face
     (pcase-dolist (`(,name . ,faces) attrs)
       (when-let* ((value (org-agents-resolve-property-quietly name pom))
-                  (face (cdr (assoc-string (string-trim value) faces))))
-        (if (facep face)
-            (throw 'org-agents--face face)
+                  (cell (assoc-string (string-trim value) faces)))
+        (if (facep (cdr cell))
+            (throw 'org-agents--face (cdr cell))
           (org-agents--prototype-report
-           (format "face\0%s\0%s" name face)
-           "org-agents: attribute `%s' names no such face: `%s'" name face))))
+           (format "face\0%s\0%s" name (cdr cell))
+           "org-agents: attribute `%s' names no such face: `%s'"
+           name (cdr cell)))))
     nil))
 
 (defun org-agents--faces-matcher (limit)

@@ -6758,6 +6758,55 @@ that validated would reject it for good."
       (should (string-match-p "STATUS" (car msgs)))
       (should (string-match-p "org-agents-test--nonesuch-face" (car msgs))))))
 
+(ert-deftest org-agents-test-faces-a-face-spelled-nil-is-a-diagnostic ()
+  "`:ATTR_FACES: happy nil' is named, not silently ignored.
+`nil' is a plausible way to spell \"draw this one plainly\" and a
+plausible leftover from an edit, and `intern' makes it the symbol nil --
+so a clause requiring the mapping's cdr dropped it before `facep' ever
+saw it.  MEASURED before the fix: no face and NO MESSAGE, where every
+other unusable face name is named -- which is \"a registry that names
+faces and silently draws nothing\", the one bug
+`org-agents--faces-declared' says this section exists to prevent.
+
+`t' in the same field is the control: it was always diagnosed, because
+`(facep t)' is nil and the walk reached the report."
+  (org-agents-test--with-attr-corpus "\
+* MOOD
+:PROPERTIES:
+:ATTR_TYPE:  string
+:ATTR_FACES: happy nil | sad t | cross org-warning
+:END:
+"
+      '(("a.org" . "\
+* Happy
+:PROPERTIES:
+:MOOD: happy
+:END:
+* Sad
+:PROPERTIES:
+:MOOD: sad
+:END:
+* Cross
+:PROPERTIES:
+:MOOD: cross
+:END:
+"))
+    (let ((msgs (org-agents-test--messages
+                  (org-agents-test--with-faces-buffer
+                    (should (eq 'org-level-1
+                                (org-agents-test--title-face "Happy")))
+                    (should (eq 'org-level-1
+                                (org-agents-test--title-face "Sad")))
+                    ;; And the readable mapping in the same field still draws.
+                    (should (equal '(org-warning org-level-1)
+                                   (org-agents-test--title-face "Cross")))))))
+      (setq msgs (cl-remove-if-not
+                  (lambda (m) (string-match-p "no such face" m)) msgs))
+      (should (= 2 (length msgs)))
+      ;; Quoted per `text-quoting-style', so the face name alone is matched.
+      (should (cl-find-if (lambda (m) (string-match-p "face: .nil.\\'" m)) msgs))
+      (should (cl-find-if (lambda (m) (string-match-p "face: .t.\\'" m)) msgs)))))
+
 (ert-deftest org-agents-test-faces-an-unreadable-attr-faces-is-said-once ()
   "An `:ATTR_FACES:' that does not parse is named once, by attribute.
 Said by the READER, which runs at most once per edit to the registry --
