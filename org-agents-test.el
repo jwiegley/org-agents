@@ -3388,6 +3388,36 @@ section is a declaration, not a master."
       (should-not (org-agents-resolve-property "NOSUCH")))
     (should (equal (org-agents-attributes) '("OWNER" "STATUS")))))
 
+(ert-deftest org-agents-test-prototype-shipped-example-reads-cleanly ()
+  "The registry the package SHIPS reads with no diagnostic at all.
+`docs/attributes-example.org' is the file the README and the init snippet
+both send a reader to, so it has to be a file this reader accepts -- and
+the mistake it guards against is a real one, made while writing it: a
+top-level heading of PROSE in that file is not prose, it is an attribute
+declaration with no `:ATTR_TYPE:', and the reader names it as malformed.
+Every heading in that file is one of exactly two things, and this is what
+says so.
+
+Guarded on the file rather than assumed: `make test' runs with the
+repository root as `default-directory', and a suite run from elsewhere
+should skip this rather than fail it."
+  (let ((example (expand-file-name "docs/attributes-example.org")))
+    (skip-unless (file-readable-p example))
+    (let* ((org-agents-attributes-file example)
+           (org-agents--attributes-cache nil)
+           (org-agents--prototypes-cache nil)
+           (org-agents--prototype-id-cache nil)
+           (org-element-use-cache nil)
+           names prototypes
+           (texts (org-agents-test--messages
+                    (setq names (org-agents-attributes))
+                    (setq prototypes
+                          (mapcar #'car (org-agents--prototypes-alist))))))
+      (should-not texts)
+      ;; And it is not silent for want of anything in it.
+      (should (member "STATUS" names))
+      (should (equal prototypes '("Task" "Urgent Task"))))))
+
 ;;; The predicate
 
 (defconst org-agents-test--resolved-corpus

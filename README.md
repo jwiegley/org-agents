@@ -15,9 +15,9 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~4,400 lines), and one
-tests it, `org-agents-test.el` — 276 ERT tests, all of which run in a
-plain `make test` with no external service. The 25 that exercise the
+One file makes up the package, `org-agents.el` (~5,200 lines), and one
+tests it, `org-agents-test.el` — 318 ERT tests, all of which run in a
+plain `make test` with no external service. The 34 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
 
@@ -84,11 +84,20 @@ according to the position it appears in:
 | `(string-match "gh" $URL)` | `(or (org-entry-get nil "URL") "")` | value |
 | `(> $REVIEWS 3)` | `(string-to-number (or … "0"))` | numeric |
 | `(property-ts $NEXT_REVIEW :to today)` | `"NEXT_REVIEW"` | name |
-| `$OWNER*` | `(org-entry-get nil "OWNER" t)` | inherited |
+| `$OWNER*` | `(org-entry-get nil "OWNER" t)` | outline axis |
+| `$OWNER^` | `(property-resolved "OWNER")` | prototype axis |
 
-The trailing `*` asks for inheritance. Seven specials reference the entry
-itself rather than a property: `$ITEM`, `$TODO`, `$PRIORITY`, `$TAGS`,
-`$CATEGORY`, `$LEVEL`, `$FILE`.
+A reference may carry **at most one** trailing suffix, and the two are
+different axes rather than degrees of the same one. `*` asks the
+**outline**: `org-entry-get` with inheritance, so an ancestor's drawer, a
+`#+PROPERTY:` keyword and `org-global-properties` all answer. `^` asks the
+**prototype**: the entry's own drawer, then the `:PROTOTYPE:` chain, then
+the registry's declared default — see [Prototypes](#prototypes). `$N*^` and
+`$N^*` name no axis and are refused by name. Seven specials reference the
+entry itself rather than a property: `$ITEM`, `$TODO`, `$PRIORITY`,
+`$TAGS`, `$CATEGORY`, `$LEVEL`, `$FILE`; a suffix on one of those is
+ignored, since there is nothing to inherit and nothing for a prototype to
+carry.
 
 An org-ql query is Lisp, and org-ql evaluates residual Lisp at every
 candidate entry, so a query read out of a property drawer is code out of a
@@ -138,6 +147,11 @@ This is the whole of it, as implemented.
 | `AGENT_FORMAT` | whitespace-separated property names, shown after the link in the `children` and `list` views. |
 | `AGENT_MATCH` | written by the package on a generated alias, never by hand. |
 | `AGENT_MATCHED` | written by the package after an update: how many entries matched, and when. |
+
+`PROTOTYPE` is the only property outside that table that this package reads
+by name — it names the entry a value is inherited *from*, and is described
+under [Prototypes](#prototypes). Every other property in a drawer is data
+the package reads only because a query asked for it.
 
 Org reads the value `nil` as no value at all, so `:AGENT_VIEW: nil` is an
 agent with no view rather than an error, and takes the default.
@@ -352,6 +366,135 @@ registry can declare one and only the column view cannot say it.
 Measured, and worth knowing: `org-columns-compile-format` validates no
 operator at all — `%X{nope}` compiles without complaint — so the guarantee
 that these operators are real is this command's, and nowhere else.
+
+## Prototypes
+
+Beside the declarations, the registry file carries one reserved top-level
+section named `Prototypes`. Every entry below it, at any depth, is a
+**master**: an ordinary Org entry whose drawer holds ordinary properties,
+which any entry in the corpus may read through by naming it.
+
+```org
+* Prototypes
+** Task
+:PROPERTIES:
+:STATUS:  open
+:OWNER:   johnw
+:REVIEWS: 0
+:END:
+The master every task follows.
+```
+
+```org
+* TODO Ship the widget
+:PROPERTIES:
+:PROTOTYPE: Task
+:END:
+```
+
+That entry's `OWNER` is `johnw`, and nothing was written into its drawer to
+make it so. `:PROTOTYPE:` takes a **name** out of that section, or an
+`id:UUID` (or a bare UUID), which resolves to any entry in the corpus that
+carries the `:ID:` — so a master need not live in the registry at all. This
+is Eastgate Tinderbox's prototype, and like Tinderbox's it is independent
+of the outline: a prototype is a relation between two entries, not a fact
+about where either sits.
+
+### The resolution order
+
+Per attribute, and this is the whole of it:
+
+| Step | Reads | Notes |
+| --- | --- | --- |
+| 1 | the entry's own drawer | `org-entry-get` with inheritance **off**. A `:NAME:` line with nothing after it answers `""`, which is a value. |
+| 2 | the `:PROTOTYPE:` chain, nearest hop first | A master may itself carry `:PROTOTYPE:`. The walk stops at the first hop that carries the attribute. |
+| 3 | the registry's `:ATTR_DEFAULT:` | Which is why prototypes live in the registry file: step 3 is the registry. |
+| 4 | `nil` | |
+
+**Outline inheritance is deliberately not in that list.** Containment is
+not inheritance — a task filed under a project is not a kind of project —
+and the outline axis already has a spelling of its own. `$NAME*` is that
+axis and `$NAME^` is this one; they are orthogonal, and a query says which
+it means. Both may be true of one entry, and neither implies the other.
+
+Two names never travel, for two separate reasons:
+
+* **`AGENT_*`** because behaviour does not. A master that lent its
+  `:AGENT_QUERY:` would make every follower an agent, and a declared
+  `:ATTR_DEFAULT:` for such a name would make every entry in the corpus
+  one.
+* **`PROTOTYPE`** because a declared default for *it* would hand every
+  entry in the corpus a master — one line in the registry and the whole
+  corpus follows one prototype.
+
+Both are answered from the entry's own drawer and from nothing else: no
+chain, no default. So is a special property — `CATEGORY`, `TODO`,
+`DEADLINE` and the rest of `org-special-properties` — because a master's
+category is not this entry's, and a deadline is entry structure rather than
+a drawer line at all.
+
+### Virtual reads, and what they cost
+
+**Nothing is ever written into the inheriting entry.** A read resolves at
+the moment it is asked. Change a master and every follower changes with it;
+an entry's drawer goes on saying only what the user put in it; and no
+update has to find and rewrite the followers of a master that moved.
+
+The price is one sentence long, and it is worth reading twice: **grep does
+not see an inherited value, and an agent through `property-resolved` does.**
+`rg ':OWNER: johnw'` finds the master and none of its followers. So does
+`org-entry-get`, so does a `COLUMNS` view, and so does org-ql's own
+`(property "OWNER" "johnw")` — at every setting of
+`org-use-property-inheritance`, because that option is about the outline
+and has nothing to do with this. What sees an inherited value is
+`(property-resolved "OWNER" "johnw")`, which is what `$OWNER^` expands to,
+and `org-agents-resolve-property` for a caller in Lisp.
+
+### The two diagnostics
+
+A `:PROTOTYPE:` naming nothing — a misspelled master, or an `id:` the ID
+table does not know — is **one message** naming the reference and the first
+entry that carried it, and resolution answers as though the line were not
+there. Not an error: the resolver runs at every candidate entry of an
+update, and a signal from inside org-ql's generated matcher aborts that
+agent's whole update, so one drawer's typo would cost the agent.
+
+A **cycle** in the chain is a `user-error` naming the hops in order
+(`A -> B -> A`) when `org-agents-resolve-property` is called directly, and
+one message per update when it is reached through a query. Both are said
+once per update however many entries hit them.
+
+### `property-resolved`, and why it exists
+
+```elisp
+(and (todo) (property-resolved "STATUS" "open"))   ; or: (and (todo) $STATUS^)
+```
+
+The predicate is **preamble-free by construction**, and the reason is not
+the obvious one. org-ql's plain `property` forms attach no `:inherit` and
+read the entry's own drawer, so they cannot see an inherited value at any
+setting of `org-use-property-inheritance` — and `org-ql-use-preamble` nil
+does not change that, because the bare `(property "X")` form has no
+preamble to turn off and still does not see one. What a preamble *would* do
+here is re-impose the drawer text as a filter over the resolver's answer,
+which is exactly what defeats the other obvious approach, advice on
+`org-entry-get`: measured, with such advice installed the value form finds a
+follower with the preamble off and loses it with the preamble on. So this
+predicate contributes no preamble, ever. A preamble hoisted out of a
+*sibling* conjunct is a different thing and is sound — a conjunct's
+necessary condition is the conjunction's.
+
+One asymmetry is deliberate. `$NAME^` in boolean position becomes a known
+org-ql predicate and the [gate](#the-query-language) admits it unremarked.
+In value or numeric position it becomes residual Lisp — a call to
+`org-agents-resolve-property-quietly` — and the gate asks once, exactly as
+it does for `$NAME*`. Exempting the accessor would be widening the gate for
+a call the package cannot distinguish from any other call in a query.
+
+### What this adds to the configuration
+
+Nothing. Prototypes live in the file `org-agents-attributes-file` already
+names, and this epic adds no option, no command and no hook.
 
 ## Corpus-wide column view
 
@@ -661,16 +804,16 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 276 tests, no external service needed
+make test        # 318 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `276 tests, 276 results as expected, 0 unexpected` and
-takes about twenty seconds. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `251 results as expected, 0
-unexpected, 25 skipped`, and prints one line saying why — `skip-unless` is
+`make test` reports `318 tests, 318 results as expected, 0 unexpected` and
+takes about half a minute. There is nothing to configure and nothing to
+set up. Where `rg` is not on `PATH` it reports `284 results as expected, 0
+unexpected, 34 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing. No test asserts
 the count, so these four figures drift whenever the suite grows: read them
@@ -720,7 +863,7 @@ which is intersected with the files the agent's scope names so that org-ql
 opens fewer buffers.
 
 Only a conjunct whose ripgrep answer is *provably a superset* of org-ql's is
-pushed; everything else stays residual and is applied by org-ql. Five
+pushed; everything else stays residual and is applied by org-ql. Six
 shapes push today:
 
 | Conjunct | Pattern | Why it is a superset |
@@ -728,6 +871,8 @@ shapes push today:
 | `(property "P")` | `^[ \t]*:P\+?:` | A non-nil `org-entry-get` with `inherit` nil needs a drawer line matching `org-property-re` whose key upcases to `P` or `P+`. The `\+?` is required: an entry whose only line is `:P+: v` answers `"v"`. |
 | `(property "P" "v")` | `^[ \t]*:P\+?:[ \t]+v[ \t]*$` | `org-entry-get` joins `:P:` and each `:P+:` with `org--property-get-separator`, so a value that does not contain that separator came from exactly one line. A value that does — or an empty one, or an empty separator — downgrades to the existence pattern above. |
 | `(property-ts "P" …)` | as existence | A date match on the value implies the property is there. |
+| `(property-resolved "P")` | `(?:^[ \t]*:P\+?:\|^[ \t]*:PROTOTYPE\+?:)` | An entry that resolves `P` either spells a local `:P:` line — the local step reads with inheritance **off**, so a non-nil answer is a line in *this* file — or carries a `:PROTOTYPE:` line, because the chain walk starts at that property and reads it the same way. **Except** where the registry declares an `:ATTR_DEFAULT:` for `P`: then an entry spelling neither line resolves `P` anyway, nothing over the file's text can narrow, and the conjunct stays residual. |
+| `(property-resolved "P" "v")` | `(?:^[ \t]*:P\+?:[ \t]+v[ \t]*$\|^[ \t]*:PROTOTYPE\+?:)` | The same argument with the value on the `P` arm — narrower than the existence-on-both-sides form, and sound by the identical reasoning. **Except** where the declared default *equals* `"v"`. A value ripgrep cannot carry degrades to the row above. |
 | `scheduled` / `deadline` / `closed` | `SCHEDULED:[ \t]*<`, `DEADLINE:[ \t]*<`, `CLOSED:[ \t]*\[` | Every branch of `org-ql--predicate-ts` begins with a search for the keyword and the bracket, so org-ql cannot match without that text. Bounds are dropped, which drops a *conjunct* of org-ql's condition and never adds one. Deliberately unanchored: all three keywords may share one planning line, in any order. |
 | `(heading "lit" …)` | `^\*+(?-u:.)*lit`, one per literal, intersected | org-ql `regexp-quote`s every `heading` argument, so a heading argument is always a literal and is sought as text on both sides — regexp syntax is pushed. `org-get-heading t t` reassembles the title from `org-complex-heading-regexp`'s groups joined by one space, and each group is preceded in the line by at least one real space, so the only substring the line need not spell is one crossing the priority-cookie junction — and every one of those holds the `]` that the guard refuses. `]` is the only character refused. `(?-u:.)` rather than `.` because in ripgrep's Unicode mode `.` matches a codepoint and cannot cross an invalid UTF-8 byte. |
 
@@ -738,12 +883,27 @@ every character in it is printable ASCII: ripgrep decodes as UTF-8 while
 Emacs may decode a file as latin-1, and `--encoding` is one global setting
 that a mixed corpus cannot use.
 
-Three consequences worth knowing before you rely on it:
+Five consequences worth knowing before you rely on it:
 
 * A broad `org-use-property-inheritance` — `t` most of all — makes no
-  property conjunct pushable, so a property-only agent falls back to its
-  scope's whole file set. Still correct, and much slower. The prefilter's
-  value depends on keeping inheritance narrow.
+  `property` or `property-ts` conjunct pushable, so an agent built only out
+  of those falls back to its scope's whole file set. Still correct, and much
+  slower. The prefilter's value depends on keeping inheritance narrow.
+  `property-resolved` is the exception, and deliberately: the resolver never
+  reads that option and never passes an `INHERIT` argument, so the option
+  cannot change what the predicate answers, and refusing to push for a name
+  in it would cost narrowing and buy nothing.
+* **The alternation is one ripgrep pattern, not two.** Several patterns from
+  one conjunct are *intersected*, so a two-pattern answer would mean "spells
+  `:P:` **and** carries `:PROTOTYPE:`" — far narrower than either, and
+  silent about it. The two rows above return exactly one pattern each, and a
+  test asserts the count.
+* **The default exception costs narrowing, and only narrowing.** A query at
+  the declared default pushes nothing, so an `active` or `all` scope is read
+  live with one message naming the file count. That is the honest answer
+  rather than a shortcoming: with a default declared, *every* entry in the
+  corpus resolves the attribute, and there is no text in any file that
+  distinguishes a match from a non-match.
 * The scopes `active`, `all` and any directory do not name the files they
   will open. Where one cannot be narrowed — no ripgrep, a query with
   nothing to push, a failed ripgrep run, or `org-agents-prefilter` nil — it

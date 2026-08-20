@@ -26,6 +26,13 @@ Org file that declares your attributes — the default is
 =~/org/attributes.org=, and one that is not there declares nothing and says
 nothing about it. =docs/attributes-example.org= is a whole one, written out.
 
+That same file carries the prototypes. A reserved top-level =* Prototypes=
+section holds master entries, and any entry in the corpus reads through one
+by naming it in =:PROTOTYPE:= — by name, or by =id:UUID= for a master that
+lives out in the corpus instead. Prototypes add NO option of their own:
+there is nothing more to configure than the file above, and no command and
+no hook was added for them.
+
 There is nothing else that must be configured. The candidate-file
 prefilter is ripgrep, which needs no DSN, no config file and no
 credential: it is found on =exec-path= or it is not, and where it is not
@@ -80,9 +87,11 @@ to the position it appears in.
    ("U" . org-agents-update-all))
   :custom
   ;; The Org file declaring this corpus's own attributes -- ATTR_TYPE,
-  ;; ATTR_VALUES, ATTR_DEFAULT per top-level entry.  Pure data; nothing
-  ;; in it is ever evaluated.  Optional: one that is not there declares
-  ;; nothing and says nothing about it, and the package never creates it.
+  ;; ATTR_VALUES, ATTR_DEFAULT per top-level entry -- and, under one
+  ;; reserved `* Prototypes' heading, the master entries that
+  ;; `:PROTOTYPE:' names.  Pure data; nothing in it is ever evaluated.
+  ;; Optional: one that is not there declares nothing, names no prototype,
+  ;; and says nothing about either, and the package never creates it.
   ;; docs/attributes-example.org is a whole one, written out.  Named here
   ;; rather than left at the default only because ~/org is where it
   ;; belongs on this machine and `org-file' is what spells that.
@@ -211,6 +220,23 @@ of its own:
 Those aliases are ephemeral: every update reaps the ones that hold nothing
 but their drawer. Write anything under an alias and it is yours — no update
 deletes it, and if its match is gone it is retitled =(stale)= instead.
+
+*Matching through a prototype.* Where an entry inherits a value rather than
+spelling it, =(property "STATUS" "wip")= does not match it and
+=(property-resolved "STATUS" "wip")= does:
+
+#+begin_example
+,* Work in progress, wherever it says so
+:PROPERTIES:
+:AGENT_QUERY:  (and (todo) (property-resolved "STATUS" "wip"))
+:AGENT_FORMAT: OWNER
+:END:
+#+end_example
+
+=(and (todo) $STATUS^)= is the same query written short. The =^= suffix is
+the prototype axis and the =*= suffix is the outline one — =$STATUS*= is
+=org-entry-get= with inheritance, which is a different question — and a
+reference carries at most one of them.
 
 The whole property vocabulary implemented today: =AGENT_QUERY= (required),
 =AGENT_VIEW= (=children= default, =list=, =table=), =AGENT_SCOPE= (=agenda= default,

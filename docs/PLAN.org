@@ -4282,15 +4282,17 @@ Pick one, and it is a matter of taste:
 ]
 #+end_src
 
-* TODO [#C] Prototypes with virtual reads
+* DONE [#C] Prototypes with virtual reads
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prototypes-opa
 :LABELS:   []
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 02:20]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 02:20]
+:CLOSE_REASON: Delivered, commits b0ea863 through the one carrying this close reason.  The resolver, the preamble-free predicate, the `$NAME^' axis, the prefilter widening with its default exception, and the documentation.  318 tests, 0 unexpected, 34 skipped without ripgrep; `make gate' at zero warnings for every commit.  Two claims from the implementation map were MEASURED FALSE and are recorded as such in the code rather than quietly dropped.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4319,15 +4321,17 @@ corpus agents sound. Blocks on the registry (Epic 2) for defaults.
 ]
 #+end_src
 
-* TODO [#C] The resolver: PROTOTYPE chains, cycles, cache
+* DONE [#C] The resolver: PROTOTYPE chains, cycles, cache
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prototypes-opa.1
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 02:20]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 02:20]
+:CLOSE_REASON: Done, commit b0ea863.  Local (INHERIT nil) then chain nearest-first then :ATTR_DEFAULT: then nil, with a visited set and a cycle `user-error' naming the hops.  `AGENT_*' never travels, pinned.  Caches keyed on `org-agents--file-cache-key' -- the registry file for named masters, the target file for id-named ones -- and an unsaved edit to a master invalidates. A dangling reference is ONE message keyed on the reference and naming the first entry that carried it.  Sixteen tests, fifteen with the mutation that kills them; the sixteenth is a premise pin, because `org-entry-properties' will not report a drawer-spelled special at any setting and no change to this package can therefore make the special-property clause observable.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4368,15 +4372,17 @@ order (containment is not inheritance; $NAME* already exists for that).
 ]
 #+end_src
 
-* TODO [#C] (property-resolved NAME [VALUE]): the preamble-free predicate
+* DONE [#C] (property-resolved NAME [VALUE]): the preamble-free predicate
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prototypes-opa.2
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 02:20]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 02:20]
+:CLOSE_REASON: Done, commit e1740df.  `org-ql-defpred' with no `:preambles' and no `:normalizers'; admitted by the gate through `org-ql-predicates' with nothing added to a list.  The differential runs the whole grid of `org-use-property-inheritance' by `org-ql-use-preamble' rather than one cell, because the two obvious wrong fixes are exactly those two knobs and both were measured not to work (measured-facts Q12, Q13).  An argument check names a keyword argument at gate time, since a predicate with no normalizer has nothing to swallow one with.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4424,15 +4430,17 @@ preamble-free by construction.
 ]
 #+end_src
 
-* TODO [#C] $NAME^ sugar in the expander
+* DONE [#C] $NAME^ sugar in the expander
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prototypes-opa.3
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 02:20]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 02:20]
+:CLOSE_REASON: Done, commit 911ba78.  Three axes, twelve cells, asserted pairwise distinct.  It also removes a MEASURED silent misreading: `$STATUS^' used to expand as a property literally named `STATUS^', and `(> $REVIEWS^ 3)' read a property nothing has as zero.  `$N*^' and `$N^*' are now refused by name.  The gate asymmetry -- safe in boolean position, residual Lisp in value position -- is documented rather than smoothed over with a whitelist.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4473,15 +4481,17 @@ $NAME^ sugar in the expander.
 ]
 #+end_src
 
-* TODO [#B] Prefilter widening for property-resolved: the soundness rule
+* DONE [#B] Prefilter widening for property-resolved: the soundness rule
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prototypes-opa.4
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 02:20]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 02:20]
+:CLOSE_REASON: Done, commit c5945f1.  The alternation pushed as ONE ripgrep pattern (two would be an AND, and a test asserts the count), residual at the declared default for both the existence and the value form, and residual for a special name -- where pushing would be non-empty and WRONG rather than merely empty.  The exception's `equal' and the predicate's `string-equal' are pinned as one decision by a single test.  Thirteen tests, each with the mutation that kills it, including two NARROWING tests that no soundness assertion could have caught.  `org-agents--collect' and `org-agents-preview' now run in one registry batch, which is what makes the exception sound and not merely fast.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4534,15 +4544,17 @@ also matches — nothing can narrow; the conjunct stays residual.
 ]
 #+end_src
 
-* TODO [#D] Prototype documentation and the worked example
+* DONE [#D] Prototype documentation and the worked example
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prototypes-opa.5
 :LABELS:   []
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 02:20]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 02:20]
+:CLOSE_REASON: Done, in the commit carrying this close reason.  README `## Prototypes' with the resolution order, the orthogonality of `$NAME*' and `$NAME^', the virtual-reads decision and its one-sentence consequence, and the prefilter's default exception; two new rows in the prefilter table; the corrected inheritance bullet.  The worked Task prototype with its chain, two followers and a matching agent in docs/attributes-example.org, and docs/init-snippet.org.  Five new measured facts (Q12-Q16), each re-measured here rather than quoted.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0

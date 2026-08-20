@@ -40,7 +40,8 @@
 ;;   (string-match "gh" $URL)     ; value:    (or (org-entry-get nil "URL") "")
 ;;   (> $REVIEWS 3)               ; numeric:  (string-to-number (or … "0"))
 ;;   (property-ts $NEXT_REVIEW …) ; name:     "NEXT_REVIEW"
-;;   $OWNER*                      ; inherited: (org-entry-get nil "OWNER" t)
+;;   $OWNER*                      ; outline:  (org-entry-get nil "OWNER" t)
+;;   $OWNER^                      ; prototype: (property-resolved "OWNER")
 ;;
 ;; The specials $ITEM, $TODO, $PRIORITY, $TAGS, $CATEGORY, $LEVEL and
 ;; $FILE reference the entry itself rather than a property.
@@ -167,6 +168,37 @@
 ;; not yet saved.  See `org-agents-attribute' for the declaration a
 ;; reader gets back, and docs/attributes-example.org for a whole file.
 ;;
+;; Prototypes:
+;;
+;; The registry file carries one reserved top-level section, `Prototypes',
+;; whose every entry is a MASTER: an ordinary entry whose drawer holds
+;; ordinary properties, which any entry in the corpus may read through by
+;; naming it in `:PROTOTYPE:' -- by name out of that section, or by
+;; `id:UUID', which resolves to any entry in the corpus carrying that
+;; `:ID:'.  This is Tinderbox's prototype, and like Tinderbox's it is
+;; independent of the outline: it relates two entries rather than saying
+;; anything about where either sits.  Resolution order, per attribute:
+;; the entry's own drawer with inheritance OFF, then the chain nearest hop
+;; first, then `:ATTR_DEFAULT:', then nil.
+;;
+;; Outline inheritance is deliberately NOT in that order.  Containment is
+;; not inheritance, and the outline axis has a spelling of its own in
+;; `$NAME*'; `$NAME^' is this one, and the two are orthogonal.
+;;
+;; Reads are VIRTUAL: nothing is ever written into the inheriting entry, so
+;; a master may be changed once and every follower changes with it.  The
+;; price is worth stating plainly -- GREP DOES NOT SEE AN INHERITED VALUE,
+;; and neither does `org-entry-get', a column view, or org-ql's own
+;; `property'.  What does is `property-resolved', which is what `$NAME^'
+;; expands to, and `org-agents-resolve-property' for a caller in Lisp.
+;;
+;; Two names never travel: `AGENT_*', because behaviour does not, and
+;; `PROTOTYPE' itself, because a declared default for it would hand every
+;; entry in the corpus a master.  So does no special property: a master's
+;; `CATEGORY' is not this entry's.  A dangling reference is one message
+;; naming the entry, a cycle is one `user-error' naming the hops, and both
+;; are said once per update.
+;;
 ;; What reads it: `org-agents-allowed-values', which on
 ;; `org-property-allowed-value-functions' makes `org-set-property'
 ;; complete declared values in any Org buffer -- it is not added to that
@@ -231,10 +263,20 @@
 ;; Only conjuncts whose ripgrep answer is provably a superset of org-ql's
 ;; are pushed into the prefilter; everything else stays residual and is
 ;; applied by org-ql.  A broad `org-use-property-inheritance' -- `t' most
-;; of all -- makes no property conjunct pushable, so a property-only
-;; agent falls back to its scope's whole file set: still correct, and
-;; much slower.  The prefilter's value depends on keeping inheritance
-;; narrow.
+;; of all -- makes no `property' or `property-ts' conjunct pushable, so an
+;; agent built only out of those falls back to its scope's whole file set:
+;; still correct, and much slower.  The prefilter's value depends on
+;; keeping inheritance narrow.  `property-resolved' is the exception, and
+;; deliberately so: the resolver never reads that option, so it cannot
+;; change what the predicate answers.
+;;
+;; A `property-resolved' conjunct pushes a WIDENED pattern -- the local
+;; `:NAME:' line OR a `:PROTOTYPE:' line, as one alternation -- because an
+;; inheriting entry never spells the value, and the ordinary pattern would
+;; therefore drop its file with no error.  Where the registry declares an
+;; `:ATTR_DEFAULT:' that the query could match, an entry spelling NEITHER
+;; line matches too, nothing can narrow, and the conjunct stays residual.
+;; That exception costs narrowing and never an answer.
 ;;
 ;; Known limitations:
 ;;

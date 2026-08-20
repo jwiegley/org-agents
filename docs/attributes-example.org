@@ -103,7 +103,90 @@ without complaint.
 
 * Prototypes
 This heading is reserved and declares nothing. It is skipped silently,
-where any other top-level entry with no =ATTR_TYPE= is named as
-malformed — the entries under it will be prototypes, in a later epic, and
-reserving the name now is what keeps that epic from having to change the
-reader's contract in order to add one heading.
+where any other top-level entry with no =ATTR_TYPE= is named as malformed.
+Every entry BELOW it, at any depth, is a prototype: an ordinary entry whose
+drawer holds ordinary properties, which any entry in the corpus may read
+through by naming it in =:PROTOTYPE:=.
+
+Nothing is ever written into the entry that reads through one. Change a
+master here and every follower changes with it — and grep does not see the
+inherited value, while an agent through =property-resolved= does.
+
+** Task
+:PROPERTIES:
+:STATUS:  open
+:OWNER:   johnw
+:REVIEWS: 0
+:END:
+The master every task follows. Its three properties are the three declared
+above, so a follower's =STATUS= completes from =ATTR_VALUES= and lints
+against =ATTR_TYPE= exactly as a local one does.
+
+Note what is NOT here: no =AGENT_QUERY=, and it would do nothing if it
+were. Behaviour does not travel — a master that lent its query would make
+every follower an agent — so no =AGENT_= name resolves through a prototype,
+and neither does =PROTOTYPE= itself.
+
+** Urgent Task
+:PROPERTIES:
+:PROTOTYPE: Task
+:STATUS:    wip
+:END:
+A master may itself carry =:PROTOTYPE:=, and the chain is walked
+nearest-first. A follower of =Urgent Task= reads =STATUS= as =wip= from
+here and =OWNER= as =johnw= from =Task=, one hop further out. A cycle is a
+=user-error= naming the hops in order.
+
+*The two followers, and the agent that finds them.* Those live in the corpus
+rather than in this file, which is the point of prototypes: the relation is
+between entries, not between places in an outline. This is prose in
+=Urgent Task='s body and not a heading of its own, because every heading
+below =* Prototypes= is a prototype and every top-level heading in this file
+is an attribute declaration — there is no third thing a heading here can be.
+
+#+begin_example
+,* TODO Ship the widget
+:PROPERTIES:
+:PROTOTYPE: Urgent Task
+:END:
+
+,* TODO Ship the gadget
+:PROPERTIES:
+:PROTOTYPE: Urgent Task
+:OWNER:     ada
+:END:
+#+end_example
+
+Neither drawer holds a =STATUS= line. Both entries resolve =STATUS= to
+=wip= through =Urgent Task=; =Ship the widget= resolves =OWNER= to =johnw=
+through the chain, and =Ship the gadget= to =ada=, because a local value
+outranks every prototype.
+
+An agent that matches through that inheritance:
+
+#+begin_example
+,* Work in progress, wherever it says so
+:PROPERTIES:
+:AGENT_QUERY:  (and (todo) (property-resolved "STATUS" "wip"))
+:AGENT_FORMAT: OWNER
+:END:
+#+end_example
+
+=(and (todo) $STATUS^)= is the same query written short, and
+=(and (todo) (property "STATUS" "wip"))= is NOT: it matches only entries
+that spell the value in their own drawer, which is neither of these two.
+
+=$STATUS^= in boolean position is a known org-ql predicate and runs
+unremarked. In value position — =(string-match "w" $STATUS^)= — it becomes
+residual Lisp and the evaluation gate asks about it once, exactly as it does
+for =$STATUS*=.
+
+A master may also be named by id, which reaches an entry anywhere in the
+corpus and needs no heading in this file at all:
+
+#+begin_example
+,* TODO Ship the doohickey
+:PROPERTIES:
+:PROTOTYPE: id:1f2e3d4c-5b6a-7890-abcd-ef0123456789
+:END:
+#+end_example

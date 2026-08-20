@@ -553,6 +553,91 @@ the user is still typing. Worth knowing because a degenerate reference that
 expands to a nameless property reaches a real, always-false predicate rather
 than an error.
 
+**Q12. The preamble is NOT what hides an inherited value from `property`, and
+turning it off does not help.** A premise worth correcting, because the wrong
+version invites a fix that was measured not to work. Over a `* Parent` with
+`:X: v` and a `** Child` without:
+
+```
+inherit=nil     preamble=t     value=1 match  existence=1 match
+inherit=t       preamble=t     value=1        existence=1
+inherit=t       preamble=nil   value=1        existence=1
+inherit=("X")   preamble=t     value=1        existence=1
+inherit=("X")   preamble=nil   value=1        existence=1
+```
+
+The one match is `Parent` in every row. The cause is Q1's normalizer, not the
+preamble: the plain forms attach no `:inherit` and the BODY reads the entry's
+own drawer. And the existence form has no preamble to turn off —
+`(property "X")` yields `:preamble nil` — while the value form yields
+`"\(?:^[[:space:]]*:X:[[:space:]]+v[[:space:]]*$\)"`. Note also that org-ql
+itself emits NO preamble for any `property` form carrying `:inherit`, which is
+the precedent `property-resolved` follows.
+
+**Q13. The preamble IS what defeats advice on `org-entry-get`, for the value
+form.** Over a master spelling `:STATUS: active` and a follower spelling only
+`:PROTOTYPE: Master`, with advice on `org-entry-get` returning the master's
+value for the follower:
+
+```
+advice, preamble=t   : value=("Master")             existence=("Master" "Follower")
+advice, preamble=nil : value=("Master" "Follower")  existence=("Master" "Follower")
+```
+
+So the two obvious ways of adding prototype awareness to `property` — set
+inheritance, or advise `org-entry-get` — fail for two different reasons, and
+each fails silently. `org-agents-test-property-resolved-differential-against-plain-property`
+runs the whole grid rather than one cell for exactly that reason.
+
+**Q14. `and` hoists a preamble out of a conjunct; `or` and `not` do not.**
+
+```
+(and (my-pred …) (property "Z" "1"))  -> :preamble on `:Z: 1'   (hoisted)
+(or  (my-pred …) (property "Z" "1"))  -> :preamble nil
+(not (property "Z" "1"))              -> :preamble nil
+(and (my-pred …))                     -> :preamble nil
+```
+
+Sound — a conjunct's necessary condition is the conjunction's — but it means
+the only preamble a predicate like `property-resolved` may ever contribute is
+none. A predicate defined by `org-ql-defpred` with no `:preambles` clause gets
+`:preamble nil` and is registered in `org-ql-predicates`, so
+`org-agents--known-predicate-p` admits it without anything being added to a
+list.
+
+**Q15. An INHERITING `org-entry-get` sees things no drawer pattern can.** Over
+a file holding `#+PROPERTY: FILEPROP fv` plus one entry, with
+`org-global-properties` set:
+
+```
+local FILEPROP = nil        inherit FILEPROP = "fv"
+local GLOB     = nil        inherit GLOB     = "gv"
+org-ql (property "FILEPROP") with inheritance t  -> nil
+org-ql (property "FILEPROP" :inherit t)          -> ("Entry")
+```
+
+This is why `org-agents-resolve-property`'s local step passes INHERIT nil and
+must go on doing so: the first of those values is spelled by a line no drawer
+pattern matches and the second is spelled in no file at all, so either in the
+resolution order would be a value the ripgrep prefilter's widened pattern
+cannot see — a lost match with no error.
+
+**Q16. `org-entry-properties` will not report a special name out of a drawer,
+at any setting.** A master whose drawer holds `:DEADLINE: <2030-01-01 Tue>`,
+`:TODO: DONE`, `:ITEM: fake`, `:PRIORITY: A` and `:CATEGORY: masters` answers:
+
+```
+(org-entry-properties nil 'standard) => (("CATEGORY" . "masters"))
+(org-entry-properties nil 'special)  => (("CATEGORY" . "masters") ("BLOCKED" . "")
+                                         ("FILE") ("PRIORITY" . "B") ("ITEM" . "Master"))
+(org-entry-properties nil)           => the same as 'special
+```
+
+The deadline and the keyword are reported by neither. So a prototype cannot
+carry a special property along the chain whatever this package does, and the
+resolver's special-property clause is a belt whose reachability rests on this
+measurement rather than on a fixture.
+
 ---
 
 ## 5. org-jw: the CLI, the parser, and the database
