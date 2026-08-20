@@ -317,7 +317,8 @@
 (defconst org-agents--boolean-heads '(and or not when unless)
   "Heads whose arguments are themselves queries in boolean position.")
 
-(defconst org-agents--name-position-heads '(property property-ts)
+(defconst org-agents--name-position-heads
+  '(property property-ts property-resolved)
   "Predicates whose first argument is a property NAME; a $ref there
 denotes the name string, not the value.")
 
@@ -739,12 +740,43 @@ question the user was never asked."
               (org-agents--known-predicate-p (car form)))
       (mapc #'org-agents--check-head-spelling (cdr form)))))
 
+(defun org-agents--check-resolved-args (form)
+  "Signal `user-error' if FORM holds a `property-resolved' that cannot run.
+`property-resolved' is defined with no `:normalizers' clause, and that is
+not an omission: a normalizer is where a preamble comes from, and this
+predicate must contribute none -- see its own docstring for the
+measurement.  The consequence is that, unlike org-ql's `property', it has
+nothing to swallow a keyword argument with, so `(property-resolved \"S\"
+:inherit t)' would reach `string-equal' with a symbol and fail at match
+time from inside org-ql's generated matcher, naming neither the agent nor
+the argument that was wrong.  It is named here instead, once, before any
+entry is examined.
+
+Only query positions are examined -- the same descent
+`org-agents--check-head-spelling' makes, and for the same reason: in
+residual Lisp `property-resolved' is an ordinary function call and not
+this predicate."
+  (when (and (consp form) (proper-list-p form))
+    (when (eq (car form) 'property-resolved)
+      (pcase form
+        (`(property-resolved ,(pred stringp)))
+        (`(property-resolved ,(pred stringp) ,(pred stringp)))
+        (_ (user-error
+            (concat "org-agents: `property-resolved' takes a property name"
+                    " and an optional value, both strings: `%s'")
+            (org-agents--query-text form)))))
+    (when (or (memq (car form) org-agents--boolean-heads)
+              (memq (car form) org-agents--nested-query-heads)
+              (org-agents--known-predicate-p (car form)))
+      (mapc #'org-agents--check-resolved-args (cdr form)))))
+
 (defun org-agents--check-spelling (form)
   "Signal `user-error' if FORM cannot be evaluated as written.
 FORM has already been through `org-agents--expand', so a surviving
 $ref sits in a position the expander has no reading for, and would
 otherwise reach org-ql as a void variable at match time."
   (org-agents--check-head-spelling form)
+  (org-agents--check-resolved-args form)
   (when-let* ((ref (org-agents--leftover-ref form)))
     ;; Printed through `org-agents--query-text', not with `%S': under an
     ;; ambient `print-length' the query showed as a prefix ending in
@@ -3646,6 +3678,42 @@ told."
     (user-error
      (let ((text (error-message-string err)))
        (org-agents--prototype-report (concat "cycle\0" text) "%s" text)))))
+
+(org-ql-defpred property-resolved (name &optional value)
+  "Return non-nil if this entry resolves NAME, or resolves it to VALUE.
+The prototype-aware `property': `org-agents-resolve-property-quietly' is
+what answers, so a value the entry does not spell -- one that arrives
+through its `:PROTOTYPE:' chain, or out of the registry's
+`:ATTR_DEFAULT:' -- is a match here where `property' has none.
+
+PREAMBLE-FREE BY CONSTRUCTION, and the true reason is not the obvious
+one.  It is NOT that a preamble would hide an inherited value, which
+invites the fix \"turn the preamble off\": MEASURED, org-ql's plain
+`property' forms attach no `:inherit' at all and read the entry's own
+drawer, so `(property \"X\" \"v\")' misses a descendant of the entry
+holding X at every setting of `org-use-property-inheritance', and
+`org-ql-use-preamble' nil changes nothing -- the bare `(property \"X\")'
+form has no preamble to turn off and still misses it.  What a preamble
+WOULD do here is re-impose the drawer text as a filter over this
+predicate's answer, which is precisely what defeats advice on
+`org-entry-get': MEASURED, with such advice installed the value form
+finds a follower with the preamble off and loses it with the preamble on.
+So this predicate contributes NO preamble, ever, and org-ql itself sets
+the precedent -- it emits none for any `property' form that carries
+`:inherit'.
+
+A preamble hoisted out of a sibling conjunct is another matter and is
+sound: MEASURED, `(and (property-resolved ...) (property \"Z\" \"1\"))'
+searches on `:Z: 1', which is a necessary condition of the conjunction.
+
+VALUE is compared with `string-equal', case-SENSITIVELY, and the
+argument order is org-ql's own `property' body's.  That comparison is
+one decision with the ripgrep prefilter's default exception -- see
+`org-agents--pushdown-fns' -- and the two must not drift."
+  :body (let ((resolved (org-agents-resolve-property-quietly name)))
+          (if value
+              (and resolved (string-equal value resolved))
+            resolved)))
 
 ;;;; Links
 

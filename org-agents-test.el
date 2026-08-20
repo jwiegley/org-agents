@@ -3262,6 +3262,190 @@ section is a declaration, not a master."
       (should-not (org-agents-resolve-property "NOSUCH")))
     (should (equal (org-agents-attributes) '("OWNER" "STATUS")))))
 
+;;; The predicate
+
+(defconst org-agents-test--resolved-corpus
+  '(("local.org" . "\
+* TODO Spells it for itself
+:PROPERTIES:
+:STATUS: active
+:END:
+")
+    ("follower.org" . "\
+* TODO Reads it through a master
+:PROPERTIES:
+:PROTOTYPE: Master
+:END:
+")
+    ("other.org" . "\
+* TODO Spells a different value
+:PROPERTIES:
+:STATUS: done
+:END:
+")
+    ("empty.org" . "\
+* TODO Spells the name and nothing after it
+:PROPERTIES:
+:S:
+:END:
+"))
+  "The differential fixture: one local value, one inherited, two controls.")
+
+(defconst org-agents-test--resolved-registry "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+Deliberately WITHOUT a default: the default is the prefilter's exception,
+and this fixture is about the predicate.
+
+* Prototypes
+** Master
+:PROPERTIES:
+:STATUS: active
+:END:
+"
+  "A registry whose one prototype spells `:STATUS: active' and nothing else.")
+
+(ert-deftest org-agents-test-property-resolved-has-no-preamble ()
+  "`property-resolved' contributes NO preamble, and the reason is not the
+obvious one.
+
+MEASURED, and this is what the predicate's docstring records: org-ql's
+plain `property' forms attach no `:inherit' and read the entry's own
+drawer, so turning the preamble off does not make them see an inherited
+value -- the bare `(property \"X\")' form has no preamble at all and
+still does not see one.  What a preamble here WOULD do is re-impose the
+drawer text as a filter over this predicate's answer.  So it must have
+none, and org-ql sets the precedent by emitting none for any `property'
+form that carries `:inherit'.
+
+A preamble HOISTED out of a sibling conjunct is another matter and is
+sound -- a conjunct's necessary condition is the conjunction's -- so that
+case is asserted too, rather than left to look like a leak."
+  (dolist (query '((property-resolved "STATUS")
+                   (property-resolved "STATUS" "active")
+                   (and (property-resolved "STATUS") (todo))
+                   (or (property-resolved "STATUS") (todo))))
+    (should-not (plist-get (org-ql--query-preamble
+                            (org-ql--normalize-query query))
+                           :preamble)))
+  ;; org-ql's own `property' behaves the same way once inheritance is in
+  ;; play, which is the precedent.
+  (should-not (plist-get (org-ql--query-preamble
+                          (org-ql--normalize-query
+                           '(property "STATUS" "active" :inherit t)))
+                         :preamble))
+  ;; And a sibling's preamble is hoisted over the conjunction, which is
+  ;; sound: it is a necessary condition of both conjuncts together.
+  (should (plist-get (org-ql--query-preamble
+                      (org-ql--normalize-query
+                       '(and (property-resolved "STATUS")
+                             (property "Z" "1"))))
+                     :preamble)))
+
+(ert-deftest org-agents-test-property-resolved-differential-against-plain-property ()
+  "The epic's reason for existing, as one differential assertion.
+An entry whose value arrives ONLY through its `:PROTOTYPE:' is matched by
+`property-resolved' and NOT by `property' -- at every setting of
+`org-use-property-inheritance' and of `org-ql-use-preamble', because
+neither is what hides it.
+
+The whole grid is run rather than one cell, because the two obvious
+wrong fixes are \"set inheritance to t\" and \"turn the preamble off\",
+and a single cell cannot say that neither works."
+  (org-agents-test--with-attr-corpus org-agents-test--resolved-registry
+      org-agents-test--resolved-corpus
+    (dolist (inherit (list nil t '("STATUS")))
+      (dolist (preamble (list t nil))
+        (let* ((org-use-property-inheritance inherit)
+               (org-ql-use-preamble preamble)
+               (resolved (org-ql-select files '(property-resolved "STATUS"
+                                                                  "active")
+                           :action '(org-get-heading t t t t)))
+               (plain (org-ql-select files '(property "STATUS" "active")
+                        :action '(org-get-heading t t t t))))
+          (should (equal '("Spells it for itself"
+                           "Reads it through a master")
+                         resolved))
+          (should (equal '("Spells it for itself") plain)))))))
+
+(ert-deftest org-agents-test-property-resolved-is-structurally-safe ()
+  "The gate admits it as a pure read, and admits it without a list.
+`org-agents--known-predicate-p' reads `org-ql-predicates', which
+`org-ql-defpred' populates at load time, so nothing had to be added to a
+list of admitted heads -- and nothing should have been: a list would be a
+second place for the gate's answer to live."
+  (should (org-agents--known-predicate-p 'property-resolved))
+  (should (org-agents--structurally-safe-p '(property-resolved "STATUS")))
+  (should (org-agents--structurally-safe-p
+           '(and (todo) (property-resolved "STATUS" "active"))))
+  ;; And it passes the gate with asking ON and nothing approved, which is
+  ;; the state an unsafe form is refused in.
+  (let ((custom-file nil)
+        (user-init-file nil)
+        (org-agents-safe-queries nil)
+        (org-agents-refused-queries nil)
+        (org-agents--session-approved (make-hash-table :test 'equal))
+        (org-ql-ask-unsafe-queries t)
+        (noninteractive t))
+    (should (org-agents--gate '(and (todo) (property-resolved "STATUS"))))
+    ;; Nothing was remembered, because nothing was asked.
+    (should (zerop (hash-table-count org-agents--session-approved)))))
+
+(ert-deftest org-agents-test-property-resolved-refuses-a-keyword-argument ()
+  "A keyword argument is named at gate time, not at match time.
+`property-resolved' is defined with no normalizer -- a normalizer is
+where a preamble comes from, and it must have none -- so unlike org-ql's
+own `property' it has nothing to swallow `:inherit' with, and the
+argument would reach `string-equal' as a symbol from inside org-ql's
+generated matcher, naming neither the agent nor the argument."
+  (dolist (form '((property-resolved "STATUS" :inherit t)
+                  (property-resolved)
+                  (property-resolved 3)
+                  (property-resolved "STATUS" 3)
+                  (and (todo) (property-resolved "STATUS" :inherit t))))
+    (let ((err (should-error (org-agents--gate form) :type 'user-error)))
+      (should (string-match-p "property-resolved"
+                             (error-message-string err)))))
+  ;; The two spellings it does take pass.
+  (should (org-agents--gate '(property-resolved "STATUS")))
+  (should (org-agents--gate '(property-resolved "STATUS" "active"))))
+
+(ert-deftest org-agents-test-property-resolved-agrees-with-property-locally ()
+  "On a purely local value the two predicates answer alike, empty included.
+A `:S:' line with nothing after it answers `org-entry-get' with the empty
+string, which is non-nil, and org-ql's `property' matches it.  So the
+local step reads with raw `org-entry-get' and not with
+`org-agents--entry-get', whose contract is that written-but-empty and not
+written at all mean the same thing -- right for an agent property, wrong
+here, because it would make `property-resolved' disagree with `property'
+about an entry no prototype and no default is involved in."
+  (org-agents-test--with-attr-corpus org-agents-test--resolved-registry
+      org-agents-test--resolved-corpus
+    (should (equal (org-ql-select files '(property "S")
+                     :action '(org-get-heading t t t t))
+                   '("Spells the name and nothing after it")))
+    (should (equal (org-ql-select files '(property-resolved "S")
+                     :action '(org-get-heading t t t t))
+                   '("Spells the name and nothing after it")))
+    ;; And the same at the entry, through the resolver itself.
+    (org-agents-test--at-entry (funcall F "empty.org") "Spells the name"
+      (should (equal "" (org-agents-resolve-property "S")))
+      (should (equal (org-entry-get nil "S")
+                     (org-agents-resolve-property "S"))))))
+
+(ert-deftest org-agents-test-property-resolved-in-name-position ()
+  "A `$ref' in the NAME position of `property-resolved' is the name string.
+`(property-resolved $STATUS)' is how a query names an attribute rather
+than a value, exactly as `(property $STATUS)' and `(property-ts $NEXT)'
+do -- and without this the reference would survive the expander and the
+gate would refuse it."
+  (should (equal (org-agents--expand '(property-resolved $STATUS))
+                 '(property-resolved "STATUS")))
+  (should (equal (org-agents--expand '(and (todo) (property-resolved $STATUS)))
+                 '(and (todo) (property-resolved "STATUS")))))
+
 ;;;; Collection
 
 (defmacro org-agents-test--with-corpus (&rest body)
