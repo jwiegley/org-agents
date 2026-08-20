@@ -6832,6 +6832,62 @@ across two whole-buffer fontifications rather than one per region."
                            (lambda (m) (string-match-p "no prototype" m))
                            msgs)))))))
 
+(ert-deftest org-agents-test-faces-an-unresolvable-id-is-read-at-most-once ()
+  "A `:PROTOTYPE: id:' nothing can resolve does not re-read a file per redisplay.
+Two shapes of unresolvable, and each had its own cost.  An id `org-id'
+knows no file for is not looked for at all -- the contract is the table's,
+and `org-id-find-id-file' answers the CURRENT buffer's own file on a table
+miss, so the read searched the follower's file and could only ever answer
+by accident.  An id whose file the table names but does not hold -- a
+renamed master, a stale `org-id-locations-file' -- is read once and the
+MISS is cached, keyed on that file exactly as an answer is.
+
+MEASURED before either: one such reference in a 285 KB buffer cost one
+whole-file `org-agents--in-org-copy' on every fontification of the region
+holding it, 11.8 ms against 0.4 ms for the same screenful without it --
+inside redisplay, and again on every keystroke in that region."
+  (let ((uuid "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+    (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+        `(("masters.org" . "* A master with no such id\n")
+          ("a.org" . ,(concat "\
+* Dangler
+:PROPERTIES:
+:PROTOTYPE: id:" uuid "
+:END:
+* Local
+:PROPERTIES:
+:STATUS: stalled
+:END:
+")))
+      (with-current-buffer (find-file-noselect (funcall F "a.org"))
+        (org-agents-faces-mode 1)
+        ;; Read the registry before the counter, so the count is the id path.
+        (font-lock-ensure (point-min) (point-min))
+        (let ((copies 0))
+          (cl-letf* ((orig (symbol-function 'org-agents--in-org-copy))
+                     ((symbol-function 'org-agents--in-org-copy)
+                      (lambda (&rest args)
+                        (setq copies (1+ copies))
+                        (apply orig args))))
+            ;; Untracked: the table has no answer, so nothing is read.
+            (should (org-agents--prototype-id-untracked-p uuid))
+            (font-lock-ensure)
+            (font-lock-ensure)
+            (should (= 0 copies))
+            ;; Tracked, and the file does not hold it: read once, missed once.
+            (puthash uuid (funcall F "masters.org") org-id-locations)
+            (setq org-agents--prototype-id-cache nil)
+            (font-lock-ensure)
+            (font-lock-ensure)
+            (font-lock-ensure)
+            (should (= 1 copies)))
+          ;; Either way the entry is drawn from the declared default and the
+          ;; rest of the buffer is faced.
+          (should (equal '(org-todo org-level-1)
+                         (org-agents-test--title-face "Dangler")))
+          (should (equal '(org-warning org-level-1)
+                         (org-agents-test--title-face "Local"))))))))
+
 (ert-deftest org-agents-test-faces-a-diagnostic-is-re-said-after-an-edit ()
   "Fixing the registry is noticed; leaving it broken is not re-said.
 The once-per-diagnostic table is keyed on the registry's own cache key,

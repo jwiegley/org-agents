@@ -3656,12 +3656,17 @@ reason `org-agents--attributes-cache' is one: the prototypes come out of
 the one file that option names.")
 
 (defvar org-agents--prototype-id-cache nil
-  "Prototypes resolved by `:ID:', as `(ID KEY . PLIST)' in most-recent order.
-KEY is `org-agents--file-cache-key' of the file the entry was read from,
-which is a DIFFERENT file per id -- so this is an alist where
-`org-agents--prototypes-cache' is one cons.  An entry whose file's key has
-moved is re-read; inside `org-agents--with-attributes' no key is
-recomputed at all.")
+  "Prototypes resolved by `:ID:', as `(ID KEY FILE . PLIST)', newest first.
+FILE is the file that was CONSULTED for ID and KEY is
+`org-agents--file-cache-key' of it, which is a DIFFERENT file per id -- so
+this is an alist where `org-agents--prototypes-cache' is one cons.  An
+entry whose file's key has moved is re-read; inside
+`org-agents--with-attributes' no key is recomputed at all.
+
+PLIST is nil for an id that FILE does not hold, and such a cell is kept
+rather than dropped: `org-agents--prototype-id-entry' says what an
+uncached miss costs a fontifier, which is why FILE is recorded at all --
+a nil answer has no `:file' of its own to revalidate against.")
 
 (defvar org-agents--prototype-warned nil
   "A hash table of prototype diagnostics already said, or nil for none.
@@ -3930,22 +3935,39 @@ makes."
 
 (defun org-agents--prototype-id-entry (id)
   "The prototype whose `:ID:' is ID, from the cache or by reading for it.
-Keyed on `org-agents--file-cache-key' of the file it was read from, so an
-unsaved edit to a master out in the corpus invalidates it -- the same
+Keyed on `org-agents--file-cache-key' of the file that was CONSULTED, so
+an unsaved edit to a master out in the corpus invalidates it -- the same
 guarantee the registry's own prototypes get, extended to the file each id
-happens to live in."
+happens to live in.
+
+A MISS is cached too, and that is a fix rather than an optimization.
+Reading for an id costs `org-agents--in-org-copy' of a whole file and an
+`outline-next-heading' walk of it, and a caller that runs at every
+DISPLAYED entry -- `org-agents-faces-mode' -- asks again on every
+fontification of the region holding the reference.  MEASURED with the
+miss uncached: one entry naming an id its file does not hold cost one
+whole-file copy per fontification, 11.8 ms against 0.4 ms for the same
+screenful without it, on every redisplay of that region and so on every
+keystroke in it.  A stale `org-id-locations-file' or a renamed master is
+all it takes.
+
+Hence the CONSULTED file rather than the answer's: a nil answer has no
+`:file' to revalidate against, so the cell carries the file the answer
+was sought in and `(ID KEY FILE . PLIST)' is its shape.  Inside
+`org-agents--with-attributes' no key is recomputed at all, so a region
+pays one `gethash'."
   (let* ((cell (assoc id org-agents--prototype-id-cache))
-         (cached (cddr cell)))
+         (cached (cdddr cell)))
     (if (and cell
              (or org-agents--attributes-fresh
                  (equal (cadr cell)
-                        (org-agents--file-cache-key
-                         (plist-get cached :file)))))
+                        (org-agents--file-cache-key (caddr cell)))))
         cached
-      (when-let* ((found (org-agents--prototype-id-read id))
-                  (key (org-agents--file-cache-key (plist-get found :file))))
+      (let* ((file (org-id-find-id-file id))
+             (found (and file (org-agents--prototype-id-read id))))
         (setq org-agents--prototype-id-cache
-              (cons (cons id (cons key found))
+              (cons (cons id (cons (org-agents--file-cache-key file)
+                                   (cons file found)))
                     (assoc-delete-all id org-agents--prototype-id-cache)))
         found))))
 
@@ -3974,10 +3996,24 @@ resolved nil and reported `no prototype `id:...' named by `F'', which
 sends the user hunting for a typo in a drawer that has none.  The cause is
 that `org-id-find-id-file' answers the current buffer's own file on a
 table miss -- so the id is looked for in the follower's file and not in
-the master's."
+the master's.
+
+Which is also why an id the table does not know is not looked for at all.
+The contract is the table's -- `:PROTOTYPE: id:UUID' resolves where
+`org-id-locations' knows the id -- and the read on a table miss searches
+the FOLLOWER's own file, so it can only ever answer by accident, and the
+same reference in another file would fail.  It is not a cheap accident
+either: MEASURED, one such reference cost a whole-file
+`org-agents--in-org-copy' plus a heading walk of the displayed buffer on
+every fontification of the region holding it -- 11.8 ms against 0.4 ms
+for the same screenful, on every redisplay, because a miss found in the
+buffer being edited is revalidated on every keystroke.  One `gethash'
+answers instead, and the diagnostic below already tells the user which of
+the two causes it was."
   (let ((id (org-agents--prototype-id ref)))
     (or (if id
-            (org-agents--prototype-id-entry id)
+            (unless (org-agents--prototype-id-untracked-p id)
+              (org-agents--prototype-id-entry id))
           (cdr (assoc-string ref (org-agents--prototypes-alist) t)))
         (org-agents--prototype-report
          (concat "dangling\0" (downcase ref))
