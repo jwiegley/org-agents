@@ -1466,7 +1466,15 @@ From Tinderbox, whose agents this feature is modelled on:
 
 * Emacs 29.1
 * [org-ql](https://github.com/alphapapa/org-ql) 0.8 — `org-ql` and
-  `org-ql-search`, both of which ship together
+  `org-ql-search`, both of which ship together. `org-ql` is required at
+  load time; `org-ql-search` is required by `org-agents-preview`, the one
+  command that uses it, and is only declared at the top of the file. That
+  said, loading `org-agents` does load `org-ql-search` anyway on the
+  author's machine, and the reason is transitive and outside this package:
+  `org-agents` → `org-ql-ext` → `org-ql-find` → `org-ql-search`. MEASURED,
+  `(require 'org-ql-ext)` alone takes `(featurep 'org-ql-search)` from nil
+  to `t`. So the lazy require stops this file from *claiming* a load-time
+  dependency it does not have; it does not by itself make the load cheaper.
 * Org itself, which is bundled. The package was developed against Org
   9.8.7; no lower bound has been established by testing, and none is
   declared.

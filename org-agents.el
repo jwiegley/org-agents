@@ -387,7 +387,6 @@
 (require 'org)
 (require 'org-id)
 (require 'org-ql)
-(require 'org-ql-search)                ; `org-agents-preview' delegates to it
 (require 'org-ql-ext)
 (require 'compile)                      ; `org-agents-check-attributes' report
 
@@ -396,6 +395,26 @@
 ;; undefined at runtime, over a call site that is org-ql's own and not
 ;; this file's.
 (declare-function org-ql--normalize-query "org-ql")
+
+;; `org-ql-search' is wanted by exactly ONE command, `org-agents-preview',
+;; which requires it itself.  Declared rather than required so that
+;; nothing here claims a load-time dependency it does not have, and
+;; declared rather than left to org-ql's autoloads because a declaration
+;; silences the compiler unconditionally: org-ql-autoloads.el does carry
+;; `(autoload 'org-ql-search "org-ql-search")', so the gate would pass on
+;; this machine with nothing at all here -- but that is a fact about an
+;; installed autoload file, not about this source.
+;;
+;; This does NOT stop loading org-agents from loading org-ql-search, and
+;; the honest reason is transitive: org-agents -> `org-ql-ext' ->
+;; `org-ql-find' -> `org-ql-search'.  MEASURED: `(require 'org-ql-ext)'
+;; alone takes `(featurep 'org-ql-search)' from nil to t, and
+;; `org-ql-search' then pulls `org-super-agenda', `org-ql-view', dash, f,
+;; s and map.  `org-ql-ext' is the author's Emacs configuration and not
+;; part of this package, so the cost is not this file's to remove.  Said
+;; here because the next reader will measure `featurep', see t, and
+;; otherwise conclude this change did not land.
+(declare-function org-ql-search "org-ql-search")
 
 ;; Declared here and defined with the Registry, far below.  The prefilter
 ;; reads it long before that: `org-agents--resolved-default' refuses to
@@ -5248,8 +5267,14 @@ it.  The appended form is the form the gate sees: what is approved here
 is what runs.  The search is over `org-agenda-files': a scope belongs to
 an agent, and a preview has no agent.  With no agenda files there is
 nothing to preview, and this says so rather than searching the current
-buffer, which is what `org-ql-search' does when it is handed none."
+buffer, which is what `org-ql-search' does when it is handed none.
+
+`org-ql-search' is required here rather than at the top of the file: it
+is this one command's dependency, and stating it where it is used is what
+keeps the file from claiming it at load time.  See the `declare-function'
+beside the requires for what that does and does not buy."
   (interactive "sAgent query: ")
+  (require 'org-ql-search)
   (let* ((query (org-agents--expand
                  (org-agents--read-sexp "the query" query-string)))
          (form (org-agents--effective-query query))

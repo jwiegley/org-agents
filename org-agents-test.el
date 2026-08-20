@@ -6238,6 +6238,56 @@ does and `org-ql-search' is reached."
       (let ((err (should-error (org-agents-preview "(todo)") :type 'user-error)))
         (should (string-match-p "not approved" (error-message-string err)))))))
 
+(ert-deftest org-agents-test-preview-requires-org-ql-search-lazily ()
+  "`org-ql-search' is this file's dependency for ONE command, so one command
+requires it.  Derived from the SOURCE TEXT, and it has to be: the
+property is about load order, and by the time this suite runs
+`org-ql-search' is loaded, `fboundp' and stubbed by the preview tests
+around it -- an ERT assertion against the runtime would pass whatever the
+file says.  The same \"derive from the source\" discipline as
+`org-agents-test-action-entry-point-list-is-complete'.
+
+Three claims, and the third is the one that keeps the gate honest:
+
+  - no top-level `(require \\='org-ql-search)';
+  - one inside `org-agents-preview', so the command states its own
+    dependency where it is used rather than leaving it inferred;
+  - a `declare-function' for it, which is what silences the byte
+    compiler UNCONDITIONALLY.  org-ql's own autoloads happen to carry
+    `(autoload \\='org-ql-search \"org-ql-search\")', so the gate would
+    pass on this machine with no declaration at all -- but that is a fact
+    about an installed autoload file, not about this source.
+
+What this does NOT claim, because it is measured false: that loading
+org-agents no longer loads org-ql-search.  The chain is org-agents ->
+`org-ql-ext' -> `org-ql-find' -> `org-ql-search', and `org-ql-ext' is the
+author's live configuration, outside this repository.  MEASURED:
+`(require \\='org-ql-ext)' alone takes `(featurep \\='org-ql-search)' from
+nil to t.  So the load-time cost is not removed; what is removed is this
+file claiming a dependency it does not have."
+  (let* ((library (locate-library "org-agents"))
+         (source (concat (file-name-sans-extension library) ".el")))
+    (should (file-readable-p source))
+    (with-temp-buffer
+      (insert-file-contents source)
+      ;; A top-level require begins at column zero.  The one inside the
+      ;; command is indented, so the anchor tells them apart.
+      (goto-char (point-min))
+      (should-not (re-search-forward "^(require 'org-ql-search)" nil t))
+      (goto-char (point-min))
+      (should (re-search-forward
+               "^(declare-function org-ql-search \"org-ql-search\")" nil t))
+      ;; The require lives inside the command's own body: search from the
+      ;; `defun' to the next top-level form.
+      (goto-char (point-min))
+      (should (re-search-forward "^(defun org-agents-preview " nil t))
+      (let ((start (point))
+            (end (or (and (re-search-forward "^(\\|^;;;###autoload" nil t)
+                          (match-beginning 0))
+                     (point-max))))
+        (goto-char start)
+        (should (re-search-forward "(require 'org-ql-search)" end t))))))
+
 (ert-deftest org-agents-test-dblock-type-is-registered ()
   "`C-c C-x x' offers the block, and what it offers INSERTS one.
 `columnview' and `clocktable' register inserters there, and this must
