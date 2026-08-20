@@ -380,10 +380,11 @@ a second to parse and a second and a half to confirm.
 reading, but only for the **declared** names, and only in the files that
 hold them. One ripgrep run per declared name narrows those.
 
-Measured over the author's 3,616-file `active` scope: **6 seconds warm, 64
-seconds cold**, against >600 s and no report. (Cold versus warm is a factor
-of six here for the same reason it is everywhere else in this file — the OS
-page cache.) With a registry declaring `CREATED`, which is in essentially
+Measured over the author's 3,616-file `active` scope: **7 to 9 seconds
+warm, 64 to 110 seconds cold**, against >600 s and no report. (Cold versus
+warm is an order of magnitude here for the same reason it is everywhere else
+in this file — the OS page cache. Two careful people measuring this will
+disagree by 10× before either thinks to say which state they were in.) With a registry declaring `CREATED`, which is in essentially
 every file, the value tier reads the whole corpus and the run is about four
 minutes; that cost is inherent, it is what checking every value *means*, and
 it is why the command shows a progress reporter above 50 files rather than
@@ -426,6 +427,18 @@ missed, so the echo area says how many candidates went unconfirmed — "4
 names appeared in property-line shape outside any drawer and were not
 reported". Without ripgrep the whole thing falls back to the live walk with
 one message, exactly as the prefilter does, and never refuses.
+
+One more thing the equivalence test caught, which no amount of reading
+would have: **ripgrep's output order is nondeterministic** — it walks the
+tree in parallel. Since a candidate is reported at the first site that
+confirms, and with the property name *as that file spells it*, the same
+corpus reported `widget` on one run and `WIDGET` on the next. Org matches
+property keys case-insensitively so neither spelling is wrong, but a report
+that changes between runs of the same command is a flaw of its own. Both
+enumerators now sort a candidate's files by name, so the reported spelling
+and the reported example site are the alphabetically first file's, from
+either path. It showed up only under CPU load, one run in six; twenty runs
+under the same load afterwards were clean.
 
 Org's own vocabulary is never asked about, nor the package's, nor the
 registry's: `org-special-properties`, `org-default-properties`, `ID`, the

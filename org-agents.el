@@ -225,8 +225,8 @@
 ;; semantics and is answered by one ripgrep run over the whole scope,
 ;; while the value question needs per-entry reading but only for the
 ;; DECLARED names and only in the files holding them.  MEASURED over a
-;; 3,616-file scope: 6 s warm and 64 s cold, against a single-tier command
-;; that was killed at 600 s with no report at all.  The fast enumerator
+;; 3,616-file scope: 7 to 9 s warm and 64 to 110 s cold, against a
+;; single-tier command that was killed at 600 s with no report at all.  The fast enumerator
 ;; reports the same vocabulary as the slow one, and
 ;; `org-agents-test-attr-census-fast-equals-slow' is what says so.  And `org-agents-attribute-columns',
 ;; which builds a `COLUMNS' format out of chosen declarations -- see
@@ -3673,6 +3673,27 @@ unconfirmed and the report says how many.  MEASURED: 106 candidates cost
 152 file opens in 1.84 s, and only three needed more than one file -- the
 three that were never going to confirm.")
 
+(defun org-agents--attr-sort-groups (groups)
+  "GROUPS, a candidate's `(FILE NAME LINE...)' list, sorted by FILE.
+Deterministic ORDER is a requirement and not tidiness, and it took a
+reproduction to see why.  RIPGREP'S OUTPUT ORDER IS NONDETERMINISTIC -- it
+walks the tree in parallel -- so the first file a candidate's sites are
+grouped under varied from run to run.  Since the confirmation pass reports
+the first site that confirms, and reports the property name AS THAT FILE
+SPELLS IT, the same corpus reported `widget' on one run and `WIDGET' on
+the next: OBSERVED, as an intermittent failure of
+`org-agents-test-attr-census-fast-equals-slow' that appeared only under CPU
+load, 1 run in 6.
+
+Org matches property keys case-insensitively, so both spellings name the
+same property and neither is wrong -- but a report that changes between
+runs of the same command is a flaw of its own, and the live walk was
+reporting the upcased key, so the two enumerators disagreed by
+construction.  Sorting the groups makes the reported name and the reported
+example site the alphabetically first file's, from BOTH producers."
+  (sort (copy-sequence groups)
+        (lambda (a b) (string< (car a) (car b)))))
+
 (defun org-agents--attr-property-at-point ()
   "The property NAME on the line at point, or nil when this is not one.
 \"Not one\" covers every way a line can look like a property and not be:
@@ -3717,7 +3738,7 @@ have made ripgrep exit 2 and sent the whole run down the live walk."
     (while (and groups (null answer) (< opened org-agents--attr-confirm-limit))
       (let* ((group (pop groups))
              (file (car group))
-             (lines (cdr group)))
+             (lines (cddr group)))
         (cl-incf opened)
         (ignore-errors
           (with-current-buffer (find-file-noselect file)
@@ -3810,15 +3831,21 @@ at 0.176 s over 3,638 files, which buys exact scope soundness."
             (setcar entry (1+ (car entry)))
             (let ((group (assoc (nth 0 site) (cdr entry))))
               (if group
-                  (setcdr group (cons (nth 1 site) (cdr group)))
-                (setcdr entry (cons (list (nth 0 site) (nth 1 site))
+                  (setcdr (cdr group) (cons (nth 1 site) (cddr group)))
+                ;; `(FILE NAME LINE...)', NAME nil: ripgrep cannot decode
+                ;; the name, and the confirmation pass supplies it.
+                (setcdr entry (cons (list (nth 0 site) nil (nth 1 site))
                                     (cdr entry)))))))))
     (mapcar (lambda (key)
               (let ((entry (gethash key table)))
-                (cons key (cons (car entry)
-                                (mapcar (lambda (g)
-                                          (cons (car g) (nreverse (cdr g))))
-                                        (reverse (cdr entry)))))))
+                (cons key
+                      (cons (car entry)
+                            (org-agents--attr-sort-groups
+                             (mapcar (lambda (g)
+                                       (cons (car g)
+                                             (cons (cadr g)
+                                                   (nreverse (cddr g)))))
+                                     (cdr entry)))))))
             (nreverse order))))
 
 (defun org-agents--attr-census-rg (root files)
@@ -4021,10 +4048,14 @@ both questions and no file is read twice."
                   (if entry
                       (progn (setcar entry (1+ (car entry)))
                              (unless (assoc file (cdr entry))
-                               (setcdr entry (cons (list file line)
+                               (setcdr entry (cons (list file name line)
                                                    (cdr entry)))))
+                    ;; `(FILE NAME LINE)', NAME as this file spells it --
+                    ;; the walk HAS the decoded name, where ripgrep does
+                    ;; not, and storing it is what lets both producers
+                    ;; report the same spelling.
                     (puthash (upcase name)
-                             (list 1 (list file line)) census))))
+                             (list 1 (list file name line)) census))))
               (when-let*
                   ((text (and (member-ignore-case name declared)
                               (org-agents--attr-value-finding
@@ -4201,10 +4232,14 @@ the report states rather than hiding: it is the visible cost of
         (unless (or (member-ignore-case key org-agents--rg-census-delimiters)
                     (org-agents--attr-exempt-p key))
           (if (not confirm)
+              ;; `(FILE NAME LINE)' out of the alphabetically first file,
+              ;; so this reports the same spelling and the same example
+              ;; site the confirmed path does.
               (let ((group (nth 2 candidate)))
-                (when-let* ((text (org-agents--attr-name-finding key)))
+                (when-let* ((text (org-agents--attr-name-finding
+                                   (or (nth 1 group) key))))
                   (push (format "%s:%d: %s (%d use%s)"
-                                (car group) (cadr group) text
+                                (nth 0 group) (nth 2 group) text
                                 count (if (= 1 count) "" "s"))
                         findings)))
             (if-let* ((proof (org-agents--attr-confirm-candidate candidate)))
@@ -4223,7 +4258,10 @@ and this puts the name back on the front, so that one consumer --
 `org-agents--attr-name-findings' -- reads both producers."
   (let ((out nil))
     (maphash (lambda (key entry)
-               (push (cons key (cons (car entry) (reverse (cdr entry)))) out))
+               (push (cons key
+                           (cons (car entry)
+                                 (org-agents--attr-sort-groups (cdr entry))))
+                     out))
              table)
     (nreverse out)))
 
@@ -4369,7 +4407,8 @@ makes the command usable at the scope it is most valuable at.  MEASURED:
 as one per-entry walk it was killed at 600 SECONDS with no report at all
 over the author's corpus -- and the first whole-corpus run is exactly how
 a registry gets seeded, so the command was unusable precisely where it was
-wanted.  It now finishes that scope in 6 s warm, 64 s cold.
+wanted.  It now finishes that scope in 7 to 9 s warm, 64 to 110 s cold --
+the spread is the OS page cache, as it is everywhere else here.
 
 Tier one, the VOCABULARY: which names are in use that nothing declares.
 This needs no Org semantics -- it is a question about text -- so

@@ -2872,12 +2872,27 @@ cannot be written as ordinary text: a latin-1 one, and a CRLF one.  See
           (should (equal fast slow))
           ;; And the set really does hold the cases the fixture is for, so
           ;; that an equivalence of two empty-ish sets cannot pass for one.
-          (dolist (name '("WIDGET" "FILEWIDE" "GADGET" "SPROCKET" "CAFÉ"
+          (dolist (name '("FILEWIDE" "GADGET" "SPROCKET" "CAFÉ"
                           "CARRIAGE" "A:B" "REALONE"))
             (should (member name fast)))
-          ;; `widget' lower-case folded into `WIDGET' rather than arriving
-          ;; as a name of its own.
-          (should-not (member "widget" fast))
+          ;; ONE entry for the two spellings of one name: `plain.org' has
+          ;; `:WIDGET:' and `case.org' has `:widget:', Org matches keys
+          ;; case-insensitively, and the census folds them together.
+          (should (= 1 (length (cl-remove-if-not
+                                (lambda (n) (equal (upcase n) "WIDGET"))
+                                fast))))
+          ;; And it is spelled as the ALPHABETICALLY FIRST file spells it,
+          ;; which is `case.org'.  That determinism is the point and it was
+          ;; a bug: RIPGREP'S OUTPUT ORDER IS NONDETERMINISTIC -- parallel
+          ;; walk -- so the confirmed site, and with it the reported
+          ;; spelling, varied between runs of the same command.  OBSERVED
+          ;; here as an intermittent failure that appeared only under CPU
+          ;; load, 1 run in 6, reporting `widget' where the walk reported
+          ;; `WIDGET'.  `org-agents--attr-sort-groups' is the fix, applied
+          ;; to BOTH producers so that they cannot disagree.
+          (should (member "widget" fast))
+          (should (member "widget" slow))
+          (should-not (member "WIDGET" fast))
           ;; And none of the property-line SHAPES that are not properties.
           (dolist (name '("LOGBOOK" "RESULTS" "PROPERTIES" "END"
                           "bodykey" "BODYKEY" "BURIED"))
