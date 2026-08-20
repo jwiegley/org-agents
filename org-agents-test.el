@@ -2005,6 +2005,142 @@ checked, and would otherwise report every one of its own declarations."
 :ATTR_TYPE: string
 :STATUS_ALL: open wip
 :END:
+* Lower case
+:PROPERTIES:
+:id: 22222222-2222-2222-2222-222222222222
+:category: notes
+:archive_time: 2020-01-01 Wed 10:00
+:custom_id: lower
+:END:
+* Accumulated
+:PROPERTIES:
+:STATUS_ALL: open wip
+:STATUS_ALL+: done
+:ID+: 33333333-3333-3333-3333-333333333333
+:ARCHIVE_TIME+: 2021-01-01 Fri 10:00
+:CATEGORY+: more
+:END:
+"))
+    (org-agents-check-attributes files)
+    (should-not (org-agents-test--attr-finding-lines))))
+
+(ert-deftest org-agents-test-check-attributes-exemption-survives-a-plus ()
+  "An exempt name is exempt in its ACCUMULATING spelling too.
+`+' is how Org spells an addition to a value, not part of the name being
+added to: `:STATUS_ALL+: done' extends the vocabulary of `STATUS' the
+ordinary Org way, and `:ID+:' adds to an `ID'.  Testing the exemption on
+the raw drawer key instead of on the name loses every exemption in that
+spelling: MEASURED, `org-agents--attr-exempt-p' answered t for
+`STATUS_ALL' and nil for `STATUS_ALL+', so the lint reported `STATUS_ALL'
+-- the vocabulary as a violation of itself, which is the one thing the
+`_ALL' clause exists to prevent -- and `ID' and `ARCHIVE_TIME' with it,
+the two exemptions worth about 58,000 suppressed findings on the author's
+corpus."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:STATUS_ALL: open wip
+:STATUS_ALL+: done
+:ID+: 11111111-1111-1111-1111-111111111111
+:END:
+* Undeclared
+:PROPERTIES:
+:WIDGET+: z
+:END:
+"))
+    ;; At the level the stripping happens: the accumulating spelling of an
+    ;; exempt name is no finding, and of an undeclared one still is.
+    (dolist (key '("STATUS_ALL+" "ID+" "ARCHIVE_TIME+" "CATEGORY+"))
+      (should-not (org-agents--attr-line-finding key "x" (lambda (_) nil))))
+    (should (org-agents--attr-line-finding "WIDGET+" "z" (lambda (_) nil)))
+    (org-agents-check-attributes files)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      ;; The exempt accumulations are silent; the undeclared one on a `+'
+      ;; line is still found, and under its NAME rather than its key --
+      ;; which is what says the walk did reach these lines at all.
+      (should (= 1 (length lines)))
+      (should (string-match-p (format "\\`%s:9: " (regexp-quote (car files)))
+                              (car lines)))
+      (should (string-match-p "WIDGET is not declared" (car lines))))))
+
+(ert-deftest org-agents-test-check-attributes-walks-a-file-level-drawer ()
+  "A property drawer before the first heading is walked like any other.
+It is a real property block: MEASURED, `org-entry-get' at `point-min'
+answers `x' for a `:WIDGET: x' written there, and with
+`org-use-property-inheritance' on every entry in the file sees those
+values.  A lint that skipped it would call such a file clean -- and
+credit it with an entry while doing so -- with a misspelled name and an
+unparseable value sitting at the top of it.
+
+Counted as no entry, because it is none: the counts in the clean line
+say how many HEADINGS were looked at."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+:PROPERTIES:
+:WIDGET: x
+:REVIEWS: many
+:END:
+#+TITLE: Per-file defaults
+
+* Entry
+:PROPERTIES:
+:STATUS: open
+:END:
+"))
+    ;; Org really does read those, which is what makes them worth linting.
+    (with-current-buffer (find-file-noselect (car files))
+      (goto-char (point-min))
+      (should (equal "x" (org-entry-get nil "WIDGET"))))
+    (org-agents-check-attributes files)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 2 (length lines)))
+      (should (string-match-p (format "\\`%s:2: " (regexp-quote (car files)))
+                              (nth 0 lines)))
+      (should (string-match-p "WIDGET is not declared" (nth 0 lines)))
+      (should (string-match-p (format "\\`%s:3: " (regexp-quote (car files)))
+                              (nth 1 lines)))
+      (should (string-match-p "REVIEWS" (nth 1 lines)))
+      (should (string-match-p "is not a number" (nth 1 lines))))))
+
+(ert-deftest org-agents-test-check-attributes-set-repeat-across-lines ()
+  "A `set' that repeats a member across `+' lines is reported.
+A repeat is the one rule that distinguishes a `set' from a `list', and it
+is a thing no single line can show: `:STATUS: open' beside a `:STATUS+:
+open' is `open open', which `org-agents-attribute-valid-p' rejects for a
+set and accepts for a list.  Judging only the accumulating line's own
+fragment left the rule unenforced whenever the value was spelled across
+lines, and a later epic writing such a set back would write a duplicate
+the lint had blessed."
+  (should-not (org-agents-attribute-valid-p 'set "open open"
+                                            '("open" "wip")))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* Repeats
+:PROPERTIES:
+:STATUS: open
+:STATUS+: open
+:END:
+"))
+    (org-agents-check-attributes files)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 1 (length lines)))
+      ;; On the `+' line that made it a repeat, as every accumulation
+      ;; finding is: the earlier line was fine until this one arrived.
+      (should (string-match-p (format "\\`%s:4: " (regexp-quote (car files)))
+                              (car lines)))
+      (should (string-match-p "open open" (car lines)))
+      (should (string-match-p "is not a set" (car lines)))))
+  ;; Two DISTINCT members across the same two lines are a set, and say
+  ;; nothing -- which is what keeps the check above from being a report of
+  ;; accumulation itself.
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* Distinct
+:PROPERTIES:
+:STATUS: open
+:STATUS+: wip
+:END:
 "))
     (org-agents-check-attributes files)
     (should-not (org-agents-test--attr-finding-lines))))

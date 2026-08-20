@@ -2723,14 +2723,18 @@ attribute: `STATUS_ALL' is a declaration ABOUT `STATUS', not a property
 of its own, and reporting it would be reporting the vocabulary as a
 violation of itself.")
 
-(defun org-agents--attr-exempt-p (key)
-  "Non-nil when the drawer KEY is one the registry is never asked about.
+(defun org-agents--attr-exempt-p (name)
+  "Non-nil when property NAME is one the registry is never asked about.
 Case-insensitively against `org-agents--attributes-exempt', because Org
 matches a property key that way, and by shape against
 `org-agents--attributes-exempt-re'.  Tested BEFORE the registry is
-consulted, so an exempt name is never reported as undeclared."
-  (or (and (member-ignore-case key org-agents--attributes-exempt) t)
-      (and (string-match-p org-agents--attributes-exempt-re key) t)))
+consulted, so an exempt name is never reported as undeclared.
+
+NAME is a property name and not a raw drawer key: the caller strips a
+trailing `+' first, so that `:ID+:' is as exempt as `:ID:' and a
+`:STATUS_ALL+:' is as exempt as the `:STATUS_ALL:' it extends."
+  (or (and (member-ignore-case name org-agents--attributes-exempt) t)
+      (and (string-match-p org-agents--attributes-exempt-re name) t)))
 
 (defun org-agents--attr-line-finding (key value joined)
   "What is wrong with the drawer line KEY / VALUE, or nil when nothing is.
@@ -2770,63 +2774,101 @@ answered `(\"CATEGORY\" \"STATUS_ALL\" \"REVIEWS\" \"STATUS\")' for that
 drawer: it SYNTHESIZES `CATEGORY', which is on no line, and collapses the
 three `STATUS' spellings into one.  A finding must point at a line that
 exists."
-  (unless (org-agents--attr-exempt-p key)
-    (let* ((accumulates (string-suffix-p "+" key))
-           (name (if accumulates (substring key 0 -1) key))
-           (attr (org-agents-attribute name)))
-      (cond
-       ((null attr)
-        (format "%s is not declared in %s" name
-                (abbreviate-file-name
-                 (expand-file-name org-agents-attributes-file))))
-       (t
-        (let* ((type (plist-get attr :type))
-               (values (plist-get attr :values))
-               (text (if (and accumulates (not (memq type '(set list))))
-                         (funcall joined name)
-                       value)))
-          (cond
-           ((or (null text) (string-blank-p text)) nil)
-           ((not (org-agents-attribute-valid-p type text))
-            (format "%s: `%s' is not a %s" name text type))
-           ((not (org-agents-attribute-valid-p type text values))
-            (format "%s: `%s' is not one of %s" name text
-                    (string-join values " "))))))))))
+  (let* ((accumulates (string-suffix-p "+" key))
+         (name (if accumulates (substring key 0 -1) key)))
+    ;; The exemption is tested on the NAME and not on the raw key.  A `+'
+    ;; is how Org spells an addition to a value, not part of the name it
+    ;; adds to: `:STATUS_ALL+: done' extends the vocabulary of `STATUS'
+    ;; the ordinary Org way, and testing the key would have reported
+    ;; `STATUS_ALL' -- the vocabulary as a violation of itself -- and
+    ;; would have let `:ID+:' and `:ARCHIVE_TIME+:' through the two
+    ;; exemptions that suppress about 58,000 findings on the author's
+    ;; corpus.
+    (unless (org-agents--attr-exempt-p name)
+      (let ((attr (org-agents-attribute name)))
+        (cond
+         ((null attr)
+          (format "%s is not declared in %s" name
+                  (abbreviate-file-name
+                   (expand-file-name org-agents-attributes-file))))
+         (t
+          (let* ((type (plist-get attr :type))
+                 (values (plist-get attr :values))
+                 (text (if (and accumulates (not (memq type '(set list))))
+                           (funcall joined name)
+                         value))
+                 ;; A `set' forbids a REPEAT, and a repeat is a thing no
+                 ;; single line can show: `:STATUS: open' beside a
+                 ;; `:STATUS+: open' is `open open', which is not a set.
+                 ;; So the accumulating line of a set is judged on its
+                 ;; own fragment for membership -- which is what
+                 ;; completing one member needs -- and on the joined
+                 ;; value for the one rule that distinguishes a set from
+                 ;; a list.
+                 (all (and accumulates (eq type 'set)
+                           (funcall joined name))))
+            (cond
+             ((or (null text) (string-blank-p text)) nil)
+             ((not (org-agents-attribute-valid-p type text))
+              (format "%s: `%s' is not a %s" name text type))
+             ((not (org-agents-attribute-valid-p type text values))
+              (format "%s: `%s' is not one of %s" name text
+                      (string-join values " ")))
+             ((and all (not (org-agents-attribute-valid-p type all)))
+              (format "%s: `%s' is not a %s" name all type))))))))))
+
+(defun org-agents--attr-drawer-findings (file where)
+  "Findings for the property drawer belonging to position WHERE, newest first.
+FILE is what each finding names.  WHERE is where `org-entry-get' is asked
+what a property accumulates to -- a heading, or a position before the
+first heading for a file-level drawer.
+
+The drawer is found with `org-get-property-block' -- Org's own answer to
+where the properties belonging to a position are -- and walked with
+`org-property-re', Org's own answer to what a property line is.  The
+block's range excludes the `:PROPERTIES:' and `:END:' lines, both of
+which `org-property-re' would otherwise match as keys."
+  (let ((findings nil))
+    (save-excursion
+      (goto-char where)
+      (when-let* ((block (org-get-property-block)))
+        (goto-char (car block))
+        (beginning-of-line)
+        (while (< (point) (cdr block))
+          (when (looking-at org-property-re)
+            (when-let* ((text (org-agents--attr-line-finding
+                               (match-string-no-properties 2)
+                               (match-string-no-properties 3)
+                               (lambda (name) (org-entry-get where name)))))
+              (push (format "%s:%d: %s" file (line-number-at-pos) text)
+                    findings)))
+          (forward-line 1))))
+    findings))
 
 (defun org-agents--attr-buffer-findings (file)
   "`(ENTRIES . FINDINGS)' for the current buffer, whose file is FILE.
 Every heading is counted, so a clean report can say what it looked at,
 and every line of every property drawer is one finding site.
 
-The drawer is found with `org-get-property-block' -- Org's own answer to
-where an entry's properties are -- and walked with `org-property-re',
-Org's own answer to what a property line is.  The block's range excludes
-the `:PROPERTIES:' and `:END:' lines, both of which `org-property-re'
-would otherwise match as keys."
+The drawer BEFORE the first heading is walked as well, and is counted as
+no entry because it is none.  It is a real property block all the same:
+MEASURED, `org-entry-get' at `point-min' answers `x' for a `:WIDGET: x'
+written there, and with `org-use-property-inheritance' on every entry in
+the file sees it -- so a lint that skipped it would call a file clean
+while a misspelled name and an unparseable value sat at the top of it."
   (let ((entries 0)
         (findings nil))
     (org-with-wide-buffer
      (goto-char (point-min))
+     (when (org-before-first-heading-p)
+       (setq findings (org-agents--attr-drawer-findings file (point-min))))
+     (goto-char (point-min))
      (org-map-entries
       (lambda ()
         (cl-incf entries)
-        (let ((heading (point))
-              (block (org-get-property-block)))
-          (when block
-            (save-excursion
-              (goto-char (car block))
-              (beginning-of-line)
-              (while (< (point) (cdr block))
-                (when (looking-at org-property-re)
-                  (when-let*
-                      ((text (org-agents--attr-line-finding
-                              (match-string-no-properties 2)
-                              (match-string-no-properties 3)
-                              (lambda (name)
-                                (org-entry-get heading name)))))
-                    (push (format "%s:%d: %s" file (line-number-at-pos) text)
-                          findings)))
-                (forward-line 1))))))))
+        (setq findings
+              (nconc (org-agents--attr-drawer-findings file (point))
+                     findings)))))
     (cons entries (nreverse findings))))
 
 (defun org-agents--attr-findings (files)

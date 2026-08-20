@@ -275,12 +275,26 @@ six `ARCHIVE_*` names `org-archive-subtree` writes, anything beginning
 *inside* the scope being checked and would otherwise report every one of its
 own declarations.
 
-Two things Org does that the linter is careful about. A property key matches
-case-insensitively, so `:status: open` is a value of a declared `STATUS` and
-not an undeclared property. And a `+` line **accumulates**: `org-entry-get`
-answers `3 4` for a `:REVIEWS: 3` beside a `:REVIEWS+: 4`, and `3 4` is not
-a number — so the finding is real, and it is reported on the `+` line that
-caused it rather than on the line that was fine until that one arrived.
+Four things Org does that the linter is careful about. A property key
+matches case-insensitively, so `:status: open` is a value of a declared
+`STATUS` and not an undeclared property. A `+` line **accumulates**:
+`org-entry-get` answers `3 4` for a `:REVIEWS: 3` beside a `:REVIEWS+: 4`,
+and `3 4` is not a number — so the finding is real, and it is reported on
+the `+` line that caused it rather than on the line that was fine until
+that one arrived. A `set` is judged on the accumulated value as well as on
+the line, because a repeat — the one rule that separates a `set` from a
+`list` — can only be spelled across lines: `:STATUS: open` beside
+`:STATUS+: open` is `open open`, and that is not a set. And the `+`
+spelling of an exempt name is exempt too: `:STATUS_ALL+: done` extends a
+vocabulary the ordinary Org way, and reporting it would be reporting the
+vocabulary as a violation of itself.
+
+The drawer **before the first heading** is walked as well. Org reads those
+properties — `org-entry-get` at the top of the file answers from them, and
+with `org-use-property-inheritance` on so does every entry below — so a
+lint that skipped them would call a file clean with a misspelled name and
+an unparseable value sitting at the top of it. It is counted as no entry,
+because it is none.
 
 A corpus scope is narrowed with ripgrep through the same machinery an agent
 uses, pushing `^[ \t]*:PROPERTIES:` — a provable superset of the files that
