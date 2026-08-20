@@ -344,18 +344,36 @@ time."
   (and (symbolp form) form (string-prefix-p "$" (symbol-name form))))
 
 (defun org-agents--ref-p (form)
-  "If FORM is a $ref symbol naming a property, return (NAME . INHERITP).
-Else nil, which is also the answer for `$' and `$*': neither names a
-property, and reading `$*' as one would hand `org-entry-get' the empty
-name, which answers nil at every entry.  Left as the symbols they are,
-they reach `org-agents--check-spelling', which says which reference it
-could not read."
+  "If FORM is a $ref symbol naming a property, return (NAME . AXIS).
+AXIS says which of the three readings of a property the reference asks
+for, and they are orthogonal:
+
+  nil        `$NAME'   the entry's OWN drawer.
+  `inherit'  `$NAME*'  the OUTLINE axis: `org-entry-get' with INHERIT, so
+                       an ancestor's value, a `#+PROPERTY:' keyword and
+                       `org-global-properties' all answer.
+  `proto'    `$NAME^'  the PROTOTYPE axis: the entry, then its
+                       `:PROTOTYPE:' chain, then the registry's default.
+
+At most ONE suffix is read.  Else nil -- which is the answer for `$' and
+`$*', neither of which names a property, and for `$N*^' and `$N^*', which
+name no axis.  Reading `$*' as a reference would hand `org-entry-get' the
+empty name, which answers nil at every entry, and reading `$N*^' as one
+would name a property whose key holds a `^', which no drawer spells:
+either way an agent that matches nothing with nothing said about why.
+Left as the symbols they are, they reach
+`org-agents--check-spelling', which says which reference it could not
+read."
   (when (and (org-agents--ref-name-p form)
              (> (length (symbol-name form)) 1))
     (let* ((name (substring (symbol-name form) 1))
-           (inherit (string-suffix-p "*" name))
-           (bare (if inherit (substring name 0 -1) name)))
-      (unless (string-empty-p bare) (cons bare inherit)))))
+           (axis (cond ((string-suffix-p "*" name) 'inherit)
+                       ((string-suffix-p "^" name) 'proto)))
+           (bare (if axis (substring name 0 -1) name)))
+      (unless (or (string-empty-p bare)
+                  (string-suffix-p "*" bare)
+                  (string-suffix-p "^" bare))
+        (cons bare axis)))))
 
 (defun org-agents--known-predicate-p (head)
   "Non-nil if HEAD names an org-ql predicate (built-in or user-defined)."
@@ -368,11 +386,24 @@ could not read."
 
 (defun org-agents--value-ref (ref &optional numeric)
   "Accessor form for REF (from `org-agents--ref-p') in value position.
-With NUMERIC non-nil, coerce a property's string value to a number."
+With NUMERIC non-nil, coerce a property's string value to a number.
+
+The axis is dispatched on by SYMBOL and not on truthiness: `inherit' is
+truthy, so a site that went on asking `(cdr ref)' would take the OUTLINE
+branch for a caret and do it silently.
+`org-agents-test-expand-caret-in-every-position' is the twelve-cell table
+that makes such a site loud.
+
+The prototype axis reads through `org-agents-resolve-property-quietly'
+and never the signalling resolver: this is residual Lisp, evaluated at
+every candidate entry, and a `user-error' there aborts the update from
+inside org-ql's generated matcher."
   (let* ((name (car ref))
          (special (cdr (assoc name org-agents--specials)))
          (base (cond (special special)
-                     ((cdr ref) `(org-entry-get nil ,name t))
+                     ((eq (cdr ref) 'inherit) `(org-entry-get nil ,name t))
+                     ((eq (cdr ref) 'proto)
+                      `(org-agents-resolve-property-quietly ,name))
                      (t `(org-entry-get nil ,name)))))
     (cond ((and numeric special) base)     ; specials manage their own types
           (numeric `(string-to-number (or ,base "0")))
@@ -401,10 +432,16 @@ With NUMERIC non-nil, coerce a property's string value to a number."
       (cond
        ;; A special names the entry itself, which has no property row of
        ;; that name: (property "TODO") is a valid query that never
-       ;; matches.  Test the accessor instead, and ignore any star,
-       ;; since there is nothing to inherit.
+       ;; matches.  Test the accessor instead, and ignore any suffix,
+       ;; since there is nothing to inherit and nothing for a prototype
+       ;; to carry.
        (special (cdr special))
-       ((cdr ref) `(org-entry-get nil ,(car ref) t))
+       ((eq (cdr ref) 'inherit) `(org-entry-get nil ,(car ref) t))
+       ;; The prototype axis in boolean position is a known org-ql
+       ;; predicate, so the gate admits it unremarked -- unlike the
+       ;; outline axis above, and unlike either axis in value position.
+       ;; That asymmetry is real and is documented in README.
+       ((eq (cdr ref) 'proto) `(property-resolved ,(car ref)))
        (t `(property ,(car ref))))))
    ((not (consp form)) form)
    ;; Boolean combinators: recurse into every clause.

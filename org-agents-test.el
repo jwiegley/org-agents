@@ -121,9 +121,120 @@ leftover-reference check names them."
                              :type 'user-error)))
       (should (string-match-p "no expansion for"
                               (error-message-string err)))))
-  ;; An ordinary reference is unaffected, star and all.
+  ;; An ordinary reference is unaffected, suffix and all.  The cdr is the
+  ;; AXIS the suffix names, not a flag: `inherit' is the outline axis and
+  ;; `proto' the prototype one.
   (should (equal '("URL" . nil) (org-agents--ref-p '$URL)))
-  (should (equal '("URL" . t) (org-agents--ref-p '$URL*))))
+  (should (equal '("URL" . inherit) (org-agents--ref-p '$URL*)))
+  (should (equal '("URL" . proto) (org-agents--ref-p '$URL^))))
+
+(ert-deftest org-agents-test-expand-caret-in-every-position ()
+  "The three axes in all four positions: twelve cells, spelled out.
+`$N' is the entry's own drawer, `$N*' the OUTLINE axis -- `org-entry-get'
+with INHERIT -- and `$N^' the PROTOTYPE axis.  They are orthogonal, and
+at most one suffix may be written.
+
+The quiet resolver in value and numeric position, never the signalling
+one: residual Lisp runs at every candidate entry, and a `user-error'
+there aborts the whole update."
+  ;; Boolean.
+  (should (equal (org-agents--expand '(and (todo) $STATUS))
+                 '(and (todo) (property "STATUS"))))
+  (should (equal (org-agents--expand '(and (todo) $STATUS*))
+                 '(and (todo) (org-entry-get nil "STATUS" t))))
+  (should (equal (org-agents--expand '(and (todo) $STATUS^))
+                 '(and (todo) (property-resolved "STATUS"))))
+  ;; Value.
+  (should (equal (org-agents--expand '(string-match "x" $STATUS))
+                 '(string-match "x" (or (org-entry-get nil "STATUS") ""))))
+  (should (equal (org-agents--expand '(string-match "x" $STATUS*))
+                 '(string-match "x" (or (org-entry-get nil "STATUS" t) ""))))
+  (should (equal (org-agents--expand '(string-match "x" $STATUS^))
+                 '(string-match
+                   "x" (or (org-agents-resolve-property-quietly "STATUS") ""))))
+  ;; Numeric.
+  (should (equal (org-agents--expand '(> $REVIEWS 3))
+                 '(> (string-to-number (or (org-entry-get nil "REVIEWS") "0"))
+                     3)))
+  (should (equal (org-agents--expand '(> $REVIEWS* 3))
+                 '(> (string-to-number (or (org-entry-get nil "REVIEWS" t) "0"))
+                     3)))
+  (should (equal (org-agents--expand '(> $REVIEWS^ 3))
+                 '(> (string-to-number
+                      (or (org-agents-resolve-property-quietly "REVIEWS") "0"))
+                     3)))
+  ;; Name.
+  (should (equal (org-agents--expand '(property $STATUS)) '(property "STATUS")))
+  (should (equal (org-agents--expand '(property $STATUS*))
+                 '(property "STATUS")))
+  (should (equal (org-agents--expand '(property-resolved $STATUS^))
+                 '(property-resolved "STATUS"))))
+
+(ert-deftest org-agents-test-expand-three-axes-are-three-predicates ()
+  "`$N', `$N*' and `$N^' expand to three DISTINCT forms, pairwise.
+Collapsing any two of them would make a query mean something other than
+what it says -- and the caret cell is asserted string-for-string against
+`(property-resolved \"N\")', because that is the predicate the prefilter's
+widening keys on."
+  (let ((forms (mapcar #'org-agents--expand '($STATUS $STATUS* $STATUS^))))
+    (should (equal (nth 0 forms) '(property "STATUS")))
+    (should (equal (nth 1 forms) '(org-entry-get nil "STATUS" t)))
+    (should (equal (nth 2 forms) '(property-resolved "STATUS")))
+    (should-not (equal (nth 0 forms) (nth 1 forms)))
+    (should-not (equal (nth 0 forms) (nth 2 forms)))
+    (should-not (equal (nth 1 forms) (nth 2 forms)))))
+
+(ert-deftest org-agents-test-expand-caret-is-no-longer-a-property-name ()
+  "`$STATUS^' was MEASURED to expand as a property literally named `STATUS^'.
+A silent misreading: `(property \"STATUS^\")' is a valid org-ql query that
+matches nothing, and `(> $REVIEWS^ 3)' read a property nothing has as
+zero.  This pins the misread shut."
+  (should-not (equal (org-agents--expand '$STATUS^) '(property "STATUS^")))
+  (should-not (equal (org-agents--expand '(> $REVIEWS^ 3))
+                     '(> (string-to-number
+                          (or (org-entry-get nil "REVIEWS^") "0")) 3)))
+  (should (equal '("STATUS" . proto) (org-agents--ref-p '$STATUS^))))
+
+(ert-deftest org-agents-test-expand-refuses-a-double-suffix ()
+  "At most ONE suffix: `$N*^' and `$N^*' name no axis, and are refused.
+Read as a reference either would name a property whose key holds a `*' or
+a `^', which no drawer spells -- an agent that matches nothing, and
+nothing said about why.  Left as the symbols they are, the gate's
+leftover-reference check names them."
+  (dolist (form '($STATUS*^ $STATUS^* $STATUS** $STATUS^^))
+    (should (null (org-agents--ref-p form)))
+    (should (equal (org-agents--expand form) form))
+    (let ((err (should-error (org-agents--gate (org-agents--expand form))
+                             :type 'user-error)))
+      (should (string-match-p "no expansion for"
+                              (error-message-string err))))))
+
+(ert-deftest org-agents-test-expand-caret-on-a-special-is-the-accessor ()
+  "A special names the entry itself, so a caret on one is ignored.
+Exactly as a star is: there is no property row of that name for a
+prototype to carry, and `(property-resolved \"TODO\")' would be a query
+that never matches."
+  (should (equal (org-agents--expand '$ITEM^) '(org-get-heading t t t t)))
+  (should (equal (org-agents--expand '$TODO^) '(org-get-todo-state)))
+  (should (equal (org-agents--expand '$ITEM^) (org-agents--expand '$ITEM*)))
+  (should (equal (org-agents--expand '(> $LEVEL^ 2)) '(> (org-current-level) 2))))
+
+(ert-deftest org-agents-test-expand-caret-in-value-position-is-not-safe ()
+  "The documented asymmetry: `$N^' is safe in boolean position and not in value.
+In boolean position it becomes a known org-ql predicate, which the gate
+admits unremarked.  In value position it becomes residual Lisp -- a call
+to `org-agents-resolve-property-quietly' -- and the gate asks about it
+once, exactly as it asks about `$N*'.  Exempting it would be widening the
+gate Epic 1 has just hardened, for a caller this package cannot
+distinguish from any other function call in a query."
+  (should (org-agents--structurally-safe-p (org-agents--expand '$STATUS^)))
+  (should-not (org-agents--structurally-safe-p
+               (org-agents--expand '(string-match "x" $STATUS^))))
+  ;; And `$N*' is no different, which is the point of calling it an
+  ;; asymmetry between POSITIONS rather than between axes.
+  (should-not (org-agents--structurally-safe-p (org-agents--expand '$STATUS*)))
+  (should-not (org-agents--structurally-safe-p
+               (org-agents--expand '(string-match "x" $STATUS*)))))
 
 (ert-deftest org-agents-test-expand-passthrough ()
   (should (equal (org-agents--expand '(and (todo "TODO") (tags "urgent")))
