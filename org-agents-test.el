@@ -737,6 +737,7 @@ pushed pattern would return NO files for a query that matches thousands."
     org-agents-rg-executable
     org-agents-exclude
     org-agents-files
+    org-agents-attributes-file
     ;; `define-globalized-minor-mode' generates a `defcustom' too, and it
     ;; lands in this group like any other.
     global-org-agents-mode)
@@ -1264,6 +1265,432 @@ approval went on admitting its query."
     (should (cl-find-if (lambda (text)
                           (string-match-p "this session only" text))
                         texts))))
+
+;;;; Registry
+
+;; The registry is pure data, and every test here proves that twice over:
+;; nothing below writes a registry the reader then evaluates, and every
+;; fixture is a temporary file, so no test can reach -- or create -- the
+;; developer's own `org-agents-attributes-file'.
+
+(defconst org-agents-test--registry-example "\
+#+TITLE: Attribute registry
+#+STARTUP: showeverything
+
+* OPEN
+:PROPERTIES:
+:ATTR_TYPE:    boolean
+:ATTR_DEFAULT: false
+:END:
+Whether this item is still open for comment.
+
+Read by the weekly review agent, and by nothing else.
+
+* REVIEWS
+:PROPERTIES:
+:ATTR_TYPE:    number
+:ATTR_DEFAULT: 0
+:END:
+How many times this entry has been through review.
+
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    set
+:ATTR_VALUES:  open wip blocked done
+:ATTR_DEFAULT: open
+:ATTR_FACES:   blocked org-warning | done org-done
+:END:
+Where the item stands.  A set rather than a string: an item may be
+blocked and waiting on review at once.
+")
+
+(defconst org-agents-test--registry-lines '(("OPEN" . 4) ("REVIEWS" . 13)
+                                            ("STATUS" . 20))
+  "Which line of `org-agents-test--registry-example' each heading is on.
+Spelled out rather than computed, because `:line' is what makes a
+diagnosis about the registry navigable and a computed expectation would
+agree with a reader that had lost count in the same direction.")
+
+(defmacro org-agents-test--with-registry (text &rest body)
+  "Run BODY with `registry' bound to a temp registry file holding TEXT.
+`org-agents-attributes-file' is that file and the cache is empty, so no
+test can read the developer's own registry, or a previous test's parse of
+another one.  Buffers visiting the file are killed afterwards, because
+the file is about to be deleted."
+  (declare (indent 1))
+  `(let* ((dir (make-temp-file "org-agents-registry" t))
+          (registry (expand-file-name "attributes.org" dir))
+          (org-agents-attributes-file registry)
+          (org-agents--attributes-cache nil)
+          (org-element-use-cache nil))
+     (unwind-protect (progn (with-temp-file registry (insert ,text)) ,@body)
+       (dolist (buf (buffer-list))
+         (when-let* ((f (buffer-file-name buf)))
+           (when (string-prefix-p (file-name-as-directory dir) f)
+             (with-current-buffer buf (set-buffer-modified-p nil))
+             (kill-buffer buf))))
+       (delete-directory dir t))))
+
+(defun org-agents-test--attribute-but-file (name)
+  "The declaration of NAME with its `:file' entry taken out.
+Every other entry is left in the order the reader wrote it, so one
+`equal' asserts the whole plist -- the fields, their values, and that
+there is nothing else in it."
+  (cl-loop for (key value) on (org-agents-attribute name) by #'cddr
+           unless (eq key :file) append (list key value)))
+
+(ert-deftest org-agents-test-attributes-absent-file-is-empty ()
+  "A registry that is not there declares nothing, and says nothing about it.
+The registry is optional.  A package that reported its absence would
+report it at every property completion in every Org buffer, so \"nothing
+declared\" has to be the silent answer and not merely the harmless one."
+  (let* ((dir (make-temp-file "org-agents-registry" t))
+         (org-agents-attributes-file (expand-file-name "nope.org" dir))
+         (org-agents--attributes-cache nil))
+    (unwind-protect
+        (let ((texts (org-agents-test--messages
+                       (should-not (org-agents-attributes))
+                       (should-not (org-agents-attribute "STATUS")))))
+          (should-not texts))
+      (delete-directory dir t))))
+
+(ert-deftest org-agents-test-attributes-worked-example ()
+  "The three declarations of the shipped example, read field for field.
+`OPEN' is the case that matters most: its `:values' are in no drawer at
+all.  The reader synthesizes a boolean's two values, so completion needs
+no type dispatch and the lint's vocabulary check and its type check are
+one check."
+  (org-agents-test--with-registry org-agents-test--registry-example
+    (should (equal (org-agents-attributes) '("OPEN" "REVIEWS" "STATUS")))
+    (should (equal (org-agents-test--attribute-but-file "OPEN")
+                   '(:name "OPEN" :type boolean :values ("true" "false")
+                           :default "false" :faces nil
+                           :doc "Whether this item is still open for comment.\n\nRead by the weekly review agent, and by nothing else."
+                           :line 4)))
+    (should (equal (org-agents-test--attribute-but-file "REVIEWS")
+                   '(:name "REVIEWS" :type number :values nil
+                           :default "0" :faces nil
+                           :doc "How many times this entry has been through review."
+                           :line 13)))
+    (should (equal (org-agents-test--attribute-but-file "STATUS")
+                   '(:name "STATUS" :type set
+                           :values ("open" "wip" "blocked" "done")
+                           :default "open"
+                           :faces (("blocked" . org-warning)
+                                   ("done" . org-done))
+                           :doc "Where the item stands.  A set rather than a string: an item may be\nblocked and waiting on review at once."
+                           :line 20)))
+    ;; The file is named in full, so a diagnosis about the registry can be
+    ;; navigated to the same way a corpus finding can.
+    (should (equal (plist-get (org-agents-attribute "STATUS") :file)
+                   (expand-file-name registry)))
+    (pcase-dolist (`(,name . ,line) org-agents-test--registry-lines)
+      (should (equal line (plist-get (org-agents-attribute name) :line))))
+    ;; A name is looked up as Org matches a property key: case-insensitively.
+    (should (equal (org-agents-attribute "status")
+                   (org-agents-attribute "STATUS")))
+    (should-not (org-agents-attribute "NOSUCH"))))
+
+(ert-deftest org-agents-test-attributes-cache-holds-and-invalidates ()
+  "The file is read once per edit -- and an UNSAVED edit is an edit.
+This is the whole reason the cache key is composite.  A key built from
+`file-attribute-modification-time' alone would go on answering from the
+version on disk while the user edited the registry in front of it: the
+value just added would not complete until the file was saved, which is
+not a behaviour anyone would report as a bug rather than as magic."
+  (org-agents-test--with-registry org-agents-test--registry-example
+    (let ((reads 0)
+          (real (symbol-function 'org-agents--attributes-read)))
+      (cl-letf (((symbol-function 'org-agents--attributes-read)
+                 (lambda (&rest args) (cl-incf reads) (apply real args))))
+        (org-agents-attributes)
+        (org-agents-attribute "STATUS")
+        (org-agents-attributes)
+        (should (= 1 reads))
+        (with-current-buffer (find-file-noselect registry)
+          (goto-char (point-max))
+          (insert "\n* EXTRA\n:PROPERTIES:\n:ATTR_TYPE: string\n:END:\n"))
+        (should (buffer-modified-p (find-buffer-visiting registry)))
+        (should (org-agents-attribute "EXTRA"))
+        (should (= 2 reads))
+        (should (member "EXTRA" (org-agents-attributes)))
+        (should (= 2 reads))))))
+
+(ert-deftest org-agents-test-attributes-malformed-entry-named-once ()
+  "A bad type costs its entry, is named, and is named exactly once.
+Once falls out of where the diagnosis is emitted: the READER says it, and
+the reader runs at most once per edit however many times the registry is
+looked up afterwards.  A re-read after an edit says it again, which is
+right -- the user has just been editing the file."
+  (org-agents-test--with-registry "\
+* GOOD
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+* BAD
+:PROPERTIES:
+:ATTR_TYPE: colour
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (org-agents-attribute "GOOD"))
+                   (should-not (org-agents-attribute "BAD"))
+                   (should (equal '("GOOD") (org-agents-attributes))))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "BAD" (car texts)))
+      (should (string-match-p "colour" (car texts))))))
+
+(ert-deftest org-agents-test-attributes-bad-default-keeps-the-attribute ()
+  "A default that does not parse costs the DEFAULT, not the declaration.
+Two tiers, and this is the cheap one: an attribute whose type is sound is
+worth completing and worth linting against, whatever its default says."
+  (org-agents-test--with-registry "\
+* DUE
+:PROPERTIES:
+:ATTR_TYPE: date
+:ATTR_DEFAULT: soonish
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (org-agents-attribute "DUE")))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "DUE" (car texts)))
+      (should (string-match-p "soonish" (car texts))))
+    (should (eq 'date (plist-get (org-agents-attribute "DUE") :type)))
+    (should-not (plist-get (org-agents-attribute "DUE") :default))))
+
+(ert-deftest org-agents-test-attributes-type-table ()
+  "Every row of the type table, driven through the public predicate.
+The vocabulary argument is what makes one predicate answer for a whole
+property value: a `set' member is a `string', so the only thing left to
+say about it is whether the declaration admits it."
+  (let ((vocabulary '("open" "wip" "blocked" "done")))
+    (pcase-dolist
+        (`(,type ,value ,values ,expected)
+         `((string "anything at all" nil t)
+           (string "" nil t)
+           (string "open" ,vocabulary t)
+           (string "nope" ,vocabulary nil)
+           (string "open wip" ,vocabulary nil)
+           (number "3" nil t)
+           (number "3.5" nil t)
+           (number ".5" nil t)
+           (number "-3" nil t)
+           (number "+3" nil t)
+           (number "1e3" nil nil)
+           (number "3 4" nil nil)
+           (number "" nil nil)
+           (number "many" nil nil)
+           (boolean "true" nil t)
+           (boolean "false" nil t)
+           (boolean "True" nil nil)
+           (boolean "t" nil nil)
+           (boolean "" nil nil)
+           (set "open wip" ,vocabulary t)
+           (set "open open" ,vocabulary nil)
+           (set "nope" ,vocabulary nil)
+           (set "" ,vocabulary t)
+           (set "open wip" nil t)
+           (list "open open" ,vocabulary t)
+           (list "wip open" ,vocabulary t)
+           (list "nope" ,vocabulary nil)
+           (list "" ,vocabulary t)))
+      (should (eq (and (org-agents-attribute-valid-p type value values) t)
+                  expected)))
+    ;; `:ETC' is Org's marker for "these are defaults, other values
+    ;; allowed", so a vocabulary carrying it restricts nothing.
+    (should (org-agents-attribute-valid-p 'string "nope" '("open" ":ETC")))
+    (should (org-agents-attribute-valid-p 'set "open nope" '("open" ":ETC")))
+    ;; And it is not itself a value: a set may not repeat, `:ETC' included.
+    (should-not (org-agents-attribute-valid-p 'set "open open"
+                                              '("open" ":ETC")))))
+
+(ert-deftest org-agents-test-attributes-date-rejects-an-impossible-calendar ()
+  "A date must parse AND name a day that exists.
+Measured: `org-parse-time-string' reads `[2020-13-45 Xyz]' without
+complaint and `[2020-02-30 Sun]' too, so the syntax check alone admits
+two dates no calendar has.  The round trip through `encode-time' is what
+catches them -- 45/13/2020 comes back as 14/2/2021."
+  (dolist (value '("[2020-01-01 Wed]" "<2020-01-01 Wed 10:00>" "2020-01-01"
+                   "[2020-01-01]" "<2020-02-29 Sat>"))
+    (should (org-agents-attribute-valid-p 'date value)))
+  (dolist (value '("[2020-02-30 Sun]" "[2020-13-45 Xyz]" "[2021-02-29 Mon]"
+                   "not a date" "" "10:00" "2020"))
+    (should-not (org-agents-attribute-valid-p 'date value))))
+
+(ert-deftest org-agents-test-attributes-reserved-section-is-silent ()
+  "The one reserved heading declares nothing and is not complained about.
+Epic 3 puts its prototypes in a top-level section of this same file.
+Reserving the name now is what keeps that epic from having to change this
+reader's contract in order to add one heading."
+  (org-agents-test--with-registry "\
+* Prototypes
+** A prototype
+:PROPERTIES:
+:STATUS: open
+:END:
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (equal '("STATUS") (org-agents-attributes))))))
+      (should-not texts))))
+
+(ert-deftest org-agents-test-attributes-duplicate-first-wins ()
+  "A name declared twice keeps its FIRST declaration, and says so once."
+  (org-agents-test--with-registry "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE: set
+:END:
+* status
+:PROPERTIES:
+:ATTR_TYPE: number
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (equal '("STATUS") (org-agents-attributes))))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "declared twice" (car texts))))
+    (should (eq 'set (plist-get (org-agents-attribute "STATUS") :type)))))
+
+(ert-deftest org-agents-test-attributes-heading-must-be-a-property-name ()
+  "A heading Org could not read as a property key declares nothing."
+  (org-agents-test--with-registry "\
+* Ship it
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (equal '("STATUS") (org-agents-attributes))))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "Ship it" (car texts)))
+      (should (string-match-p "not a property name" (car texts))))))
+
+(ert-deftest org-agents-test-attributes-faces-parsed-not-applied ()
+  "`:ATTR_FACES:' is parsed and STORED, and nothing here applies it.
+Epic 4 is what consumes it.  Reading it now costs nothing and means the
+registry file's format does not have to change to gain a feature.
+
+`PARTIAL' is the case that pays for the all-or-nothing rule: a value
+whose LAST group is short parses into pairs perfectly well, and a reader
+that kept them would silently drop the group it could not read.  Naming
+the whole line unreadable is what makes that visible."
+  (org-agents-test--with-registry "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:  set
+:ATTR_FACES: blocked org-warning | done org-done
+:END:
+* BROKEN
+:PROPERTIES:
+:ATTR_TYPE:  string
+:ATTR_FACES: blocked
+:END:
+* PARTIAL
+:PROPERTIES:
+:ATTR_TYPE:  string
+:ATTR_FACES: blocked org-warning | done
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (org-agents-attribute "BROKEN"))
+                   (should (org-agents-attribute "PARTIAL")))))
+      (should (= 2 (length texts)))
+      (dolist (name '("BROKEN" "PARTIAL"))
+        (should (cl-find-if (lambda (text)
+                              (and (string-match-p name text)
+                                   (string-match-p "unreadable :ATTR_FACES:"
+                                                   text)))
+                            texts))))
+    (should (equal '(("blocked" . org-warning) ("done" . org-done))
+                   (plist-get (org-agents-attribute "STATUS") :faces)))
+    (should-not (plist-get (org-agents-attribute "BROKEN") :faces))
+    (should-not (plist-get (org-agents-attribute "PARTIAL") :faces))
+    (should (eq 'string (plist-get (org-agents-attribute "BROKEN") :type)))
+    (should (eq 'string (plist-get (org-agents-attribute "PARTIAL") :type)))))
+
+(ert-deftest org-agents-test-attributes-special-property-is-named ()
+  "A declaration Org's own vocabulary already owns is kept, and named.
+Fourteen names never reach `org-property-allowed-value-functions' at all
+-- `org-property-get-allowed-values' answers for them in clauses above
+the hook -- so completion for one of them is impossible however it is
+declared.  The declaration is still worth keeping: the lint reads it."
+  (org-agents-test--with-registry "\
+* TAGS
+:PROPERTIES:
+:ATTR_TYPE: list
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (org-agents-attribute "TAGS")))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "TAGS" (car texts)))
+      (should (string-match-p "special property" (car texts))))))
+
+(ert-deftest org-agents-test-attributes-empty-drawer-field-is-no-field ()
+  "A field written with nothing after it means the field is not there.
+`org-agents--entry-get' is what says so, and it says it for the registry
+in the same words it says it for an agent's properties."
+  (org-agents-test--with-registry "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_DEFAULT:
+:ATTR_VALUES:
+:ATTR_FACES:
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (org-agents-attribute "STATUS")))))
+      (should-not texts))
+    (should-not (plist-get (org-agents-attribute "STATUS") :default))
+    (should-not (plist-get (org-agents-attribute "STATUS") :values))
+    (should-not (plist-get (org-agents-attribute "STATUS") :faces))
+    ;; And no body is no documentation, rather than an empty string.
+    (should-not (plist-get (org-agents-attribute "STATUS") :doc))))
+
+(ert-deftest org-agents-test-attributes-boolean-values-are-not-declared ()
+  "`:ATTR_VALUES:' on a boolean is named, and the pair still stands."
+  (org-agents-test--with-registry "\
+* OPEN
+:PROPERTIES:
+:ATTR_TYPE:   boolean
+:ATTR_VALUES: yes no
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should (org-agents-attribute "OPEN")))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "no meaning for a boolean" (car texts))))
+    (should (equal '("true" "false")
+                   (plist-get (org-agents-attribute "OPEN") :values)))))
+
+(ert-deftest org-agents-test-attributes-no-type-is-no-declaration ()
+  "A top-level entry with no `:ATTR_TYPE:' is skipped, and named.
+Which is exactly what catches the trap in this file format: Org reads a
+property drawer only from immediately under the heading, so a drawer
+written after the body text is not a property drawer at all and the entry
+looks, correctly, like one that declares no type."
+  (org-agents-test--with-registry "\
+* LATE
+Documentation first, drawer after -- which Org does not read.
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+"
+    (let ((texts (org-agents-test--messages
+                   (should-not (org-agents-attributes)))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "LATE" (car texts)))
+      (should (string-match-p "no :ATTR_TYPE:" (car texts))))))
 
 ;;;; Collection
 

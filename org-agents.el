@@ -132,6 +132,41 @@
 ;;     diff of a saved update shows the stamp even where the render
 ;;     itself did not move.
 ;;
+;; The attribute registry:
+;;
+;; Beside the agents there is an optional second file, named by
+;; `org-agents-attributes-file', which declares the corpus's own user
+;; attributes.  Each of its top-level entries declares one: the heading
+;; is the attribute's name, the body is its documentation, and the drawer
+;; carries the declaration.
+;;
+;;   :ATTR_TYPE:    string, number, date, boolean, set or list.
+;;                  Required; the property is what makes an entry a
+;;                  declaration.  `set' and `list' are Tinderbox's --
+;;                  unordered-unique and ordered -- and their members are
+;;                  separated by whitespace, as Org's own `NAME_ALL'
+;;                  convention separates values.
+;;   :ATTR_VALUES:  the values the attribute admits, whitespace
+;;                  separated.  A trailing `:ETC' leaves the vocabulary
+;;                  open, which is Org's own spelling of that.
+;;   :ATTR_DEFAULT: the default, as text.
+;;   :ATTR_FACES:   `VALUE FACE | VALUE FACE ...', parsed and stored and
+;;                  consumed by nothing yet.
+;;
+;; The drawer must sit immediately under the heading, where Org keeps a
+;; property drawer.  One written after the body text is not a property
+;; drawer at all, and the entry is reported as declaring no type.
+;;
+;; It is PURE DATA.  Every field is read with `org-entry-get' and used as
+;; a string, as one of six symbols out of a fixed table, or as a face
+;; name; there is nothing a registry file can hold that this package will
+;; evaluate.  A missing or unreadable registry declares nothing and says
+;; nothing about it, and a malformed entry is named once and skipped --
+;; a bad type costs its entry, a bad anything-else costs only that field.
+;; The file is read lazily and at most once per edit, including an edit
+;; not yet saved.  See `org-agents-attribute' for the declaration a
+;; reader gets back, and docs/attributes-example.org for a whole file.
+;;
 ;; Updating on save:
 ;;
 ;; Besides `org-agents-update', `org-agents-update-buffer' and
@@ -2089,6 +2124,434 @@ marker rather than let this comparison quietly stop being made."
                                     (org-agents--self-match-p element self))
                                   matches)))
       (if limit (take limit matches) matches))))
+
+;;;; Registry
+
+;; A corpus-wide attribute registry: one Org file whose every top-level
+;; entry declares one user attribute -- its type, its default, the
+;; values it admits, the faces it is drawn in, and what it is for.  The
+;; heading is the name, the drawer carries the fields, and the body is
+;; the documentation.
+;;
+;; PURE DATA, and that is a property of the format rather than a promise
+;; about it.  Every field is read with `org-entry-get' and used as a
+;; string, as one of six symbols out of a fixed table, or as a face
+;; name: there is nothing a registry file can hold that this package
+;; will `eval', `read', or run.  Contrast `:AGENT_QUERY:', which is Lisp
+;; and is gated for exactly that reason.
+;;
+;; Below Collection rather than above it because everything here reads a
+;; drawer through `org-agents--entry-get', and because
+;; `org-agents-check-attributes' resolves its scope through
+;; `org-agents--narrowed-files'.  The dependencies all point upward.
+
+(defcustom org-agents-attributes-file "~/org/attributes.org"
+  "The Org file declaring this corpus's user attributes.
+Each top-level entry declares one: the heading is the attribute's name,
+the drawer carries `:ATTR_TYPE:', `:ATTR_DEFAULT:', `:ATTR_VALUES:' and
+`:ATTR_FACES:', and the body is its documentation.  See
+`org-agents-attribute' for the declaration a reader gets back, and
+`org-agents-attribute-valid-p' for what each type admits.
+
+The file is optional.  One that is missing or unreadable declares
+nothing, and says nothing about it.
+
+Pure data.  Nothing in this file is ever evaluated, and there is no
+value it can hold that this package will run.
+
+Risky all the same: it says which file gets opened and read on every
+property completion in every Org buffer, and what values that completion
+then offers -- so a file-local setting could point it at a file outside
+the corpus and quietly change the vocabulary the user is offered."
+  :type 'file
+  :risky t
+  :group 'org-agents)
+
+(defconst org-agents--attribute-types '(string number date boolean set list)
+  "The values `:ATTR_TYPE:' may take.
+`set' and `list' are Tinderbox's: a set is unordered and deduplicating, a
+list is ordered and admits duplicates.  Tinderbox separates their members
+with semicolons; here they are separated by WHITESPACE, which is what
+Org's own `NAME_ALL' convention uses and therefore what
+`org-property-get-allowed-values' already reads.")
+
+(defconst org-agents--attribute-type-names
+  (mapcar #'symbol-name org-agents--attribute-types)
+  "`org-agents--attribute-types' as text, for comparing an unread type.
+A type is compared as a STRING before it is interned: `intern' of a
+misspelling would answer a symbol that is not in the table but is now in
+the obarray, and `intern-soft' would answer non-nil for a misspelling
+some other library had already interned.")
+
+(defconst org-agents--attribute-boolean-values '("true" "false")
+  "What a `boolean' attribute may hold, and the only values it completes.
+Tinderbox's spelling: unquoted keywords, lower case, and no others --
+`t', `yes' and `True' are not booleans.  Synthesized by the READER onto
+every boolean declaration, so completion needs no type dispatch and the
+lint's vocabulary check and its type check are one check.")
+
+(defconst org-agents--attr-number-re
+  "\\`[+-]?\\(?:[0-9]+\\(?:\\.[0-9]*\\)?\\|\\.[0-9]+\\)\\'"
+  "What a `number' attribute's value must look like, whole.
+A signed integer or decimal, and NO exponent: Tinderbox's numbers are
+\"int or float, signed\", and `1e3' in a drawer is far more likely to be
+a product code than a thousand.  Anchored at both ends, so `3 4' -- which
+is what `org-entry-get' answers for a `:N: 3' beside a `:N+: 4' -- is not
+a number, and is reported as one thing rather than passing as two.")
+
+(defconst org-agents--attributes-reserved '("Prototypes")
+  "Top-level registry headings that declare no attribute.
+Skipped SILENTLY, where any other top-level entry with no `:ATTR_TYPE:'
+is named.  `Prototypes' is reserved here, in this epic, because Epic 3
+puts its prototype entries in a top-level section of this same file --
+and reserving the name now is what keeps that epic from having to change
+this reader's contract in order to add one heading.")
+
+(defvar org-agents--attributes-cache nil
+  "`(KEY . ALIST)' for the registry as last read, or nil.
+KEY is `org-agents--attributes-cache-key' as it stood at the time of the
+read, and ALIST is `(NAME . PLIST)' in file order.  One cons rather than
+a hash table keyed by file name: `org-agents-attributes-file' names ONE
+file, and a table keyed on it would grow one entry that never got a
+second.")
+
+(defun org-agents--attr-warn (name file reason)
+  "Say that the registry entry NAME in FILE is REASON.
+Said once per edit to the registry however many times a declaration is
+looked up afterwards, because this is called from the READER and
+`org-agents--attributes-alist' calls that at most once per cache key.  A
+re-read after an edit says it again, which is right: the user has just
+been editing the file.
+
+A `message' and not a `user-error': a registry with one bad entry
+declares the other forty, and a completion that signalled would make the
+whole file unusable until it was perfect."
+  (message "org-agents: attribute `%s' in %s: %s"
+           name (abbreviate-file-name file) reason))
+
+(defun org-agents--attr-split (value)
+  "The whitespace-separated members of VALUE, as a list.
+Empty members are dropped, so a value padded or doubly spaced has the
+members it looks like it has.  The separator is whitespace because that
+is what Org's own `NAME_ALL' convention uses."
+  (split-string (or value "") nil t))
+
+(defun org-agents--attr-parse-faces (raw)
+  "Read RAW as `VALUE FACE | VALUE FACE ...', or nil when it is not that.
+Nil for anything that does not split cleanly into two-word groups, so a
+misspelled line costs the faces and not the declaration.
+
+Deliberately not `read': the registry is data, and a `read' here would be
+the one place in it where a file could hand this package a form.  `intern'
+rather than `intern-soft' because a face this names may well be defined
+after the registry is first read, and a symbol is not a value that runs."
+  (let ((pairs nil)
+        (clean t))
+    (dolist (group (split-string (or raw "") "|" t))
+      (let ((words (split-string group nil t)))
+        (if (= 2 (length words))
+            (push (cons (car words) (intern (cadr words))) pairs)
+          (setq clean nil))))
+    (and clean pairs (nreverse pairs))))
+
+(defun org-agents--attr-vocabulary-ok-p (member values)
+  "Non-nil when MEMBER is admitted by the declared VALUES.
+Nil VALUES declares no vocabulary at all and admits everything.
+
+So does a vocabulary holding `\":ETC\"'.  That is Org's own marker for
+\"these are defaults, other values should be allowed too\" -- see
+`org-property-allowed-value-functions' -- and a lint that reported a
+value outside an explicitly OPEN vocabulary would be reporting the
+declaration rather than the value.  `\":ETC\"' is never itself a
+member: it is a word about the set, not one of its elements."
+  (and (not (equal member ":ETC"))
+       (or (null values)
+           (and (member ":ETC" values) t)
+           (and (member member values) t))))
+
+(defun org-agents--attr-date-p (value)
+  "Non-nil when VALUE names a day that exists.
+Two halves, and both are needed.  MEASURED: `org-parse-time-string' reads
+`[2020-13-45 Xyz]' as day 45 of month 13 and `[2020-02-30 Sun]' as the
+thirtieth of February, without complaint in either case -- so the syntax
+check alone admits two dates no calendar has.  The round trip through
+`encode-time' and `decode-time' is what catches them: 45/13/2020 comes
+back as 14/2/2021.
+
+`org-timestamp-from-string' is not used, and this is why: MEASURED, it
+accepts that same impossible `[2020-13-45 Xyz]' and REJECTS the plain
+`2020-01-01' a user will certainly write, and it needs `org-element'
+loaded or it dies with a void function in batch."
+  (when-let* ((parsed (ignore-errors (org-parse-time-string value t)))
+              (day (nth 3 parsed))
+              (month (nth 4 parsed))
+              (year (nth 5 parsed)))
+    (let ((back (decode-time
+                 (encode-time (list 0 0 12 day month year nil -1 nil)))))
+      (and (= day (nth 3 back))
+           (= month (nth 4 back))
+           (= year (nth 5 back))))))
+
+(defun org-agents-attribute-valid-p (type value &optional values)
+  "Non-nil when VALUE is a valid value of TYPE, admitting only VALUES.
+TYPE is one of `org-agents--attribute-types' and VALUE is the text of a
+property, which is all an Org property value ever is.  VALUES is the
+declared vocabulary, `:ATTR_VALUES:' split into members; nil declares
+none and admits anything the type does.
+
+  `string'   any text.  With VALUES, the whole trimmed value must be a
+             member -- compared case-SENSITIVELY, because a declared
+             vocabulary is one the user wrote down.
+  `number'   `org-agents--attr-number-re': signed integer or decimal.
+  `date'     `org-agents--attr-date-p': parses, and names a real day.
+  `boolean'  `true' or `false', and nothing else.  VALUES is ignored:
+             the type already fixes the set, and the reader synthesizes
+             it rather than reading one.
+  `set'      every whitespace-separated member is admitted by VALUES,
+             and NO member repeats.  The empty set is valid.
+  `list'     every member is admitted by VALUES.  Duplicates are fine
+             and order is significant.
+
+Answers about a whole property value, so `set' and `list' fall out of the
+same vocabulary rule one member at a time.  It is a predicate and not a
+diagnosis: the caller that wants to tell \"outside the vocabulary\" from
+\"not of the type\" asks twice, once without VALUES."
+  (let ((text (string-trim (or value ""))))
+    (pcase type
+      ('string (org-agents--attr-vocabulary-ok-p text values))
+      ('number (and (string-match-p org-agents--attr-number-re text)
+                    (org-agents--attr-vocabulary-ok-p text values)))
+      ('date (and (org-agents--attr-date-p text)
+                  (org-agents--attr-vocabulary-ok-p text values)
+                  t))
+      ('boolean (and (member text org-agents--attribute-boolean-values) t))
+      ((or 'set 'list)
+       (let ((members (org-agents--attr-split text)))
+         (and (cl-every (lambda (member)
+                          (org-agents--attr-vocabulary-ok-p member values))
+                        members)
+              (or (eq type 'list)
+                  (= (length members)
+                     (length (delete-dups (copy-sequence members))))))))
+      (_ nil))))
+
+(defun org-agents--attr-special-p (name)
+  "Non-nil when Org answers for NAME before this package is ever consulted.
+`org-property-get-allowed-values' answers for `TODO' and `PRIORITY' out
+of clauses of its own, returns nil for `CATEGORY' and for every member of
+`org-special-properties', and only then runs
+`org-property-allowed-value-functions'.  So no declaration of such a name
+can complete anything, whatever it says.
+
+The declaration is still worth keeping: `org-agents-check-attributes'
+reads it, and a corpus that sets `:TAGS:' by hand in a drawer is a corpus
+worth linting."
+  (and (member-ignore-case name (cons "CATEGORY" org-special-properties)) t))
+
+(defun org-agents--attr-doc ()
+  "The documentation body of the registry entry at point, or nil for none.
+Everything after the heading's own metadata -- its planning line and its
+drawers -- down to the next heading of any level.  The next heading and
+not the end of the subtree, so that a section holding child entries
+documents itself rather than quoting its children.
+
+Blank throughout is no documentation rather than the empty string, which
+is the same rule `org-agents--entry-get' applies to a drawer field."
+  (save-excursion
+    (org-back-to-heading t)
+    (org-end-of-meta-data t)
+    (let* ((start (point))
+           (end (if (org-at-heading-p)
+                    start
+                  (if (outline-next-heading) (point) (point-max))))
+           (text (string-trim (buffer-substring-no-properties start end))))
+      (unless (string-empty-p text) text))))
+
+(defun org-agents--attr-declaration (name type file line warn)
+  "The declaration at point: NAME, of TYPE, declared in FILE at LINE.
+WARN is called with one string for each field that had to be discarded,
+and for a name whose completion Org will never reach.  Point is on the
+heading, and every field is read out of that entry's OWN drawer through
+`org-agents--entry-get' -- no inheritance, and a field written with
+nothing after it is a field that is not there.
+
+`:default' stays the trimmed STRING the file holds, never a parsed number
+or a decoded time.  An Org property value is a string: the lint compares
+strings, and a later epic will write this one into a follower's drawer.
+The parse happens here only to DIAGNOSE it, and its result is thrown
+away."
+  (let* ((raw-values (org-agents--entry-get "ATTR_VALUES"))
+         (values (if (eq type 'boolean)
+                     (progn
+                       (when raw-values
+                         (funcall warn (concat ":ATTR_VALUES: has no meaning"
+                                               " for a boolean")))
+                       (copy-sequence org-agents--attribute-boolean-values))
+                   (and raw-values (org-agents--attr-split raw-values))))
+         (raw-faces (org-agents--entry-get "ATTR_FACES"))
+         (faces (and raw-faces (org-agents--attr-parse-faces raw-faces)))
+         (default (org-agents--entry-get "ATTR_DEFAULT")))
+    (when (and raw-faces (null faces))
+      (funcall warn (format "unreadable :ATTR_FACES: `%s'" raw-faces)))
+    (when (and default
+               (not (org-agents-attribute-valid-p type default values)))
+      (funcall warn (format ":ATTR_DEFAULT: `%s' is not a %s" default type))
+      (setq default nil))
+    (when (org-agents--attr-special-p name)
+      (funcall warn (format (concat "`%s' is a special property;"
+                                    " no completion is possible for it")
+                            name)))
+    (list :name name :type type :values values :default default
+          :faces faces :doc (org-agents--attr-doc)
+          :file file :line line)))
+
+(defun org-agents--attributes-scan (file)
+  "Read every declaration in the current buffer, which holds FILE's text.
+FILE is named only so that a diagnosis can say where an entry is and a
+declaration can carry `:file'; the text comes from this buffer.  The
+answer is an alist of `(NAME . PLIST)' in file order.
+
+Two tiers of malformation, and the distinction is the whole of the
+policy: a bad TYPE costs the entry, a bad anything-else costs only that
+field.  An entry with no readable type declares nothing that could be
+completed or linted, while one whose default does not parse still has a
+type worth both."
+  (let ((declarations nil))
+    (goto-char (point-min))
+    (org-map-entries
+     (lambda ()
+       (let* ((name (org-get-heading t t t t))
+              (line (line-number-at-pos))
+              (type (org-agents--entry-get "ATTR_TYPE"))
+              (warn (lambda (reason)
+                      (org-agents--attr-warn name file reason))))
+         (cond
+          ((member name org-agents--attributes-reserved))
+          ((not (and name (org--valid-property-p name)))
+           (funcall warn (format "`%s' is not a property name" name)))
+          ((null type) (funcall warn "no :ATTR_TYPE:"))
+          ((not (member type org-agents--attribute-type-names))
+           (funcall warn (format "unknown :ATTR_TYPE: `%s'" type)))
+          ((assoc-string name declarations t)
+           (funcall warn "declared twice; the first declaration stands"))
+          (t (push (cons name (org-agents--attr-declaration
+                               name (intern type) file line warn))
+                   declarations)))))
+     "LEVEL=1")
+    (nreverse declarations)))
+
+(defun org-agents--attributes-read (file)
+  "FILE's declarations as an alist of `(NAME . PLIST)', in file order.
+Scanned in a temporary buffer, filled either from the BUFFER visiting
+FILE where there is one or from the file itself.  Three things fall out
+of that, and all three are wanted:
+
+  - An UNSAVED edit to the registry is what the next completion sees.
+    That is the case that matters: the user adds a value to
+    `:ATTR_VALUES:' and expects the very next `org-set-property' to
+    complete it.
+  - Nothing here visits the registry.  `find-file-noselect' would leave
+    the user's own file visited by a buffer they never opened -- and it
+    would flip `org-agents--attributes-cache-key' from its file half to
+    its buffer half on the very first read, forcing a second one.
+  - The scan runs in an Org buffer of this function's own making, so it
+    cannot move point in a buffer the user is editing, and needs no
+    opinion about the mode that buffer happens to be in.
+
+Never signals.  The caller has established that FILE is readable, and a
+file that stops being readable between that test and this read declares
+nothing and is named once: an error raised here would reach the user out
+of `org-set-property' in some entirely unrelated buffer."
+  (condition-case err
+      (let ((text (when-let* ((buffer (find-buffer-visiting file)))
+                    (with-current-buffer buffer
+                      (save-restriction
+                        (widen)
+                        (buffer-substring-no-properties (point-min)
+                                                        (point-max)))))))
+        (with-temp-buffer
+          (if text (insert text) (insert-file-contents file))
+          (let ((org-inhibit-startup t)
+                (org-element-use-cache nil))
+            (delay-mode-hooks (org-mode))
+            (org-agents--attributes-scan file))))
+    (error (message "org-agents: cannot read %s: %s"
+                    (abbreviate-file-name file) (error-message-string err))
+           nil)))
+
+(defun org-agents--attributes-cache-key (file)
+  "What the registry cache is keyed on, or nil when FILE cannot be read.
+Two halves, because the registry is a FILE that may or may not be
+visited.  Where a buffer is visiting it, the key carries that buffer and
+its `buffer-chars-modified-tick' -- the same pair `org-ql--value-at' keys
+its own node cache on -- so an UNSAVED edit invalidates.  Where no buffer
+is visiting it, there is no tick to read and the key is the file's
+modification time and size, which is all `file-attributes' has to offer.
+
+Nil for a file that cannot be read, which is how a missing registry
+declares nothing without anything being opened to find that out."
+  (when (file-readable-p file)
+    (let* ((true (file-truename file))
+           (buffer (find-buffer-visiting true)))
+      (if buffer
+          (list true buffer (buffer-chars-modified-tick buffer))
+        (let ((attributes (file-attributes true)))
+          (list true
+                (file-attribute-modification-time attributes)
+                (file-attribute-size attributes)))))))
+
+(defun org-agents--attributes-alist ()
+  "The registry's declarations, read at most once per edit to the file.
+A file that is missing or unreadable declares NOTHING and says nothing
+about it: the registry is optional, and a package that reported its
+absence would report it at every property completion in every Org
+buffer.
+
+The unreadable branch CLEARS the cache rather than answering from it.  A
+registry that has been deleted declares nothing from that moment, and
+going on answering what it used to say would be a stale answer with no
+way back to a true one."
+  (let* ((file (expand-file-name org-agents-attributes-file))
+         (key (org-agents--attributes-cache-key file)))
+    (cond
+     ((null key) (setq org-agents--attributes-cache nil))
+     ((equal key (car org-agents--attributes-cache))
+      (cdr org-agents--attributes-cache))
+     (t (cdr (setq org-agents--attributes-cache
+                   (cons key (org-agents--attributes-read file))))))))
+
+(defun org-agents-attribute (name)
+  "The registry's declaration of NAME as a plist, or nil when it has none.
+NAME is matched case-insensitively, which is how Org matches a property
+key: a drawer line reading `:status: open' is a value of a declared
+`STATUS'.
+
+The plist, in this order:
+
+  `:name'     the name as the registry spells it.
+  `:type'     one of `org-agents--attribute-types'.
+  `:values'   `:ATTR_VALUES:' split into members, or nil for a name that
+              declares no vocabulary.  A `boolean' answers
+              `org-agents--attribute-boolean-values', which is in no
+              drawer: the reader synthesizes it.
+  `:default'  `:ATTR_DEFAULT:' as TEXT, or nil where there is none or
+              where what was written does not parse as the type.
+  `:faces'    `((VALUE . FACE) ...)', parsed and stored and consumed by
+              nothing in this epic.
+  `:doc'      the entry's body, or nil.
+  `:file'     the registry, expanded.
+  `:line'     the heading's line in it, so that a diagnosis about the
+              registry itself is as navigable as one about the corpus.
+
+Reads through `org-agents--attributes-alist', so the file is opened at
+most once per edit to it."
+  (cdr (assoc-string name (org-agents--attributes-alist) t)))
+
+(defun org-agents-attributes ()
+  "The names the registry declares, in the order the file declares them.
+File order rather than sorted: the registry is a document, and the order
+its author chose is information."
+  (mapcar #'car (org-agents--attributes-alist)))
 
 ;;;; Links
 

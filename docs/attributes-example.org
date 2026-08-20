@@ -1,0 +1,109 @@
+#+title: A worked attribute registry
+#+startup: showeverything
+
+This is a whole =org-agents= attribute registry, written out so that the
+format can be read rather than inferred. It is *documentation*: nothing
+reads this file at runtime. Point =org-agents-attributes-file= at your own
+copy — the default is =~/org/attributes.org= — which the package will never
+create for you and never assumes exists.
+
+Two rules before the entries, because both are easy to get wrong once and
+then wonder about for an afternoon.
+
+*The drawer goes immediately under the heading.* Org keeps a property
+drawer there and =org-get-property-block= looks nowhere else, so a drawer
+written after the body text is not a property drawer at all. The reader
+diagnoses such an entry as declaring no =ATTR_TYPE=, which is exactly what
+it looks like from Org's side.
+
+*Members are separated by whitespace, not by semicolons.* Tinderbox
+separates the members of a set or a list with semicolons; here the
+separator is whitespace, because that is what Org's own =NAME_ALL=
+convention uses and therefore what =org-property-get-allowed-values=
+already reads.
+
+* OPEN
+:PROPERTIES:
+:ATTR_TYPE:    boolean
+:ATTR_DEFAULT: false
+:END:
+Whether this item is still open for comment.
+
+A =boolean= admits =true= and =false=, unquoted and lower case, and nothing
+else — not =t=, not =yes=, not =True=. Those two values are in no drawer here:
+the reader synthesizes them onto every boolean declaration, which is why
+completion needs no special case for the type and why the linter's
+vocabulary check and its type check are one check.
+
+* REVIEWS
+:PROPERTIES:
+:ATTR_TYPE:    number
+:ATTR_DEFAULT: 0
+:END:
+How many times this entry has been through review.
+
+A signed integer or decimal, with no exponent: =3=, =3.5=, =.5=, =-3=. The
+whole value must be one number, which is what catches an accumulated
+property — a =:REVIEWS: 3= beside a =:REVIEWS+: 4= reads back as the text
+=3 4=, and that is not a number.
+
+=number= is also the one type =org-agents-attribute-columns= gives a summary
+operator, =+=.
+
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    set
+:ATTR_VALUES:  open wip blocked done
+:ATTR_DEFAULT: open
+:ATTR_FACES:   blocked org-warning | done org-done
+:END:
+Where the item stands. A =set= rather than a =string=: an item may be
+blocked and waiting on review at once, and a set is unordered and admits
+no repeat.
+
+=ATTR_FACES= is parsed and stored and read by nothing today. It is here
+because the format is cheaper to fix now than to change later.
+
+* OWNER
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_VALUES:  johnw alice bob :ETC
+:END:
+Who is carrying this.
+
+The trailing =:ETC= is Org's own marker for "these are defaults, other
+values should be allowed too". It does two things: =org-set-property=
+offers the three names but accepts a fourth, and the linter stops
+reporting a name outside the list — which is the honest reading, since
+the declaration itself says the vocabulary is open.
+
+* TOPICS
+:PROPERTIES:
+:ATTR_TYPE:   list
+:ATTR_VALUES: emacs org lisp nix
+:END:
+What this is about.
+
+A =list= is ordered and admits duplicates, where a =set= is neither.
+Completion offers the members one at a time, which is what completing one
+member of a whitespace-separated value needs.
+
+* DUE
+:PROPERTIES:
+:ATTR_TYPE:    date
+:ATTR_DEFAULT: [2026-12-31 Thu]
+:END:
+When this is wanted by.
+
+A =date= must both parse and name a day that exists. =[2026-12-31 Thu]=,
+=<2026-12-31 Thu 10:00>= and the plain =2026-12-31= are all accepted;
+=[2026-13-45 Xyz]= and =[2026-02-30 Mon]= are not, and it takes a round trip
+through =encode-time= to tell — =org-parse-time-string= reads both of them
+without complaint.
+
+* Prototypes
+This heading is reserved and declares nothing. It is skipped silently,
+where any other top-level entry with no =ATTR_TYPE= is named as
+malformed — the entries under it will be prototypes, in a later epic, and
+reserving the name now is what keeps that epic from having to change the
+reader's contract in order to add one heading.
