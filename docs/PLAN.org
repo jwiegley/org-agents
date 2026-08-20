@@ -491,15 +491,17 @@ defaults. Pure data — nothing to trust, nothing executed.
 ]
 #+end_src
 
-* TODO [#C] The registry file, its reader, and its cache
+* DONE [#C] The registry file, its reader, and its cache
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-attribute-registry-b1j.1
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 00:00]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 00:00]
+:CLOSE_REASON: Done, commits 7b4d9a9..9d30103. Registry reader with a size+mtime cache key; missing/unreadable/malformed registries answer 'nothing declared' or skip-and-name, never error. Verified by the review pass against ~20 hostile shapes (no ATTR_TYPE, bad type, unparsable defaults, case-insensitive duplicates, chmod-000, NUL bytes, unterminated drawer, SETUPFILE fetch refused). Cache proven both ways: 10 lookups cost 1 read; an unsaved buffer edit, set-file-times, and a same-size on-disk rewrite each invalidate.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -541,15 +543,17 @@ follow Tinderbox's meanings: unordered-unique and ordered.
 ]
 #+end_src
 
-* TODO [#C] Completion of declared values corpus-wide
+* DONE [#C] Completion of declared values corpus-wide
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-attribute-registry-b1j.2
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 00:00]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 00:00]
+:CLOSE_REASON: Done, commit f9a9f33 (+ead9fbc). org-agents-allowed-values on org-property-allowed-value-functions. Non-interference verified: an undeclared name returns nil so Org's own NOPE_ALL fallback still wins; a declared name with no ATTR_VALUES also defers; TODO/PRIORITY/CATEGORY declarations cannot shadow Org's clauses; boolean completes (true false), set and list complete per member.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -583,15 +587,17 @@ Completion from the registry.
 ]
 #+end_src
 
-* TODO [#C] org-agents-check-attributes: lint a scope against the registry
+* DONE [#C] org-agents-check-attributes: lint a scope against the registry
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-attribute-registry-b1j.3
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 00:00]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 00:00]
+:CLOSE_REASON: Done, commits 8be1cdf, c476355, 6945050. Lints a scope, edits nothing, read-only compilation-mode report whose findings compilation-next-error parses. Finds all four kinds; says 'no findings' with real counts on a clean corpus; degrades to a live scan with one message under missing rg, prefilter nil, and prefilter require alike. 6945050 fixed a real perf defect found in review: the registry was re-read once per drawer line (600 files 33.93s -> 4.96s). NOTE: corpus-scope remains unusable at 3,634-file scale -- coordinator measured >600s with no report; tracked as b1j.5 with the ripgrep two-tier fix and its 0.15s measurement.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -627,15 +633,17 @@ org-agents-check-attributes: lint a scope against the registry.
 ]
 #+end_src
 
-* TODO [#D] Column formats from the registry, and the org-ql-search recipe
+* DONE [#D] Column formats from the registry, and the org-ql-search recipe
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-attribute-registry-b1j.4
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 00:00]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 00:00]
+:CLOSE_REASON: Done, commits fd57222, bb0f351. org-agents-attribute-columns generates a typed COLUMNS format (numbers get {+}); bb0f351 refuses a name Org would silently truncate. The org-ql-search + org-agenda-columns recipe was RUN in review, not merely documented: 2 result lines carrying org-hd-marker, 10 column overlays matching README's transcript, and an edit through org-columns-edit-value wrote :STATUS: done back to the source file.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -665,6 +673,102 @@ machinery.
     "depends_on_id": "orga-attribute-registry-b1j",
     "type": "parent-child",
     "created_at": "2026-08-20T01:19:23.363723Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* TODO [#C] Make the corpus-scope attribute lint usable via ripgrep
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-attribute-registry-b1j.5
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-20 Thu 00:00]
+:MODIFIED: [2026-08-20 Thu 00:00]
+:CREATED_BY: johnw
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+Make the corpus-scope attribute lint usable: answer the vocabulary half with ripgrep.
+
+## Steps to Reproduce
+
+1. Set `org-agents-attributes-file` to `docs/attributes-example.org` (six declarations).
+2. `(org-agents-check-attributes 'active)` over `~/org` — 3,634 non-archive files.
+3. It does not finish. Measured by the coordinator 2026-08-19: killed at **600 s** with no
+   report produced. Epic 2's own fix-report lists this as known-untried at scale
+   ("the lint's narrowing is still weak by construction and untried at 3,669-file scale").
+
+Expected: a corpus-wide vocabulary report in seconds. The command is most valuable at
+exactly the scope where it currently cannot be run — the first run over the whole corpus is
+how the registry gets seeded.
+
+## Why it is slow, and why that is fixable
+
+The lint asks two different questions and pays Org-parsing cost for both:
+
+- **Which property names are in use but undeclared?** This needs no Org semantics at all.
+  It is a text question about property lines.
+- **Do declared values match their declared type / allowed values?** This genuinely needs
+  per-entry reading — but only for the handful of *declared* names, which the existing
+  ripgrep prefilter already narrows to the files that contain them.
+
+Measured on the same corpus, same machine, 2026-08-19:
+
+| approach | elapsed | result |
+|---|---|---|
+| `org-agents-check-attributes 'active` today | **>600 s (killed)** | no report |
+| one ripgrep run extracting every property name | **0.15 s** | 113 distinct names, 106,372 property lines |
+
+The rg invocation was
+`rg --no-filename -o -r '$1' -e '^[ \t]*:([A-Za-z][A-Za-z0-9_-]*)\+?:' --glob '*.org' --glob '!**/archive/**'`.
+Note it also returns `PROPERTIES` and `END` (17,078 and 16,989 hits), which are drawer
+delimiters and must be excluded, so the real vocabulary is 111 names.
+
+## Proposal — two tiers
+
+1. **Vocabulary tier, ripgrep.** One run over the scope's root yields every property name
+   with a count; subtract the declared set, Org's own vocabulary (`org-special-properties`,
+   `org-default-properties`), the drawer delimiters, and the package's own `ATTR_`/`AGENT_`/
+   `_ALL` names. Report the remainder with counts and one example file:line each. This makes
+   the whole-corpus first run instant. Reuse `org-agents--rg-run`; when ripgrep is
+   unavailable, fall back to the current per-entry walk with a message, exactly as the
+   prefilter does.
+2. **Value tier, prefiltered.** For each *declared* name, narrow with the existing property
+   pattern (`^[ \t]*:NAME\+?:`) and read only the files returned — for `NEXT_REVIEW` that is
+   309 files rather than 3,634. Type and allowed-value checks stay exactly as they are.
+
+Keep a progress reporter on the value tier regardless: a command that reads hundreds of
+files should say so rather than appear hung.
+
+## Acceptance Criteria
+
+- `org-agents-check-attributes 'active` over a 3,600-file corpus produces a vocabulary
+  report in **under 5 seconds**, and the value tier reports progress while it runs.
+- The vocabulary tier's answer is compared, on a fixture corpus, against the current
+  per-entry walk's answer and found identical — the fast path must not report a different
+  vocabulary from the slow one. A test asserts that equivalence.
+- Drawer delimiters (`PROPERTIES`, `END`), Org's own vocabulary, and the package's own
+  namespaces are excluded; a test pins each exclusion by name.
+- With ripgrep absent, behaviour falls back to the current walk with one message and the
+  same findings — never a refusal, matching how the prefilter degrades.
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-attribute-registry-b1j.5",
+    "depends_on_id": "orga-attribute-registry-b1j",
+    "type": "parent-child",
+    "created_at": "2026-08-20T07:00:14.337260Z",
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
