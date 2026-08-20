@@ -825,6 +825,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-update-buffer` | update every agent in the current buffer |
 | `org-agents-update-all` | update every agent in the files `org-agents-files` names |
 | `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded, with `org-agents-exclude` appended, and the appended form gated exactly as an agent's is, over `org-agenda-files` |
+| `org-agents-apply-actions` | apply the `:AGENT_ACTION:` of the agent at point to the entries its query matched. Prints a dry run first — one `FILE:LINE:` line per intended edit, `old -> new` — and writes nothing until that report is agreed to; with a prefix argument the targets are the entries the links in the region name. The only thing in the package that runs an action: never a save, never a timer. See "Action code" |
 | `org-agents-insert-dblock` | insert an empty `org-agents` block at point |
 | `org-agents-attribute-columns` | build a `COLUMNS` format from chosen registry attributes; with a prefix argument write it into the entry at point's `:COLUMNS:`. See "Corpus-wide column view" |
 | `org-agents-check-attributes` | report every property in a scope the attribute registry does not account for — undeclared names, values outside a declared vocabulary, values that do not parse as their declared type. Reports and never edits; the findings land in a `compilation-mode` buffer, so `RET` and `next-error` navigate them |
@@ -844,6 +845,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
 | `org-agents-attributes-file` | `"~/org/attributes.org"` | the Org file declaring the corpus's user attributes. Optional: one that is missing or unreadable declares nothing and says nothing about it, and the package never creates it. See "The attribute registry" below |
+| `org-agents-action-limit` | `100` | how many entries one `org-agents-apply-actions` will edit. Nil for no limit. A plan over more than this is refused rather than truncated, and the gate is on entries rather than on edits. See "Action code" |
 
 Every option in that table is `:risky t`, and so are both of the globalized
 modes' own options, `global-org-agents-mode` and
@@ -855,9 +857,12 @@ program to run (`org-agents-rg-executable`), whether a subprocess is spawned
 at all (`org-agents-prefilter`), which files get opened and *written*
 (`org-agents-files` — an update rewrites aliases), or the record of what has
 already been approved or refused (`org-agents-safe-queries`,
-`org-agents-refused-queries`, `org-agents-refused-heads`). A file that could
-set any of them from its own local-variables block could pre-approve its own
-query, delete a refusal, or name the binary to execute.
+`org-agents-refused-queries`, `org-agents-refused-heads`), or the bound on
+how many entries one command may edit (`org-agents-action-limit` — a file
+that could raise it could have `org-agents-apply-actions` edit the whole
+corpus). A file that could set any of them from its own local-variables
+block could pre-approve its own query, delete a refusal, name the binary to
+execute, or lift the one limit on an action's reach.
 
 The two globalized modes are risky for a reason of their own, since neither
 names Lisp or a program. Turning `global-org-agents-mode` on is what makes
@@ -949,6 +954,383 @@ than committing a render that was interrupted half way through.
 `M-x org-agents-mode` arms one buffer, for someone who would rather say where.
 Hooking it to `org-mode-hook` instead arms every Org buffer whether or not it
 holds an agent, and each of their saves then pays for the scan that finds none.
+
+## Action code
+
+An agent can carry an *action* as well as a query: a declarative sentence in
+`:AGENT_ACTION:` saying what to do to the entries the query matched.
+
+```org
+* Stamp what I have reviewed
+:PROPERTIES:
+:AGENT_QUERY:  (and (todo) (property-ts "NEXT_REVIEW" :to today))
+:AGENT_ACTION: set-property!(REVIEWED, today) tag!(+reviewed)
+:END:
+```
+
+This is the only part of the package that writes outside the agent's own
+file, so the refusals come before the syntax.
+
+### The three refusals, which come before the syntax
+
+**Actions never run on save, on a timer, or from either minor mode.** The
+only thing that runs one is `M-x org-agents-apply-actions`, typed. There is
+no hook, no idle timer, no option, and no `org-agents-update` integration
+that changes that. Saving a file whose agent carries `:AGENT_ACTION:`
+performs no write beyond the ordinary render — the same render it would have
+performed with no action there at all.
+
+That is structural rather than a promise. The action text is not part of the
+plist `org-agents--read-agent` returns, so it does not exist as data anywhere
+on the save path: there is no `:action` for a renderer to reach for, and a
+reader does not have to prove that nobody used it. The one read of the
+property is inside the command. A test *enumerates* every entry point in the
+file — all fifteen autoloads and the six internal write drivers the save path
+is built out of — replaces all nine verbs with a tripwire, and asserts the
+tripwire is never touched, except by `org-agents-apply-actions`, which is
+asserted to touch it so that the tripwire is proved live rather than assumed.
+The list of autoloads is derived from the source text, so a sixteenth fails
+the suite until somebody adds it to the table and exercises it too.
+
+**Actions are not inheritable.** The action is read from the agent entry's
+own drawer, with `org-entry-get` and no inheritance of any kind: not through
+a `:PROTOTYPE:` chain, not from an outline ancestor, not from a
+`#+PROPERTY:` line, not from `org-global-properties`, and not from an
+`:ATTR_DEFAULT:` in the attribute registry. The reason is per-file trust: if
+any of those could supply an action, then the code that edits your corpus
+when you act on file A is written in file B, and reading a file before
+trusting it would mean nothing.
+
+The prototype resolver already refuses every `AGENT_*` name (see
+"Prototypes"), and the command deliberately does not rely on that: a
+guarantee living in another section's regexp is a guarantee one edit away
+from gone. All five donors have a test. That is not belt and braces — a
+prototype master is not an outline ancestor, so a prototype-only test passes
+with the likeliest mutation, an added inherit argument, still in place.
+Measured: with that mutation applied, the prototype test passed and the
+outline and `#+PROPERTY:` tests failed.
+
+**Nothing in `:AGENT_ACTION:` is ever evaluated.** No `read`, no
+`read-from-string`, no `eval`, no `format` into a form, no `macroexpand`, and
+no `intern` of text out of a property. A token becomes a function by *name
+construction* — `org-agents-action/` plus the token — followed by
+`intern-soft` and `fboundp`, so a token that names nothing is a syntax error
+rather than a call, and a misspelling cannot even grow the obarray.
+Arguments reach a verb as strings, verbatim.
+
+### The vocabulary
+
+Nine verbs. Each is one `defun` over one of Org's own entry-editing
+primitives, and each of those primitives is *named once in the whole
+package*: `org-entry-delete`, `org-todo`, `org-set-tags`, `org-priority` and
+`org-archive-subtree` are called in the verb that owns them, and
+`org-schedule` and `org-deadline` are named there and handed to the one
+helper `scheduled!` and `deadline!` share. Nothing else in the file writes a
+keyword, a tag, a planning stamp, a priority, or an archive. That is a
+greppable invariant, and it is what makes the blast radius of this feature
+something you can check rather than take on trust.
+
+| Verb | What it edits | Through | Confirms |
+| --- | --- | --- | --- |
+| `set-property!(NAME, VALUE)` | the property `NAME` | `org-entry-put` | |
+| `delete-property!(NAME)` | removes the property `NAME` | `org-entry-delete` | **every time** |
+| `tag!(+added -removed)` | the entry's own tags | `org-set-tags` | |
+| `todo!(STATE)` | the TODO keyword | `org-todo` | |
+| `priority!(A)` | the priority cookie | `org-priority` | |
+| `scheduled!(DATE)` | the `SCHEDULED` stamp | `org-schedule` | |
+| `deadline!(DATE)` | the `DEADLINE` stamp | `org-deadline` | |
+| `effort!(VALUE)` | `org-effort-property`, normally `Effort` | `org-entry-put` | |
+| `archive!` | archives the subtree | `org-archive-subtree` | **every time** |
+
+Several of them refuse more than Org does, and each refusal is a measured
+hazard rather than fastidiousness.
+
+**`tag!` takes signed terms only, and diverges from org-edna deliberately.**
+`org-edna-action/tag!` hands a whole tag specification to `org-set-tags`,
+which *replaces* the entry's tags. Over an agent's match set that is a
+silent mass deletion, from a verb whose one-word form looks additive. So
+here `tag!(+reviewed)` adds, `tag!(-stale)` removes, `tag!(+reviewed -stale)`
+does both left to right, and `tag!(reviewed)` is refused with a message
+saying to write `+reviewed`. A set-all form, if it is ever wanted, will be a
+different verb and it will be destructive.
+
+**`set-property!` will not write a special property**, and names the verb
+that will. Measured: `org-entry-put` special-cases `TODO`, `PRIORITY`,
+`SCHEDULED` and `DEADLINE`, and for a `SCHEDULED`/`DEADLINE` value that is
+empty or `earlier`/`later` it reaches `call-interactively` on `org-schedule`
+— a prompt from inside a verb, in the middle of a run over a corpus.
+
+**`scheduled!` and `deadline!` check the shape of the date first.** Measured:
+`(org-read-date nil nil "junk")` answers with *today's date*, silently, so
+`(org-schedule nil "nextweek")` schedules today and says nothing at all.
+Ported naively, one misspelled action would mass-schedule a corpus to today.
+The shapes accepted are a date (`2026-08-27`), a date and a time
+(`2026-08-27 14:00`), an offset (`+7d`, `++2w`), `today` and `now`; anything
+else is refused by name. The dry run then shows the computed stamp, so an
+offset is a date you can read before agreeing to it.
+
+**`todo!` checks the state against the keywords of the file the *match* is
+in**, because `org-todo-keywords-1` is buffer-local and a corpus may spell
+different ones file by file. `org-todo` refuses an unknown state anyway; this
+refusal happens in the planning phase instead, so a typo costs a refusal
+rather than half a corpus.
+
+**`archive!` must be the last verb**, and may appear once. It removes the
+subtree a later verb would edit, so the ordering is a parse error rather than
+something an apply pass discovers half way through.
+
+### Value keywords
+
+Three, interpreted by the verbs that take a value — `set-property!` and
+`effort!` — and by nothing else.
+
+| Keyword | Expands to |
+| --- | --- |
+| `today` | an **inactive** date stamp, `[2026-08-20 Thu]` |
+| `now` | an inactive date and time, `[2026-08-20 Thu 14:32]` |
+| `empty` | the empty string |
+
+Inactive deliberately: a value written into a drawer must not put the entry
+on the agenda, which is the same reasoning `:AGENT_MATCHED:` records.
+
+A keyword shadows a literal, and that is the one cost of having keywords at
+all. `set-property!(REVIEWED, today)` cannot store the word *today*. The
+escape hatch is quoting: `set-property!(REVIEWED, "today")` stores the five
+letters. The rule to remember is that **a bare word is literal unless it is
+one of those three, and a quoted argument is always literal.** The table is
+a constant, not an option: it is a vocabulary, nothing configures it, and no
+file can extend it.
+
+### The dry run
+
+`org-agents-apply-actions` reads the action, parses it, computes the match
+set, and then prints one line per intended edit into `*Org Agents Actions*`
+and stops. Nothing has been written at that point. This is a real transcript,
+produced by running it — two files, one of them not open, three matching
+entries, two verbs:
+
+```
+org-agents: 6 edits at 3 entries in 2 files (1 not open before this ran).  Nothing written yet.
+/home/johnw/org/proj.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/proj.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:5: tag!(+reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/notes.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/notes.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
+```
+
+The buffer is `compilation-mode`, so `RET`, `next-error` and `M-g n` navigate
+to every *intended* edit before any of them exists. Then one question:
+
+```
+org-agents: apply 6 edits at 3 entries in 2 files (1 not open before this ran)?
+```
+
+The count of files that were not open is taken *before* the query runs,
+because matching opens them and afterwards there is nothing left to ask.
+Someone about to edit a file they have never opened should be told so in the
+sentence they answer. Where the plan holds a destructive verb the question
+names it: `..., including the destructive archive!`.
+
+Answered `n`, the header changes to `NOTHING WAS APPLIED.` and not one byte
+was written. Answered `y`, each line gains its outcome:
+
+```
+org-agents: 6 edits at 3 entries in 2 files.  Nothing was saved; every edit is undoable per buffer.
+/home/johnw/org/proj.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
+/home/johnw/org/proj.org:1: tag!(+reviewed)  :api: -> :api:reviewed:  applied
+/home/johnw/org/proj.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
+/home/johnw/org/proj.org:5: tag!(+reviewed)  :api: -> :api:reviewed:  applied
+/home/johnw/org/notes.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
+/home/johnw/org/notes.org:1: tag!(+reviewed)  :api: -> :api:reviewed:  applied
+```
+
+```
+org-agents: applied 6, refused 0, failed 0, skipped 0, 0 not attempted; modified proj.org, notes.org; nothing was saved -- see ‘*Org Agents Actions*’
+```
+
+An error, a `no` to a destructive edit, or `C-g` **stops the run at that
+edit**: its own line says `FAILED: ...`, `refused` or `interrupted`, and
+every line after it says `not attempted`. There is no rollback.
+`atomic-change-group` cannot span buffers and a corpus-wide undo does not
+exist, so the honest substitute is that report, `undo` one buffer at a time,
+and the fact that nothing was saved.
+
+**Nothing is saved.** That is what actually bounds a bad run: its worst case
+is *N modified buffers*, reviewable and undoable one at a time, not N
+modified files.
+
+A verb's planning phase is not trusted to write nothing — it is *checked*.
+`buffer-chars-modified-tick` is read before and after every planner call, and
+a tick that moved aborts the whole command naming the verb, before anything
+is applied. Measured, and this is why the tick and not the obvious guard:
+`buffer-read-only` cannot be used, because `org-entry-put` wraps its body in
+`org-no-read-only`, which binds `inhibit-read-only`, and it writes into a
+read-only buffer regardless.
+
+### Stamps: the same command, pointed at a selection
+
+With a prefix argument, `C-u M-x org-agents-apply-actions` acts on the
+entries the links **in the region** name, rather than on the whole match set.
+The action text still comes from the agent's own drawer; only the target set
+changes. So a stamp — "mark these four as reviewed" — is this command
+pointed at a selection, and the region is the selection.
+
+Point has to be inside the agent's own entry, because that is where the
+action is read from. For a list or a table view that is free: the rendered
+block sits inside the agent's entry, so selecting rows of it never moves
+point out of the agent. For a `children` view the aliases are entries of
+their own, so the gesture is point on the agent's heading with the region
+reaching down over the aliases you want.
+
+The region is read from point and the mark, deliberately rather than through
+`use-region-p`: that predicate answers nil wherever `transient-mark-mode` is
+off, which is a setting some people keep. The prefix argument *is* the
+request to use the region. A mark at point is refused as the empty region it
+is, rather than read as a licence to act on everything.
+
+### How much one run may edit
+
+`org-agents-action-limit` is 100 by default: a plan over more entries than
+that is **refused**, naming the count, the limit and the option. Not
+truncated — a truncated plan applies a subset you cannot predict, which is
+worse than a refusal that names the number.
+
+The gate is on *entries* and not on edits, because entries are what you
+reason about: an agent matches four hundred things, not four hundred times
+two verbs. The report shows both numbers. And the limit refuses *before*
+anything is planned, so a refused run costs the match and nothing more; the
+dry run itself is never capped, because a report that understated what
+applying would do is the one thing a report may not do.
+
+There is deliberately no refusal by *scope*. Banning `active` or `all` while
+permitting an explicit four-thousand-file `:AGENT_SCOPE:` list would be
+security by spelling — the prefilter distinguishes cost, not danger. The
+entry count covers both.
+
+An agent that legitimately stamps three thousand entries must raise the limit
+in init before it will run. That is the cost, and it is the right one: the
+three-thousand-entry case is precisely the alarming one, and its enablement
+belongs in the trusted zone. File content may only tighten.
+
+### Destructive verbs, and what batch does
+
+`archive!` and `delete-property!` confirm at **every entry, on every run**.
+There is no remembered approval, no variable, and nothing to set. They
+declare themselves with a symbol property rather than appearing on a list
+here, which is also how a verb of your own declares itself.
+
+Where there is nobody to ask, the answer is a **refusal and not a yes**.
+Measured, all in `emacs -batch`: `(y-or-n-p "ok? ")` with a `y` on standard
+input returns `t`, and with standard input closed it signals `end-of-file`
+from inside whatever called it. So a script, a CI job, or any invocation
+whose stdin happened to carry text would answer yes for you. The check
+therefore comes *before* `y-or-n-p` is called at all — nothing reads stdin
+and nothing can hang. `inhibit-interaction` is honoured the same way, because
+it is a caller's own declaration that it must not be asked.
+
+One consequence worth knowing: in batch, `org-agents-apply-actions` prints
+its dry run and then refuses, whatever the plan holds. The report is still
+there to read. There is no batch mode for applying actions, and that is the
+design.
+
+### The trust model, in plain words
+
+Arguments are **data**. Nothing in `:AGENT_ACTION:` is read as Lisp,
+evaluated, formatted into a form, or interned into a function position. A
+verb is resolved by constructing `org-agents-action/` plus the token and
+asking `fboundp`, so an unknown token is a syntax error naming the token and
+the function that does not exist. An argument that *looks* like Lisp is
+refused by shape — parentheses are outside the bare-argument pattern — and
+`set-property!(X, (shell-command "y"))` is a parse error naming the verb and
+the argument position. Quoting is how you store literal parentheses, and what
+quoting gets you is text: `set-property!(NOTE, "(shell-command \"y\")")`
+stores those characters.
+
+This is where the design parts from org-edna, which lexes its actions with
+`read-from-string`. Measured, as one verb's argument list, that reader
+accepts: `(#$)`, which inside a file being loaded yields that file's own
+name; `(#s(hash-table test equal))`, a live hash table; `(#1=(a . #1#))`, a
+*circular* cons, which `format` `"%s"` prints forever unless `print-circle`
+happens to be bound — a denial of service out of a property; and
+`(#[257 "..." [1] 2])`, a byte-code object, a callable arriving as data. It
+also interns every bare word it passes, so a corpus could grow the obarray,
+and every argument would have to be turned back into a string anyway. The
+regexp lexer refuses all of that by shape.
+
+**So the worst thing expressible in `:AGENT_ACTION:` is a bounded, greppable
+Org edit** — mass retagging, mass property deletion, mass archiving. There is
+no shell, no network, and no file write outside Org's own entry-editing
+primitives. And the bound on a misfire is `org-agents-action-limit` entries,
+in modified buffers, unsaved, undoable one buffer at a time.
+
+Two protections fall out of machinery this feature did not write, and are
+pinned by tests anyway. An agent's action never edits the agent itself,
+because `org-agents--collect` drops the agent from its own match set; and it
+never edits a generated alias, because `org-agents-exclude` defaults to
+`(not (property "AGENT_MATCH"))`. If the self-skip ever regressed, an action
+would rewrite the drawer it was read from.
+
+### Writing a verb of your own
+
+A verb is a `defun` in your init file. Nothing registers anything: the
+namespace *is* the contract.
+
+```elisp
+(defun org-agents-action/shout! (phase name)
+  "Upcase the value of property NAME.
+Syntax: shout!(NAME)"
+  (pcase phase
+    ('plan  (cons (org-entry-get nil name)
+                  (upcase (or (org-entry-get nil name) ""))))
+    ('apply (org-entry-put nil name
+                           (upcase (or (org-entry-get nil name) ""))))))
+
+;; Only if it removes information.
+(put 'org-agents-action/shout! 'org-agents-action-destructive t)
+```
+
+Two phases, one function. `plan` answers `(OLD . NEW)` — each a string or
+nil — and must write nothing; `apply` performs the edit and its return value
+is ignored. Both run at the match, with point on its heading.
+
+Two phases in one `defun` rather than two functions, because a verb whose
+author wrote only the applier would contribute no line to the dry run, and
+the report would silently *understate* what applying is about to do. That is
+the one failure a dry run may not have. As it is, a `plan` phase that
+answers anything but a cons of two strings-or-nil is diagnosed by name.
+
+And a `plan` phase that writes is caught by the tick tripwire, so the dry
+run's honesty does not rest on your discipline either.
+
+Arity comes from `func-arity`, so nothing has to be declared: the first
+parameter is the phase and the rest are the arguments, positionally, each a
+string. Convert a string to something else by *membership in a closed set or
+by a regexp*, and refuse otherwise — never with `read`, `intern` or
+`string-to-number`. The shipped verbs are the worked examples:
+`todo!` checks membership in `org-todo-keywords-1`, `priority!` matches
+`\`[A-Z]\'` and then bounds-checks `aref`, and `effort!` does not convert at
+all because Org's effort values are text.
+
+To mark a verb as one that must come last, as `archive!` is:
+
+```elisp
+(put 'org-agents-action/shout! 'org-agents-action-terminal t)
+```
+
+### What is deliberately not ported
+
+From Tinderbox, whose agents this feature is modelled on:
+
+| Tinderbox | Disposition |
+| --- | --- |
+| `$Rule`, `$Edict` (polled re-evaluation) | Not ported in any form. Every firing would be an uncommitted edit to one of a few thousand git-tracked files, made behind your back. The save-time *render* is already the honest Edict; anything that writes runs only when asked |
+| `$Width`, `$Xpos`, `$Height`, geometry | Not ported; map-view artifacts, and Org has no map view |
+| The alias/original live proxy (`$AgentAction` writing "forward") | Not ported; an Org alias is a link, and a link is not a proxy |
+| `runCommand()`, `eval()`, an in-document function library | Not ported; the trusted zone is init, and a property is data |
+| Inheritable actions | Refused by design, with a test for each of the five donors |
+| Materialised inheritance | Refused by design; prototype reads are virtual |
+
 
 ## Installation
 
@@ -1295,6 +1677,28 @@ buffers once you have worked through the report, with
 `clean-buffer-list`, with `M-x ibuffer` and `* u`, or by restarting the
 session you ran the seeding lint in. Run the `all` scope deliberately
 rather than casually.
+
+### 6. Applying actions over a corpus scope leaves every file in scope visited
+
+`org-agents-apply-actions` reaches its match set through the same
+`org-agents--collect` an update uses, which opens each candidate file with
+`find-file-noselect` and kills nothing afterwards — the footprint
+`org-agents-check-attributes` already admits to above, with one difference
+that matters: some of those buffers are now **modified**. Nothing is saved,
+which is the point, so the corpus on disk is exactly as it was; but a run
+over an `all` scope can leave a few thousand buffers open and some tens of
+them modified, and there is no corpus-wide undo to put them back with. Undo
+is per buffer, and the report in `*Org Agents Actions*` is the list of which
+ones to look at.
+
+The remedies are the ordinary ones and there are two, used together. Keep
+`org-agents-action-limit` low enough that a mistake is reviewable — the
+default of 100 is chosen for that and not for performance. And work through
+the report before doing anything else: `next-error` walks the edits, `undo`
+in a buffer takes back the edits made in it, and `M-x ibuffer` with `* u`
+finds what is still modified. Run an action over an unbounded scope
+deliberately rather than casually, and prefer an explicit `:AGENT_SCOPE:`
+list where you can name the files.
 
 ### Others, less sharp
 

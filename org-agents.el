@@ -70,6 +70,11 @@
 ;;                   name is read as a property at the match.
 ;;   :AGENT_FORMAT:  whitespace-separated property names, shown after the
 ;;                   link in the children and list views.
+;;   :AGENT_ACTION:  what to DO to the entries the query matched, as a
+;;                   declarative sentence: `set-property!(REVIEWED, today)
+;;                   tag!(+reviewed)'.  Read only by
+;;                   `org-agents-apply-actions', from this entry's own
+;;                   drawer, and never evaluated.  See `Actions' below.
 ;;   :AGENT_MATCH:   written by this package on a generated alias, never
 ;;                   by hand.  See the alias contract below.
 ;;   :AGENT_MATCHED: written by this package after an update: how many
@@ -236,6 +241,35 @@
 ;; disk byte-identical, which is the one thing that makes writing
 ;; `:AGENT_MATCHED:' on every save affordable.  A C-g during such an update
 ;; aborts the save along with it.
+;;
+;; Actions:
+;;
+;; An agent may carry an ACTION as well as a query -- `:AGENT_ACTION:',
+;; holding a declarative sentence over a fixed vocabulary of nine verbs,
+;; each of which edits the entries the query matched.  It is the only part
+;; of this package that writes outside the agent's own file, and three
+;; refusals are what make that affordable to reason about.
+;;
+;; It NEVER RUNS ON SAVE, on a timer, or from either minor mode: the only
+;; thing that runs an action is `org-agents-apply-actions', typed.  That is
+;; structural -- the action text is not in the plist `org-agents--read-agent'
+;; answers with, so it does not exist as data anywhere on the save path.  It
+;; is NOT INHERITABLE: read from the entry's own drawer with no INHERIT
+;; argument and never through `org-agents-resolve-property', because if a
+;; prototype, an ancestor, a `#+PROPERTY:' line or `org-global-properties'
+;; could supply one, the code that edits your corpus when you act on file A
+;; would be written in file B.  And NOTHING IN IT IS EVER EVALUATED: the
+;; parser is a regexp lexer, a token becomes a function by name construction
+;; plus `fboundp', and arguments reach a verb as strings.  The worst thing
+;; expressible is a bounded, greppable Org edit.
+;;
+;; What the command does is print a DRY RUN first -- one `FILE:LINE:' line
+;; per intended edit, `old -> new' -- and write nothing until that report is
+;; agreed to.  `archive!' and `delete-property!' confirm at every entry on
+;; every run, and in batch they are refused rather than assumed.  Nothing is
+;; saved, so the worst case of a bad run is N modified buffers.
+;; `org-agents-action-limit' bounds N.  See the `Actions' section at the end
+;; of this file, and README's `Action code'.
 ;;
 ;; Appearance:
 ;;

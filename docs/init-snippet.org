@@ -38,6 +38,18 @@ maps to a face is drawn in that face. Off until asked for, in either of the
 two ways below, and it writes NOTHING — one font-lock keyword, no text, no
 property, no overlay.
 
+Actions are the one feature here that WRITES to the corpus, and nothing about
+them is turned on either — not in the sense the two paragraphs above use
+that phrase, but in a stronger one: there is nothing to turn on. One option
+and one command is the whole of it. =org-agents-apply-actions= exists and
+does absolutely nothing at all until it is typed: no hook, no timer, no save
+and no =org-agents-update= integration reaches it, and a file whose agent
+carries an =:AGENT_ACTION:= saves exactly as one without it renders. The
+option is =org-agents-action-limit=, which bounds how many entries ONE run
+may edit; it is risky, so no file can raise it, and its default of 100 is
+chosen so that a mistake stays reviewable rather than for speed. The last
+section below has a first action to try and what its dry run prints.
+
 The =id:= spelling does lean on one setting that already exists: it resolves
 through =org-id='s location table, so =org-id= must know which file holds the
 master (=org-id-track-globally= on and a populated =org-id-locations-file=, or
@@ -68,6 +80,7 @@ to the position it appears in.
   :commands (org-agents-update
              org-agents-update-buffer
              org-agents-update-all
+             org-agents-apply-actions
              org-agents-preview
              org-agents-list-approvals
              org-agents-check-attributes
@@ -110,6 +123,15 @@ to the position it appears in.
   ;; rather than left at the default only because ~/org is where it
   ;; belongs on this machine and `org-file' is what spells that.
   (org-agents-attributes-file (org-file "attributes.org"))
+  ;; How many entries one `org-agents-apply-actions' will edit.  Left at
+  ;; its default of 100 deliberately: it is the ONE bound on how far an
+  ;; action reaches, a plan over more than it is REFUSED rather than
+  ;; truncated, and the number is chosen so that a mistake stays
+  ;; reviewable -- 100 modified buffers can be read through and undone,
+  ;; and three thousand cannot.  Raise it here, in the trusted zone, for
+  ;; an agent that legitimately stamps a corpus; nothing in a file can.
+  ;; (org-agents-action-limit 100)
+  ;;
   ;; The other six options are best left at their defaults:
   ;; `org-agents-exclude' — (not (property "AGENT_MATCH")) — is what keeps
   ;; agents from consuming each other's aliases;
@@ -257,6 +279,14 @@ No binding is needed for the dynamic block: Org's own =C-c C-x x= offers
 =org-agents= as a block type once the package has loaded, and =C-c C-x C-u=
 updates the block at point.
 
+=org-agents-apply-actions= gets NO binding, and that is a choice rather than
+an omission. It is the one command here that writes outside the file you are
+looking at, and =my-ctrl-c-n-map= has =A= taken anyway; a command whose whole
+value is that it only ever runs when somebody meant it does not want a
+two-keystroke home next to the update commands. =M-x= is the right length for
+it. Bind it later, if ever, once its dry run has stopped being the
+interesting part.
+
 * First agent
 
 Put this in =~/org/agents.org= (which the =:custom= above registers), then
@@ -341,3 +371,64 @@ table-only — a =children= or =list= view says so rather than sorting nothing.
 Written inside an agent entry instead, a block's parameters override that
 entry's =AGENT_*= properties name by name, so one agent can carry several
 views of itself.
+
+* A first action
+
+An agent may carry an =:AGENT_ACTION:= as well as a query: a declarative
+sentence saying what to do to the entries the query matched. Nine verbs are
+shipped — =set-property!=, =delete-property!=, =tag!=, =todo!=, =priority!=,
+=scheduled!=, =deadline!=, =effort!=, =archive!= — and a tenth is a =defun= in
+this same init file; see README's "Action code" for the whole reference.
+
+Add a line to the review agent above and it can stamp what it finds:
+
+#+begin_example
+,* Reviews that have come due
+:PROPERTIES:
+:AGENT_QUERY:  (and (todo "TODO") (property-ts "NEXT_REVIEW" :to today))
+:AGENT_ACTION: set-property!(REVIEWED, today) tag!(+reviewed)
+:END:
+#+end_example
+
+Then =M-x org-agents-apply-actions= with point in that entry. It does NOT
+edit anything: it prints one line per intended edit into =*Org Agents
+Actions*= and stops. A real one, over two files with three matching entries:
+
+#+begin_example
+org-agents: 6 edits at 3 entries in 2 files (1 not open before this ran).  Nothing written yet.
+/home/johnw/org/proj.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/proj.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:5: tag!(+reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/notes.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/notes.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
+#+end_example
+
+That buffer is =compilation-mode=, so =RET= and =M-g n= walk the edits before
+any of them exists. One question follows — =apply 6 edits at 3 entries in
+2 files (1 not open before this ran)?= — and answering =n= writes nothing at
+all. Answering =y= applies them in order, writes the outcome onto each line,
+names the buffers it modified, and SAVES NOTHING: the worst case of a wrong
+action is a handful of modified buffers to read through and =undo=, one at a
+time.
+
+Two things about that are worth knowing before writing one.
+
+=today= is a keyword and there are exactly three — =today=, =now=, =empty= —
+so =set-property!(REVIEWED, today)= stores an inactive stamp rather than the
+word. To store the word, quote it: =set-property!(REVIEWED, "today")=. A bare
+word is literal unless it is one of those three; a quoted argument always is.
+
+And =tag!= is NOT org-edna's. It takes SIGNED terms — =+reviewed= adds,
+=-stale= removes — and refuses an unsigned one. Edna's =tag!= hands a whole
+tag specification to =org-set-tags=, which REPLACES an entry's tags; over an
+agent's match set that would be a silent mass deletion from a verb whose
+one-word form looks additive.
+
+=C-u M-x org-agents-apply-actions= is the same thing pointed at a selection:
+the targets become the entries the links in the region name, and the action
+text still comes from the agent's own drawer. That is how a stamp is spelled
+here — mark four rows of a table view, then =C-u M-x
+org-agents-apply-actions=. Point has to stay inside the agent's own entry,
+which for a list or a table view is free, since the block is in the entry.
+
