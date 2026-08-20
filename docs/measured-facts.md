@@ -260,6 +260,77 @@ resolve. Build `file:…::` + the string.
 read from a property can be dotted; without this test the walkers reach `cl-every`
 on an improper list and raise `wrong-type-argument` instead of a legible refusal.
 
+**L11. `org-property-get-allowed-values` writes text properties on the
+caller's own list, in place, when `:ETC` is present.** Measured: a hook
+function on `org-property-allowed-value-functions` that returned its own
+cached list `("yes" "no" ":ETC")` got back `(#("yes" 0 3 (org-unrestricted
+t)) "no")`, and the **cached list** was afterwards `(#("yes" 0 3
+(org-unrestricted t)) "no" ":ETC")` — the first string permanently
+propertized for the rest of the session. The path is
+`(when (member ":ETC" vals) (setq vals (remove ":ETC" vals))
+(org-add-props (car vals) '(org-unrestricted t)))`, and `org-add-props` is
+`add-text-properties` on the string itself. Measured separately: `remove`
+copies the list, so `":ETC"` survives in the cache while the propertizing
+does not stay in the answer. Any hook function serving a cached vocabulary
+must hand out `copy-sequence` copies. `org-agents-allowed-values` does, and
+`org-agents-test-allowed-values-are-fresh-copies` pins it — by asserting
+about the **cache**, since Org will write on whatever list it is given and
+only whose strings those are can be argued about.
+
+**L12. The hook clause of `org-property-get-allowed-values` sits ABOVE the
+`NAME_ALL` clause, and 15 names never reach it at all.** Measured: with a
+hook answering `("open" "wip" "done")` for `"STATUS"` and `:STATUS_ALL: a b
+c` in the entry's own drawer, the answer was `("open" "wip" "done")` — the
+hook shadowed the drawer. Measured with a hook answering for *every* name:
+`TODO` ⇒ `("TODO" "DONE" "")`, `PRIORITY` ⇒ `("A" "B" "C")`, `CATEGORY` ⇒
+`nil`, `TAGS` ⇒ `nil`, and only `WIDGET` ⇒ the hook's answer. So the
+fourteen `org-special-properties` plus `CATEGORY` are unreachable, and any
+non-nil answer for a name disables every `_ALL` declaration in the corpus
+for it. `nil` is the only way to decline; in this language the empty list
+*is* `nil`, so "answer the empty list" is not a reachable behaviour.
+
+**L13. `org-columns-compile-format` validates no summary operator.**
+Measured: `(org-columns-compile-format "%X{nope}")` ⇒ `(("X" "X" nil "nope"
+nil))`, with no complaint of any kind, where `org-columns-summary-types-default`
+names sixteen real operators (`+ $ X X/ X% max mean min : :max :mean :min
+@max @mean @min est+`). So a generator that emits an operator carries the
+whole guarantee that it is real; nothing downstream will catch an invented
+one. `org-agents--attribute-column-operators` is that guarantee, and
+`org-agents-test-attribute-columns-operators-are-real` pins both halves —
+including the bogus-operator measurement itself, so it cannot change
+underneath.
+
+**L14. `org-parse-time-string` accepts calendar dates that do not exist, and
+`org-timestamp-from-string` accepts them too while rejecting a plain ISO
+date.** Measured, with `org-parse-time-string … t`: `[2020-13-45 Xyz]` ⇒ day
+45 of month 13, which round-trips through `encode-time`/`decode-time` to
+14/2/2021; `[2020-02-30 Sun]` ⇒ 1/3/2020; `not a date` and `""` signal;
+`10:00` and `2020` ⇒ `nil`. Measured for `org-timestamp-from-string`:
+non-nil for `[2020-13-45 Xyz]`, **nil** for the plain `2020-01-01` a user
+will certainly write — and it needs `org-element` loaded or it dies with a
+void function in batch. So a `date` check needs the parse **and** the round
+trip, and must not be built on `org-timestamp-from-string`.
+`org-agents--attr-date-p` is that pair.
+
+**L15. A property drawer written after an entry's body text is not a
+property drawer.** Measured: for `* A` / `body text` / `:PROPERTIES:` /
+`:ATTR_TYPE: string` / `:END:`, `(org-get-property-block)` ⇒ `nil` and
+`(org-entry-get nil "ATTR_TYPE")` ⇒ `nil`. This is the trap in the
+attribute-registry file format, and it is why the reader diagnoses a
+top-level entry with no `:ATTR_TYPE:` by name: that diagnosis is what the
+user who wrote the drawer in the wrong place actually sees.
+
+**L16. `org-entry-properties` synthesizes and collapses; a raw drawer walk
+does neither.** Measured, for one drawer holding `:STATUS: open`,
+`:STATUS+: extra`, `:status: lower`, `:REVIEWS: 3` and `:STATUS_ALL: open
+wip`: `(org-entry-properties nil 'standard)` answered `("CATEGORY"
+"STATUS_ALL" "REVIEWS" "STATUS")` — `CATEGORY` is on no line at all, and the
+three `STATUS` spellings became one — while `(org-entry-get nil "STATUS")`
+answered `"lower extra"`, which is the text of no single line. A lint that
+must point at a line that exists therefore walks `org-get-property-block`
+with `org-property-re` and reads `org-entry-get` only where the joined value
+is the thing being judged.
+
 ---
 
 ## 3. Org dynamic blocks

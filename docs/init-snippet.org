@@ -52,6 +52,7 @@ to the position it appears in.
              org-agents-preview
              org-agents-list-approvals
              org-agents-check-attributes
+             org-agents-attribute-columns
              org-agents-mode
              global-org-agents-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
@@ -78,6 +79,14 @@ to the position it appears in.
    ("u" . org-agents-update-buffer)
    ("U" . org-agents-update-all))
   :custom
+  ;; The Org file declaring this corpus's own attributes -- ATTR_TYPE,
+  ;; ATTR_VALUES, ATTR_DEFAULT per top-level entry.  Pure data; nothing
+  ;; in it is ever evaluated.  Optional: one that is not there declares
+  ;; nothing and says nothing about it, and the package never creates it.
+  ;; docs/attributes-example.org is a whole one, written out.  Named here
+  ;; rather than left at the default only because ~/org is where it
+  ;; belongs on this machine and `org-file' is what spells that.
+  (org-agents-attributes-file (org-file "attributes.org"))
   ;; The other six options are best left at their defaults:
   ;; `org-agents-exclude' — (not (property "AGENT_MATCH")) — is what keeps
   ;; agents from consuming each other's aliases;

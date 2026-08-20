@@ -2137,6 +2137,94 @@ opens one."
       (should (string-match-p org-property-start-re line))
       (should (string-match-p emacs-form line)))))
 
+;; The `COLUMNS' generator.  There is no renderer here and there is not
+;; meant to be one: `org-agenda-columns' already runs inside an
+;; `org-ql-search' results buffer -- MEASURED -- so what was missing was a
+;; format string, and this is it.  README's "Corpus-wide column view" is
+;; the recipe those two facts add up to.
+
+(defconst org-agents-test--registry-with-date
+  (concat org-agents-test--registry-example "\
+* DUE
+:PROPERTIES:
+:ATTR_TYPE: date
+:END:
+When this is wanted by.
+")
+  "The worked example plus a `date', which earns no summary operator.")
+
+(ert-deftest org-agents-test-attribute-columns-format ()
+  "`%ITEM' first, then one column per name, and `{+}' on the numbers only."
+  (org-agents-test--with-registry org-agents-test--registry-with-date
+    (should (equal (org-agents-attribute-columns '("STATUS" "REVIEWS" "DUE"))
+                   "%ITEM %STATUS %REVIEWS{+} %DUE"))
+    ;; And Org compiles it to exactly the columns that names, with the
+    ;; operator on the one column that has one.
+    (should (equal (org-columns-compile-format
+                    (org-agents-attribute-columns '("STATUS" "REVIEWS" "DUE")))
+                   '(("ITEM" "ITEM" nil nil nil)
+                     ("STATUS" "STATUS" nil nil nil)
+                     ("REVIEWS" "REVIEWS" nil "+" nil)
+                     ("DUE" "DUE" nil nil nil))))
+    ;; A boolean is text here, not a checkbox: `X' reads its column as
+    ;; `[X]', and `true'/`false' is not that.
+    (should (equal (org-agents-attribute-columns '("OPEN")) "%ITEM %OPEN"))))
+
+(ert-deftest org-agents-test-attribute-columns-operators-are-real ()
+  "Every operator emitted is one `org-columns' actually implements.
+MEASURED, and this is why the assertion is worth making twice:
+`org-columns-compile-format' validates NO operator at all -- `%X{nope}'
+compiles to `(\"X\" \"X\" nil \"nope\" nil)' without a murmur -- so
+nothing downstream would catch an invented one.  The guarantee is this
+command's own, and `org-agents--attribute-column-operators' is where it
+lives."
+  (org-agents-test--with-registry org-agents-test--registry-with-date
+    ;; The measured fact the assertion rests on, asserted so it cannot
+    ;; quietly change underneath.
+    (should (equal (org-columns-compile-format "%X{nope}")
+                   '(("X" "X" nil "nope" nil))))
+    (let ((format (org-agents-attribute-columns (org-agents-attributes)))
+          (start 0))
+      (while (string-match "{\\([^}]+\\)}" format start)
+        (should (assoc (match-string 1 format)
+                       org-columns-summary-types-default))
+        (setq start (match-end 0)))
+      ;; And there was one to check, so the loop is not vacuous.
+      (should (string-match-p "{\\+}" format)))))
+
+(ert-deftest org-agents-test-attribute-columns-refuses-undeclared ()
+  "A name the registry does not declare is refused rather than emitted.
+A `COLUMNS' line naming a property nothing declares renders an empty
+column, which looks exactly like a property nothing has set -- so the
+mistake would show up as a corpus with no data rather than as a mistake."
+  (org-agents-test--with-registry org-agents-test--registry-with-date
+    (let ((err (should-error (org-agents-attribute-columns '("STATUS" "NOPE"))
+                             :type 'user-error)))
+      (should (string-match-p "NOPE" (error-message-string err))))
+    ;; And an empty request is refused too: `%ITEM' alone is not a column
+    ;; view of anything.
+    (should-error (org-agents-attribute-columns nil) :type 'user-error)))
+
+(ert-deftest org-agents-test-attribute-columns-inserts-into-the-entry ()
+  "With INSERT the format becomes the entry's `:COLUMNS:' property.
+The property and not a `#+COLUMNS:' keyword, because that is what
+descendants inherit and what `org-agenda-columns' reads for a matched
+entry -- MEASURED, through the `(org-entry-get m \"COLUMNS\" t)' branch
+of `org-columns-get-format'."
+  (org-agents-test--with-registry org-agents-test--registry-with-date
+    (with-temp-buffer
+      (let ((org-use-property-inheritance nil))
+        (insert "* Class of thing\n")
+        (org-mode)
+        (goto-char (point-min))
+        (let ((format (org-agents-attribute-columns '("STATUS" "REVIEWS") t)))
+          (should (equal format "%ITEM %STATUS %REVIEWS{+}"))
+          (should (equal format (org-entry-get nil "COLUMNS"))))
+        ;; Without INSERT nothing is written.
+        (org-entry-delete nil "COLUMNS")
+        (org-agents-attribute-columns '("STATUS"))
+        (should-not (org-entry-get nil "COLUMNS"))))))
+
 ;;;; Collection
 
 (defmacro org-agents-test--with-corpus (&rest body)

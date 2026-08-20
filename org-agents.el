@@ -174,7 +174,13 @@
 ;; `org-agents-check-attributes', which lints a scope against the
 ;; registry and REPORTS, never edits: a name in use that nothing
 ;; declares, a value outside its declared vocabulary, a value that does
-;; not parse as its declared type.
+;; not parse as its declared type.  And `org-agents-attribute-columns',
+;; which builds a `COLUMNS' format out of chosen declarations -- see
+;; README's "Corpus-wide column view" for what that is for, which is a
+;; recipe rather than a renderer: MEASURED, `org-agenda-columns' already
+;; runs inside an `org-ql-search' results buffer, so corpus-wide
+;; displayed attributes with write-back editing exist today and what was
+;; missing was the format string.
 ;;
 ;; Updating on save:
 ;;
@@ -287,6 +293,7 @@
 (require 'org-ql-search)                ; `org-agents-preview' delegates to it
 (require 'org-ql-ext)
 (require 'compile)                      ; `org-agents-check-attributes' report
+(require 'org-colview)                  ; `org-agents-attribute-columns'
 
 ;; `org-ql-select' expands into a call to this, which org-ql does not
 ;; autoload: without the declaration the compiler reports it as possibly
@@ -2698,7 +2705,8 @@ Plus `ID', which `org-id' writes and which is in NEITHER of those lists
 -- MEASURED at 36,991 uses in the author's corpus, so leaving it out
 would drown every real finding in one name.  Plus the six
 `org-archive-subtree' writes from `org-archive-save-context-info',
-MEASURED at 21,572 and 21,476 uses for the first two alone.
+MEASURED at 21,572 uses for `ARCHIVE_TIME' and 21,476 for
+`ARCHIVE_CATEGORY'.
 
 Names matching `org-agents--attributes-exempt-re' are exempt as well.")
 
@@ -2932,6 +2940,81 @@ empty buffer."
                  scope (list org-agents--rg-drawer-pattern) "pattern" nil))
          (found (org-agents--attr-findings files)))
     (org-agents--attr-report (cdr found) files (car found))))
+
+;; The `COLUMNS' generator, and the one thing this epic does NOT build.
+;;
+;; MEASURED: `org-agenda-columns' already runs inside an `org-ql-search'
+;; results buffer.  That buffer is an `org-agenda-mode' one carrying
+;; `org-hd-marker' on every line, `org-columns-get-format' reads the
+;; format from the matched entry's inherited `:COLUMNS:' through its
+;; `(org-entry-get m "COLUMNS" t)' branch, and an edit goes back to the
+;; source file through `org-columns-edit-value'.  So corpus-wide
+;; displayed attributes with write-back editing exist today, and what was
+;; missing was a format string.  This generates one; README's
+;; "Corpus-wide column view" is the recipe.  No renderer is written here
+;; and none is wanted.
+
+(defconst org-agents--attribute-column-operators
+  '((number . "+"))
+  "The `COLUMNS' summary operator each `:ATTR_TYPE:' earns, where any.
+Only `number' gets one, and it gets `+' -- the sum,
+`org-columns--summary-sum' in `org-columns-summary-types-default'.
+Nothing else is defensible from a TYPE alone.  `X' means the column is
+read as a checkbox and a `boolean' here is the text `true'/`false'; `:'
+and `@' read a column as a duration and as an age, which a `date' may or
+may not be; and a summary over a `set' or a `string' has no meaning at
+all.  A user who wants one writes it into the `:COLUMNS:' line by hand --
+this command generates a starting point, not a policy.")
+
+;;;###autoload
+(defun org-agents-attribute-columns (names &optional insert)
+  "Return a `COLUMNS' format for the registry attributes NAMES.
+`%ITEM' first, so a column view has something to name its rows by, then
+one `%NAME' per attribute in the order given, with `{+}' on the numbers.
+With INSERT non-nil -- interactively, a prefix argument -- also set the
+`:COLUMNS:' property of the entry at point to it.  The property and not a
+`#+COLUMNS:' keyword: the property is what descendants inherit, and it is
+what `org-agenda-columns' reads for a matched entry.
+
+An undeclared name is REFUSED rather than emitted.  A `COLUMNS' line
+naming a property nothing declares renders an empty column, which looks
+exactly like a property nothing has set -- so the mistake would show up
+as a corpus with no data in it rather than as a mistake.
+
+MEASURED: `org-columns-compile-format' validates no operator whatever --
+`%X{nope}' compiles to `(\"X\" \"X\" nil \"nope\" nil)' with no complaint
+whatever -- so
+the guarantee that every operator emitted here is one `org-columns'
+implements is this function's own, and
+`org-agents--attribute-column-operators' is where it lives."
+  (interactive
+   (list (completing-read-multiple "Attributes: " (org-agents-attributes)
+                                   nil t)
+         current-prefix-arg))
+  (unless names
+    (user-error "org-agents: name at least one attribute to put in a column"))
+  (let ((format
+         (concat
+          "%ITEM"
+          (mapconcat
+           (lambda (name)
+             (let ((attr (org-agents-attribute name)))
+               (unless attr
+                 (user-error "org-agents: `%s' is not declared in %s" name
+                             (abbreviate-file-name
+                              (expand-file-name org-agents-attributes-file))))
+               (format " %%%s%s" name
+                       (if-let* ((operator
+                                  (alist-get
+                                   (plist-get attr :type)
+                                   org-agents--attribute-column-operators)))
+                           (format "{%s}" operator)
+                         ""))))
+           names ""))))
+    (when insert (org-entry-put nil "COLUMNS" format))
+    (when (called-interactively-p 'interactive)
+      (message "%s" format))
+    format))
 
 ;;;; Links
 

@@ -15,11 +15,16 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~3,300 lines), and one
-tests it, `org-agents-test.el` — 232 ERT tests, all of which run in a
+One file makes up the package, `org-agents.el` (~4,250 lines), and one
+tests it, `org-agents-test.el` — 266 ERT tests, all of which run in a
 plain `make test` with no external service. The 25 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
+
+Beside the agents there is an optional second file, which declares the
+corpus's own attributes — their types, their allowed values, their
+documentation — and which drives value completion, a linter, and column
+formats. See "The attribute registry" below.
 
 ## A worked example
 
@@ -141,6 +146,224 @@ agent with no view rather than an error, and takes the default.
 `(ts-inactive :from ...)` over a corpus that holds agents will match the
 agents themselves.
 
+## The attribute registry
+
+An agent's vocabulary is the package's own — `AGENT_QUERY`, `AGENT_VIEW`,
+and the rest above. A corpus has a second vocabulary, which is entirely
+yours: `STATUS`, `REVIEWS`, `OWNER`, whatever you have been writing into
+drawers. The registry is one Org file in which each of those is *declared*
+— its type, the values it admits, its default, and what it is for — so that
+the package can complete it, lint it, and put it in a column.
+
+It is optional. `org-agents-attributes-file` defaults to
+`~/org/attributes.org`, and a file that is not there declares nothing and
+says nothing about it: the package never creates it and never assumes it
+exists. `docs/attributes-example.org` is a whole one, written out.
+
+### The file
+
+Each top-level entry declares one attribute. The heading is the name, the
+drawer carries the declaration, and the body is the documentation.
+
+```org
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    set
+:ATTR_VALUES:  open wip blocked done
+:ATTR_DEFAULT: open
+:ATTR_FACES:   blocked org-warning | done org-done
+:END:
+Where the item stands.  A set rather than a string: an item may be
+blocked and waiting on review at once.
+```
+
+| Field | Meaning |
+| --- | --- |
+| `ATTR_TYPE` | `string`, `number`, `date`, `boolean`, `set`, or `list`. Required — this property is what makes an entry a declaration. |
+| `ATTR_VALUES` | the values the attribute admits, whitespace-separated. A `:ETC` among them leaves the vocabulary **open**, which is Org's own spelling of that. |
+| `ATTR_DEFAULT` | the default, as text. |
+| `ATTR_FACES` | `VALUE FACE \| VALUE FACE …` — value/face pairs separated by a vertical bar. Parsed and stored, and read by nothing yet. |
+
+`set` and `list` are Tinderbox's: a set is unordered and admits no repeat, a
+list is ordered and admits duplicates. Tinderbox separates their members
+with semicolons; here the separator is whitespace, because that is what
+Org's own `NAME_ALL` convention uses and therefore what
+`org-property-get-allowed-values` already reads.
+
+What each type admits:
+
+| Type | A value is valid when |
+| --- | --- |
+| `string` | always. With `ATTR_VALUES`, the whole trimmed value is one of them, compared case-**sensitively** — a declared vocabulary is one you wrote down. |
+| `number` | it is a signed integer or decimal, **whole**, with no exponent. `3`, `3.5`, `.5`, `-3` are numbers; `1e3` and `3 4` are not. |
+| `date` | it both parses *and* names a day that exists. `[2026-12-31 Thu]`, `<2026-12-31 Thu 10:00>` and the plain `2026-12-31` all pass; `[2026-02-30 Mon]` does not. |
+| `boolean` | it is `true` or `false`, lower case. Not `t`, not `yes`, not `True`. |
+| `set` | every whitespace-separated member is admitted by `ATTR_VALUES`, and no member repeats. The empty set is valid. |
+| `list` | every member is admitted. Duplicates are fine and order is significant. |
+
+**Two things about the file that are easy to get wrong once.** The drawer
+must sit immediately under the heading, where Org keeps a property drawer:
+one written after the body text is not a property drawer at all —
+`org-get-property-block` returns `nil` for it — and the entry is reported as
+declaring no type, which is exactly what it looks like from Org's side. And
+the heading must be something Org could read as a property key, so `* Ship
+it` declares nothing and is named.
+
+It is **pure data**. Every field is read with `org-entry-get` and used as a
+string, as one of six symbols out of a fixed table, or as a face name.
+There is nothing a registry file can hold that the package will evaluate,
+`read`, or run — which is the whole difference between this file and
+`AGENT_QUERY`, and why this one has no gate.
+
+A missing or unreadable registry declares nothing, silently. A malformed
+entry is named **once** — the diagnosis comes out of the reader, and the
+reader runs at most once per edit — and then a bad *type* costs its entry
+while a bad anything-else costs only that field: an attribute whose default
+does not parse still has a type worth completing and linting against.
+
+The file is read lazily and cached, and the cache notices an **unsaved**
+edit: while a buffer is visiting the registry the cache is keyed on that
+buffer's `buffer-chars-modified-tick`, so a value you have just typed into
+`ATTR_VALUES` is offered by the very next `org-set-property`. With no
+buffer visiting it, the key is the file's modification time and size and
+nothing is opened to find that out.
+
+### The three things that read it
+
+**1. Completion.** `org-agents-allowed-values` on Org's own
+`org-property-allowed-value-functions` makes `org-set-property` offer a
+declared attribute's values, in every Org buffer. You add it yourself — see
+Configuration — because a library has no business writing into a user's
+hook at load time.
+
+A name the registry says nothing about is left *entirely* alone, and that
+distinction is sharper than it looks. `org-property-get-allowed-values`
+consults that hook in a clause **above** the one that reads `:NAME_ALL:`,
+and takes the first non-nil answer, so any answer at all shadows every
+`_ALL` declaration in the corpus for that name. Measured: a hook answering
+for `STATUS` beat a `:STATUS_ALL: a b c` in the entry's own drawer. So the
+package answers `nil` both for an undeclared name and for a declared one
+carrying no `ATTR_VALUES`, and your existing `_ALL` declarations go on
+working untouched.
+
+Fifteen names can never reach it: the fourteen in `org-special-properties`,
+plus `CATEGORY`, all of which Org answers for in clauses of its own. A
+declaration of one of them is kept — the linter still reads it — and the
+reader says once that no completion is possible for it.
+
+**2. The linter.** `M-x org-agents-check-attributes` takes a scope — the
+same vocabulary `AGENT_SCOPE` takes, read by the same code — and reports
+what the registry does not account for. It reports and **never** edits.
+
+```
+/Users/you/org/notes/a.org:12: WIDGET is not declared in ~/org/attributes.org
+/Users/you/org/notes/a.org:19: STATUS: `nope' is not one of open wip blocked done
+/Users/you/org/notes/b.org:4: REVIEWS: `many' is not a number
+```
+
+Those lines land in a `compilation-mode` buffer, which parses every one of
+them — measured — so `RET`, `next-error` and `M-g n` navigate the findings
+with no navigation code written for them. A run with nothing to report says
+so, with its counts, rather than popping an empty buffer.
+
+Org's own vocabulary is never asked about, nor the package's, nor the
+registry's: `org-special-properties`, `org-default-properties`, `ID`, the
+six `ARCHIVE_*` names `org-archive-subtree` writes, anything beginning
+`AGENT_` or `ATTR_`, and anything ending `_ALL`. Without those exemptions
+`ID` alone is about 37,000 findings on the author's corpus — measured at
+36,991 uses — and `ATTR_` matters because the registry commonly lives
+*inside* the scope being checked and would otherwise report every one of its
+own declarations.
+
+Two things Org does that the linter is careful about. A property key matches
+case-insensitively, so `:status: open` is a value of a declared `STATUS` and
+not an undeclared property. And a `+` line **accumulates**: `org-entry-get`
+answers `3 4` for a `:REVIEWS: 3` beside a `:REVIEWS+: 4`, and `3 4` is not
+a number — so the finding is real, and it is reported on the `+` line that
+caused it rather than on the line that was fine until that one arrived.
+
+A corpus scope is narrowed with ripgrep through the same machinery an agent
+uses, pushing `^[ \t]*:PROPERTIES:` — a provable superset of the files that
+could hold a finding, since Org reads a property only from inside a drawer.
+That narrows little on a property-heavy corpus, which is the honest answer:
+a pattern built from the registry's own *names* would be far narrower and
+unsound, because an undeclared name lives by definition in a file that may
+hold no declared name at all. Unlike an agent, the linter is never refused
+— `org-agents-prefilter` set to `require` declines a *query*, and a lint
+that declined to run would be failing its own contract rather than saving
+anyone an expense.
+
+**3. Column formats.** `M-x org-agents-attribute-columns` reads attribute
+names and returns a `COLUMNS` format built from their declarations; with a
+prefix argument it writes it into the entry at point's `:COLUMNS:` property,
+which every descendant inherits.
+
+```elisp
+(org-agents-attribute-columns '("STATUS" "REVIEWS" "DUE"))
+⇒ "%ITEM %STATUS %REVIEWS{+} %DUE"
+```
+
+Only `number` earns a summary operator, and it earns `+`. Nothing else is
+defensible from a type alone: `X` reads its column as a checkbox and a
+`boolean` here is the text `true`/`false`; `:` and `@` read a column as a
+duration and as an age, which a `date` may or may not be; and a summary over
+a set or a string means nothing. Write one in by hand if you want one — this
+generates a starting point, not a policy. An undeclared name is refused
+rather than emitted, because a `COLUMNS` line naming a property nothing
+declares renders an empty column, which looks exactly like a property
+nothing has set.
+
+Measured, and worth knowing: `org-columns-compile-format` validates no
+operator at all — `%X{nope}` compiles without complaint — so the guarantee
+that these operators are real is this command's, and nowhere else.
+
+## Corpus-wide column view
+
+Here is what those three add up to, and the reason there is no renderer in
+this package. **`org-agenda-columns` already works inside an `org-ql-search`
+results buffer.** That buffer is an `org-agenda-mode` buffer carrying
+`org-hd-marker` on every result line; `org-columns-get-format` reads its
+format from the matched entry's inherited `:COLUMNS:`, through the
+`(org-entry-get m "COLUMNS" t)` branch; and an edit is written back to the
+source file by `org-columns-edit-value`. Corpus-wide displayed attributes
+with write-back editing exist today. What was missing was a format string,
+and the command above is it.
+
+Four steps, end to end.
+
+1. `M-x org-agents-check-attributes` over `all`, and declare what it names.
+   The first run of the linter is how the registry gets seeded: measured,
+   this corpus has 137 distinct property names in it and **4** `_ALL`
+   declarations anywhere.
+2. `(add-hook 'org-property-allowed-value-functions #'org-agents-allowed-values)`,
+   so `org-set-property` starts offering what you have just declared.
+3. `C-u M-x org-agents-attribute-columns` on the top entry of the class of
+   thing you care about, which writes a `:COLUMNS:` every descendant
+   inherits.
+4. `M-x org-ql-search`, then `M-x org-agenda-columns` in the results buffer.
+
+A measured transcript of steps 3 and 4, over two matches in one file whose
+parent carries `:COLUMNS: %ITEM %STATUS %REVIEWS{+}`:
+
+```
+generated COLUMNS: "%ITEM %STATUS %REVIEWS{+}"
+inherited COLUMNS at a match: "%ITEM %STATUS %REVIEWS{+}"
+results buffer: "*Org QL View: (todo TODO)*"  mode=org-agenda-mode
+lines carrying org-hd-marker: 2
+column overlays: 10
+
+Fix widget | |open   | |3       |
+Ship docs  | |wip    | |5       |
+```
+
+**One caveat, and it is the reason step 4 is a recipe and not a feature.**
+Whole-result **roll-up** does not happen. There is no `{+}` total in that
+transcript, and the reason was predicted before it was measured:
+`org-agenda-colview-summarize` writes summaries only onto lines carrying the
+`org-date-line` text property or the `org-agenda-structure` face, and an
+`org-ql-search` buffer has neither on its result lines. Per-entry values
+appear and are editable; a column total does not. Do not build on one.
+
 ## Dynamic blocks
 
 The `list` and `table` views render into an `org-agents` dynamic block.
@@ -171,6 +394,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-update-all` | update every agent in the files `org-agents-files` names |
 | `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded, with `org-agents-exclude` appended, and the appended form gated exactly as an agent's is, over `org-agenda-files` |
 | `org-agents-insert-dblock` | insert an empty `org-agents` block at point |
+| `org-agents-attribute-columns` | build a `COLUMNS` format from chosen registry attributes; with a prefix argument write it into the entry at point's `:COLUMNS:`. See "Corpus-wide column view" |
 | `org-agents-check-attributes` | report every property in a scope the attribute registry does not account for — undeclared names, values outside a declared vocabulary, values that do not parse as their declared type. Reports and never edits; the findings land in a `compilation-mode` buffer, so `RET` and `next-error` navigate them |
 | `org-agents-list-approvals` | list every remembered approval and refusal, each with the query its hash covers; `d` forgets an approval, `r` turns it into a refusal, `u` lifts a refusal |
 | `org-agents-mode` | update this buffer's agents before each save |
@@ -376,13 +600,13 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 232 tests, no external service needed
+make test        # 266 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `232 tests, 232 results as expected, 0 unexpected` and
+`make test` reports `266 tests, 266 results as expected, 0 unexpected` and
 takes about twenty seconds. There is nothing to configure and nothing to
 set up. Where `rg` is not on `PATH` it reports `207 results as expected, 0
 unexpected, 25 skipped`, and prints one line saying why — `skip-unless` is
