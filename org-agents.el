@@ -373,10 +373,14 @@ With NUMERIC non-nil, coerce a property's string value to a number."
 
 ;; An org-ql query is Lisp, and org-ql evaluates residual Lisp at every
 ;; candidate entry.  A query read out of an Org property is therefore
-;; code from a file, and every query passes this gate before it is
-;; evaluated.  Queries built only from org-ql predicates and
-;; combinators run unremarked; anything else needs the user's word for
-;; it, once, remembered by hash.
+;; code from a file, and the form that is evaluated passes this gate
+;; first.  The form, not the query: `org-agents-exclude' is conjoined in
+;; before org-ql sees it, and a gate that judged the query alone
+;; approved a form nobody had been shown.  `org-agents--effective-query'
+;; is the one place that says what that form is, so gate, hash and
+;; evaluation cannot come to mean different things.  Forms built only
+;; from org-ql predicates and combinators run unremarked; anything else
+;; needs the user's word for it, once, remembered by hash.
 
 (defcustom org-agents-safe-queries nil
   "List of sha1 hashes of queries approved to run without prompting.
@@ -1231,8 +1235,28 @@ to avoid."
   "Conjunct appended to every agent query and to previews.
 Keeps agents from matching generated aliases.  Appended last so cheap
 predicates short-circuit first; applied only on the Emacs side, never
-in the prefilter.  Set to nil to match aliases like any other entry."
+in the prefilter.  Set to nil to match aliases like any other entry.
+
+This value is conjoined into the form the gate approves, so Lisp here is
+gated exactly like Lisp in a query, and changing it invalidates every
+remembered approval: an approval names a form, and this is part of the
+form."
   :type 'sexp :group 'org-agents)
+
+(defun org-agents--effective-query (query)
+  "Return the form org-ql will be handed for QUERY.
+`org-agents-exclude' is conjoined in, unless it is nil.
+
+This is the form that is gated, the form that is hashed, and the form
+that is evaluated, and the three cannot diverge because there is one
+function saying what it is.  They did diverge: the gate was handed the
+query while the exclusion was spliced in afterwards, so approving a
+query silently approved an exclusion nobody had been shown."
+  (if org-agents-exclude
+      ;; nil conjoined here is a clause that never matches, which is not
+      ;; what turning the exclusion off means.
+      `(and ,query ,org-agents-exclude)
+    query))
 
 (defcustom org-agents-files '("~/org/agents.org")
   "Where `org-agents-update-all' looks for agents.
@@ -1591,40 +1615,38 @@ marker rather than let this comparison quietly stop being made."
 
 (defun org-agents--collect (agent)
   "Return AGENT's sorted, limited matches as headlines with markers."
-  (unless (org-agents--gate (plist-get agent :query))
-    (user-error "org-agents: query not approved"))
-  ;; Without a marker naming a live buffer the self-skip cannot be made,
-  ;; and the agent renders itself as one of its own matches.  A detached
-  ;; marker is no better than none: `org-agents--self-match-p' would
-  ;; compare nil against each match's buffer and answer nil every time,
-  ;; and where the match's own marker is detached too the comparison
-  ;; reaches `=' as a wrong type, out of a `when-let*' body that names
-  ;; neither the agent nor what went wrong with it.
-  (let ((marker (plist-get agent :marker)))
-    (unless (and (markerp marker) (marker-buffer marker))
-      (user-error "org-agents: agent has no live marker")))
-  (let* ((query (plist-get agent :query))
-         (self (plist-get agent :marker))
-         (sort (plist-get agent :sort))
-         (limit (plist-get agent :limit))
-         (files (org-agents--scope-files agent))
-         (matches
-          ;; Handed no files, `org-ql-select' searches the current
-          ;; buffer, which for an agent is the file it lives in: a scope
-          ;; that resolved to nothing must select nothing.
-          (and files
-               (org-ql-select files
-                 (if org-agents-exclude
-                     `(and ,query ,org-agents-exclude)
-                   ;; nil conjoined here is a clause that never matches,
-                   ;; which is not what turning the exclusion off means.
-                   query)
-                 :action 'element-with-markers
-                 :sort (org-agents--element-sort sort))))
-         (matches (cl-remove-if (lambda (element)
-                                  (org-agents--self-match-p element self))
-                                matches)))
-    (if limit (take limit matches) matches)))
+  ;; One form, bound once: gated here and handed to `org-ql-select'
+  ;; below.  Computing the effective form twice is what let the gated
+  ;; form and the evaluated one drift apart in the first place.
+  (let ((form (org-agents--effective-query (plist-get agent :query))))
+    (unless (org-agents--gate form)
+      (user-error "org-agents: query not approved"))
+    ;; Without a marker naming a live buffer the self-skip cannot be
+    ;; made, and the agent renders itself as one of its own matches.  A
+    ;; detached marker is no better than none: `org-agents--self-match-p'
+    ;; would compare nil against each match's buffer and answer nil every
+    ;; time, and where the match's own marker is detached too the
+    ;; comparison reaches `=' as a wrong type, out of a `when-let*' body
+    ;; that names neither the agent nor what went wrong with it.
+    (let ((marker (plist-get agent :marker)))
+      (unless (and (markerp marker) (marker-buffer marker))
+        (user-error "org-agents: agent has no live marker")))
+    (let* ((self (plist-get agent :marker))
+           (sort (plist-get agent :sort))
+           (limit (plist-get agent :limit))
+           (files (org-agents--scope-files agent))
+           (matches
+            ;; Handed no files, `org-ql-select' searches the current
+            ;; buffer, which for an agent is the file it lives in: a
+            ;; scope that resolved to nothing must select nothing.
+            (and files
+                 (org-ql-select files form
+                   :action 'element-with-markers
+                   :sort (org-agents--element-sort sort))))
+           (matches (cl-remove-if (lambda (element)
+                                    (org-agents--self-match-p element self))
+                                  matches)))
+      (if limit (take limit matches) matches))))
 
 ;;;; Links
 
@@ -2594,15 +2616,17 @@ an update can be read over -- and undone -- before it is kept."
 The query is read, expanded and gated exactly as an agent's is, and
 `org-agents-exclude' is appended before `org-ql-search' evaluates it, so
 a preview lists what an agent would render rather than something close to
-it.  The search is over `org-agenda-files': a scope belongs to an agent,
-and a preview has no agent.  With no agenda files there is nothing to
-preview, and this says so rather than searching the current buffer, which
-is what `org-ql-search' does when it is handed none."
+it.  The appended form is the form the gate sees: what is approved here
+is what runs.  The search is over `org-agenda-files': a scope belongs to
+an agent, and a preview has no agent.  With no agenda files there is
+nothing to preview, and this says so rather than searching the current
+buffer, which is what `org-ql-search' does when it is handed none."
   (interactive "sAgent query: ")
-  (let ((query (org-agents--expand
-                (org-agents--read-sexp "the query" query-string)))
-        (files (org-agenda-files)))
-    (unless (org-agents--gate query)
+  (let* ((query (org-agents--expand
+                 (org-agents--read-sexp "the query" query-string)))
+         (form (org-agents--effective-query query))
+         (files (org-agenda-files)))
+    (unless (org-agents--gate form)
       (user-error "org-agents: query not approved"))
     ;; Handed no files, `org-ql-search' searches the current buffer -- so a
     ;; preview with no agenda files would list matches from wherever the
@@ -2611,13 +2635,7 @@ is what `org-ql-search' does when it is handed none."
     (unless files
       (user-error
        "org-agents: `org-agenda-files' is empty, so there is nothing to preview"))
-    (org-ql-search files
-                   (if org-agents-exclude
-                       `(and ,query ,org-agents-exclude)
-                     ;; nil conjoined here is a clause that never
-                     ;; matches, which is not what turning the exclusion
-                     ;; off means.
-                     query))))
+    (org-ql-search files form)))
 
 ;;;###autoload
 (defun org-agents-insert-dblock ()

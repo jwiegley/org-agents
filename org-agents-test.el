@@ -224,6 +224,65 @@ hold under a printer that has stopped being a *reader* printer, and
   (setq org-agents-test--tripwire-count (1+ org-agents-test--tripwire-count))
   t)
 
+(ert-deftest org-agents-test-gate-covers-the-exclude ()
+  "The gate judges the form that runs, `org-agents-exclude' included.
+The exclusion is Lisp out of the same configuration a query is, and it
+is conjoined into every agent query and every preview.  Gating the query
+alone approved a form nobody had been shown."
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive t))
+    (let ((org-agents-exclude '(shell-command "touch /tmp/pwned")))
+      (should (org-agents--structurally-safe-p '(todo)))
+      (should-not (org-agents--gate (org-agents--effective-query '(todo)))))
+    ;; And nothing in the refused form is evaluated while it is judged.
+    (let ((org-agents-exclude '(org-agents-test--tripwire))
+          (org-agents-test--tripwire-count 0))
+      (should-not (org-agents--gate (org-agents--effective-query '(todo))))
+      (should (= 0 org-agents-test--tripwire-count)))))
+
+(ert-deftest org-agents-test-gate-hash-changes-with-the-exclude ()
+  "One query hashes differently under two exclusions.
+An approval names a form, not a query, so a change to the exclusion has
+to invalidate it."
+  (let* ((query '(and (todo) (foo)))
+         (h1 (let ((org-agents-exclude '(not (property "AGENT_MATCH"))))
+               (org-agents--query-hash (org-agents--effective-query query))))
+         (h2 (let ((org-agents-exclude '(not (property "OTHER"))))
+               (org-agents--query-hash (org-agents--effective-query query)))))
+    (should-not (equal h1 h2))
+    ;; With the exclusion off the form is the bare query again, so the
+    ;; nil branch hashes what it always did.
+    (let ((org-agents-exclude nil))
+      (should (equal (org-agents--query-hash (org-agents--effective-query query))
+                     (org-agents--query-hash query))))))
+
+(ert-deftest org-agents-test-gate-approval-does-not-carry-across-excludes ()
+  "A remembered approval does not answer for a changed exclusion.
+The hash comparison stated as the user sees it: the gate asks again."
+  (let ((org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (noninteractive nil)
+        (query '(and (todo) (string-match "x" (or (org-entry-get nil "URL") "")))))
+    (let ((org-agents-exclude '(not (property "AGENT_MATCH"))))
+      ;; Approve once, answering the "run it?" prompt only: the second
+      ;; prompt offers to persist, which these bindings do not want.
+      (cl-letf (((symbol-function 'yes-or-no-p)
+                 (lambda (p &rest _) (string-match-p "run it" p))))
+        (should (org-agents--gate (org-agents--effective-query query))))
+      ;; Memoized under that exclusion: no second question.
+      (cl-letf (((symbol-function 'yes-or-no-p)
+                 (lambda (&rest _) (error "must not re-prompt"))))
+        (should (org-agents--gate (org-agents--effective-query query)))))
+    ;; A different exclusion is a different form, and is asked about.
+    (let ((org-agents-exclude '(not (property "OTHER"))))
+      (cl-letf (((symbol-function 'yes-or-no-p)
+                 (lambda (&rest _) (error "must not re-prompt"))))
+        (let ((err (should-error
+                    (org-agents--gate (org-agents--effective-query query)))))
+          (should (string-match-p "must not re-prompt"
+                                  (error-message-string err))))))))
+
 (ert-deftest org-agents-test-gate-refuses-call-in-predicate-argument ()
   "A known predicate must not vouch for arbitrary Lisp in its arguments."
   (let ((org-agents--session-approved (make-hash-table :test 'equal))
@@ -774,6 +833,24 @@ common, and the agent would silently match nothing at all."
         ;; instead be a clause that never matches.
         (let ((org-agents-exclude nil))
           (should (= 2 (length (org-agents--collect agent)))))))))
+
+(ert-deftest org-agents-test-collect-gates-the-form-it-runs ()
+  "A collect refuses a form its exclusion made unsafe, at the call site.
+The agent's own query is structurally safe here, so nothing but the
+exclusion can stop the collect -- and if the gate is handed the query
+rather than the form, nothing does."
+  (org-agents-test--in-agent
+    (let ((org-agents--session-approved (make-hash-table :test 'equal))
+          (org-agents-safe-queries nil)
+          (noninteractive t)
+          (org-agents-exclude '(org-agents-test--tripwire))
+          (org-agents-test--tripwire-count 0)
+          (agent (org-agents--read-agent)))
+      (should (org-agents--structurally-safe-p (plist-get agent :query)))
+      (let ((err (should-error (org-agents--collect agent) :type 'user-error)))
+        (should (string-match-p "not approved" (error-message-string err))))
+      ;; org-ql never saw the form, so nothing in it ran at any entry.
+      (should (= 0 org-agents-test--tripwire-count)))))
 
 (ert-deftest org-agents-test-collect-skips-the-agent-itself ()
   "An agent that matches its own query does not render itself."
@@ -2627,6 +2704,21 @@ the same case for the same reason."
           (noninteractive t))
       (should-error (org-agents-preview "(and (todo) (shell-command \"x\"))")
                     :type 'user-error))))
+
+(ert-deftest org-agents-test-preview-gates-the-form-it-runs ()
+  "A preview refuses a form its exclusion made unsafe.
+The query is structurally safe, so only the exclusion can stop it -- and
+if the gate is handed the query rather than the appended form, nothing
+does and `org-ql-search' is reached."
+  (cl-letf (((symbol-function 'org-agenda-files) (lambda (&rest _) '("a.org")))
+            ((symbol-function 'org-ql-search)
+             (lambda (&rest _) (error "must not be reached"))))
+    (let ((org-agents--session-approved (make-hash-table :test 'equal))
+          (org-agents-safe-queries nil)
+          (noninteractive t)
+          (org-agents-exclude '(shell-command "touch /tmp/pwned")))
+      (let ((err (should-error (org-agents-preview "(todo)") :type 'user-error)))
+        (should (string-match-p "not approved" (error-message-string err)))))))
 
 (ert-deftest org-agents-test-dblock-type-is-registered ()
   "`C-c C-x x' offers the block, and what it offers INSERTS one.

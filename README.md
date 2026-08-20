@@ -87,10 +87,14 @@ itself rather than a property: `$ITEM`, `$TODO`, `$PRIORITY`, `$TAGS`,
 
 An org-ql query is Lisp, and org-ql evaluates residual Lisp at every
 candidate entry, so a query read out of a property drawer is code out of a
-file. Every query passes a gate before it is evaluated. A query built only
-from org-ql predicates, combinators and `$` references runs unremarked;
-anything else asks once, and remembers the answer by SHA-1 hash in
-`org-agents-safe-queries`.
+file. The form that is evaluated passes a gate first. The *form*, not the
+query: `org-agents-exclude` is conjoined in before org-ql sees it, so what
+the gate shows, hashes and approves is the query with the exclusion
+appended. A form built only from org-ql predicates, combinators and `$`
+references runs unremarked; anything else asks once, and remembers the
+answer by SHA-1 hash in `org-agents-safe-queries`. An approval therefore
+names a form: change `org-agents-exclude` and every remembered approval
+stops matching, and each agent asks again once.
 
 An Org property value is one line. Keep the query on one line, or name a
 shorter one and let a residual predicate do the rest. A `:AGENT_QUERY+:`
@@ -160,7 +164,7 @@ refused by name rather than rendered wrongly.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `org-agents-files` | `'("~/org/agents.org")` | where `org-agents-update-all` looks: files, directories, or the symbol `agenda` |
-| `org-agents-exclude` | `(not (property "AGENT_MATCH"))` | conjunct appended to every agent query and every preview, so agents do not consume each other's aliases |
+| `org-agents-exclude` | `(not (property "AGENT_MATCH"))` | conjunct appended to every agent query and every preview, so agents do not consume each other's aliases. Part of the form the gate approves: Lisp here is gated like Lisp in a query, and changing it invalidates every remembered approval |
 | `org-agents-safe-queries` | `nil` | SHA-1 hashes of queries approved to run without prompting |
 | `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
@@ -513,6 +517,12 @@ package's own flags do not override `--max-depth`, `--max-filesize`,
 
 ### Others, less sharp
 
+* Changing `org-agents-exclude` re-prompts for every previously approved
+  query, once each. By design: the gate approves the form that runs, the
+  exclusion is part of that form, and an approval that survived a change to
+  it would be an approval of something the user never saw. Anyone upgrading
+  from a version that gated the query alone will see the same one-time
+  re-prompt, because the stored hashes are of the old shape.
 * On this platform `directory-files-recursively` can intermittently drop a
   symlink to a FILE from an `active` or `all` scope's base file set:
   `file-name-all-completions` sometimes reports such a link with a trailing
