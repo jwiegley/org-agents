@@ -32,6 +32,12 @@ by naming it in =:PROTOTYPE:= — by name, or by =id:UUID= for a master that
 lives out in the corpus instead. Prototypes add NO option of their own, and
 no command and no hook was added for them.
 
+That same file's =:ATTR_FACES:= is what =org-agents-faces-mode= draws with: a
+headline whose RESOLVED value for a declared attribute is one that attribute
+maps to a face is drawn in that face. Off until asked for, in either of the
+two ways below, and it writes NOTHING — one font-lock keyword, no text, no
+property, no overlay.
+
 The =id:= spelling does lean on one setting that already exists: it resolves
 through =org-id='s location table, so =org-id= must know which file holds the
 master (=org-id-track-globally= on and a populated =org-id-locations-file=, or
@@ -67,7 +73,9 @@ to the position it appears in.
              org-agents-check-attributes
              org-agents-attribute-columns
              org-agents-mode
-             global-org-agents-mode)
+             global-org-agents-mode
+             org-agents-faces-mode
+             global-org-agents-faces-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
   ;; `org-update-all-dblocks', so it has to be autoloaded as well.
   :autoload (org-dblock-write:org-agents
@@ -168,6 +176,56 @@ price of not having to mark each file:
 #+begin_src emacs-lisp
 (global-org-agents-mode 1)
 #+end_src
+
+* Appearance from attribute values
+
+=org-agents-faces-mode= draws a headline in the face its attribute value maps
+to. The value it reads is the RESOLVED one, so an entry spelling only
+=:PROTOTYPE:= — or nothing at all, and taking =:ATTR_DEFAULT:= — is faced
+exactly as one spelling the value in its own drawer. It CHANGES NO BYTES: one
+font-lock keyword, nothing inserted, no property written, no overlay, and
+turning it off restores the buffer exactly. So it is safe to leave on in
+files under version control.
+
+Declare the mapping in the registry beside the type:
+
+#+begin_example
+,* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_VALUES:  active stalled done
+:ATTR_DEFAULT: active
+:ATTR_FACES:   active org-todo | stalled org-warning
+:END:
+#+end_example
+
+*The lazy way.* A file-local minor mode on the first line of the files that
+want it. Emacs appends the =-mode= suffix itself, so the value is
+=org-agents-faces=; being a =mode:= entry it raises no risky-local prompt, and
+visiting the file is what autoloads the package:
+
+#+begin_example
+# -*- mode: org; mode: org-agents-faces; -*-
+#+title: Projects
+#+end_example
+
+*The blanket way.* =global-org-agents-faces-mode= arms EVERY Org buffer, and
+deliberately not only those whose text mentions a property the way
+=global-org-agents-mode= does: a value arriving through a prototype or a
+default is spelled nowhere, so a text scan would miss exactly the entries
+the mode exists for. Like the other globalized mode it has to be called to
+take effect, which loads =org-agents= at startup rather than on first use.
+
+#+begin_src emacs-lisp
+(global-org-agents-faces-mode 1)
+#+end_src
+
+Measured, that is affordable: where nothing declares a face the mode answers
+before resolving anything at all, so a corpus with no registry pays a regexp
+scan of the displayed region and nothing else. With a registry the cost is
+what is on SCREEN — over a 400-entry buffer, a twelve-line window costs 5
+resolutions where the whole buffer costs 799 — and the registry is read once
+per fontified region rather than once per headline.
 
 * Key bindings, and what each was checked against
 

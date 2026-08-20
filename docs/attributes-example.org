@@ -61,8 +61,14 @@ Where the item stands. A =set= rather than a =string=: an item may be
 blocked and waiting on review at once, and a set is unordered and admits
 no repeat.
 
-=ATTR_FACES= is parsed and stored and read by nothing today. It is here
-because the format is cheaper to fix now than to change later.
+=ATTR_FACES= is what =org-agents-faces-mode= draws with: with that mode on, a
+headline whose STATUS resolves to =blocked= is drawn in =org-warning=, and one
+that resolves to =done= in =org-done= — resolved, so an entry inheriting the
+value through =:PROTOTYPE:= is faced along with one that spells it. Note that
+this is a =set=, and =ATTR_FACES= maps WHOLE values: an entry holding
+=blocked wip= is not drawn, because that whole value is not one of the keys.
+Nothing about the mapping is ever written back; see README's "Appearance from
+attribute values".
 
 * OWNER
 :PROPERTIES:

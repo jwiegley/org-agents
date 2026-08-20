@@ -15,8 +15,8 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~5,200 lines), and one
-tests it, `org-agents-test.el` — 327 ERT tests, all of which run in a
+One file makes up the package, `org-agents.el` (~5,800 lines), and one
+tests it, `org-agents-test.el` — 344 ERT tests, all of which run in a
 plain `make test` with no external service. The 35 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
@@ -200,7 +200,7 @@ blocked and waiting on review at once.
 | `ATTR_TYPE` | `string`, `number`, `date`, `boolean`, `set`, or `list`. Required — this property is what makes an entry a declaration. |
 | `ATTR_VALUES` | the values the attribute admits, whitespace-separated. A `:ETC` among them leaves the vocabulary **open**, which is Org's own spelling of that; `:ETC` *alone* declares no vocabulary at all, and completion defers as though the field were absent. |
 | `ATTR_DEFAULT` | the default, as text. |
-| `ATTR_FACES` | `VALUE FACE \| VALUE FACE …` — value/face pairs separated by a vertical bar. Parsed and stored, and read by nothing yet. |
+| `ATTR_FACES` | `VALUE FACE \| VALUE FACE …` — value/face pairs separated by a vertical bar. What `org-agents-faces-mode` draws a headline with; see "Appearance from attribute values". |
 
 `set` and `list` are Tinderbox's: a set is unordered and admits no repeat, a
 list is ordered and admits duplicates. Tinderbox separates their members
@@ -257,7 +257,7 @@ buffer's `buffer-chars-modified-tick`, so a value you have just typed into
 buffer visiting it, the key is the file's modification time and size and
 nothing is opened to find that out.
 
-### The three things that read it
+### The four things that read it
 
 **1. Completion.** `org-agents-allowed-values` on Org's own
 `org-property-allowed-value-functions` makes `org-set-property` offer a
@@ -370,6 +370,12 @@ registry can declare one and only the column view cannot say it.
 Measured, and worth knowing: `org-columns-compile-format` validates no
 operator at all — `%X{nope}` compiles without complaint — so the guarantee
 that these operators are real is this command's, and nowhere else.
+
+**4. Appearance.** `org-agents-faces-mode` faces a headline from a declared
+attribute's *resolved* value, through the `ATTR_FACES` mapping. It is the
+one reader of that field, and the only one of the four that draws rather
+than reports. See "Appearance from attribute values" — it sits after
+Prototypes, because *resolved* is the word it turns on.
 
 ## Prototypes
 
@@ -532,10 +538,185 @@ know where the master's file is — `org-id-track-globally` on and a populated
 master named by **name** out of the registry's `Prototypes` section needs
 nothing beyond the file above.
 
+## Appearance from attribute values
+
+`org-agents-faces-mode` is a buffer-local minor mode that draws a headline
+in the face its attribute value maps to. It is Tinderbox's `$Color`, and it
+**changes no bytes**.
+
+### The syntax
+
+```org
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_VALUES:  active stalled done
+:ATTR_DEFAULT: active
+:ATTR_FACES:   active org-todo | stalled org-warning
+:END:
+```
+
+`VALUE FACE | VALUE FACE …`, groups separated by a vertical bar and the two
+words of a group by whitespace. All or nothing: a group that is not exactly
+two words costs the **whole** field, and the reader names the attribute once
+when that happens:
+
+```
+org-agents: attribute `STATUS' in ~/org/attributes.org: unreadable :ATTR_FACES: `active'
+```
+
+Said once per edit to the registry rather than once per redisplay, because
+the mode reads the mapping the reader stored and never re-parses the field.
+
+`ATTR_FACES` is the whole of the opt-in. Every declared attribute that names
+faces is consulted; there is no second list to enrol one in, because the
+commonest failure of one would be a registry that names faces and silently
+draws nothing.
+
+A face the registry names and Emacs does not is a **diagnostic, not an
+error**. It is said once per attribute and face, that one mapping is
+skipped, and the rest of the buffer is faced normally — a typo in the
+registry must not cost the fontification of the file you are reading.
+`facep` is therefore checked at use and never when the registry is read: a
+face a theme defines later would otherwise be rejected for good.
+
+### The worked example
+
+Given the `STATUS` declaration above, a master in the registry's
+`Prototypes` section carrying `:STATUS: stalled`, and this corpus:
+
+```org
+* Rewrite the exporter
+:PROPERTIES:
+:STATUS: stalled
+:END:
+
+* Audit the fixtures
+:PROPERTIES:
+:PROTOTYPE: Task
+:END:
+
+* Read the mail
+```
+
+All three headlines are faced, and that is the point.
+
+The first spells `stalled` and is drawn in `org-warning`. The second spells
+only `:PROTOTYPE: Task`, and the master says `stalled` — so it is drawn in
+`org-warning` too. The third spells nothing whatever, takes `ATTR_DEFAULT`'s
+`active`, and is drawn in `org-todo`.
+
+**Grep does not see an inherited value**, and neither does the drawer under
+your eye — but the face does. That is the whole reason the mode is worth
+more than a tag convention, and it is why `global-org-agents-faces-mode`
+arms **every** Org buffer rather than only those whose text mentions a
+property, the way `global-org-agents-mode` does: a text scan would miss
+precisely the second and third entries above.
+
+Values are matched **whole** and case-**sensitively** — `STALLED` is not
+`stalled` — which is one decision with `property-resolved`'s own comparison
+and with `ATTR_VALUES`, because a declared vocabulary is one you wrote down.
+
+### It changes no bytes
+
+One font-lock keyword and nothing else. No text is inserted, no property is
+written, no overlay is created, and turning the mode off restores the buffer
+exactly: the keyword is un-declared and font-lock's own unfontify pass takes
+the face off. Nothing here removes a text property, because there is none of
+ours to remove.
+
+That is tested rather than claimed.
+`org-agents-test-faces-change-no-bytes` replaces `insert`, `delete-region`,
+`org-entry-put` and `replace-buffer-contents` with a tripwire across an
+enable, a fontification and a disable, and asserts the count is zero beside
+the modification flag, `buffer-chars-modified-tick`, the buffer text, the
+file's bytes on disk, and the absence of any overlay.
+`org-agents-test-faces-disabling-leaves-no-residue` asserts the other half —
+`font-lock-keywords` `equal` to what it was, not one buffer-local variable
+of ours left behind, and the face gone after a refontification.
+
+So it is safe to leave on in files under version control.
+
+### What it costs
+
+jit-lock-driven, per displayed headline. The matcher reads only the entry at
+its match and honours the region's limit, so cost scales with what is *on
+screen* and not with the buffer or the corpus. Measured over a 400-entry
+buffer of which one entry is drawn: a twelve-line window costs **5**
+resolutions where the whole buffer costs **799**, and a headline outside the
+region carries no `face` property at all.
+
+The registry is read **once per fontified region** rather than once per
+headline, and that matters more than it sounds. Reaching the registry costs
+`file-truename` plus `find-buffer-visiting`, and the second walks the whole
+buffer list truenaming each buffer's file — so the cost grows with how many
+buffers you have open. Measured on that same buffer, a whole-buffer
+fontification costs 405 such reads and 0.097 s with the batch established
+per matcher call, against **1** read and 0.033 s with it established once
+for the region — against an Org-alone baseline of 0.010 s, a marginal cost
+of 23 ms rather than 87 ms. A dangling `:PROTOTYPE:` is said once for the buffer for the
+same reason: measured, twenty entries naming one missing master produce
+twenty messages without that and one with it — and without it they would be
+twenty messages *per redisplay*.
+
+Where nothing declares a face the mode answers before resolving anything at
+all, so a corpus with no registry pays a regexp scan of the displayed region
+and nothing else. That is what makes arming every Org buffer affordable.
+
+### Precedence
+
+Two collisions, one rule each.
+
+**Between two declared attributes, the first declaration in the registry
+file wins.** `org-agents-attributes` answers in file order — the registry is
+a document, and the order its author chose is information — and the walk
+stops at the first declaration that resolves to a mapped value. There is no
+option for this: the ordering already has a spelling you control, which is
+where the declarations sit in the file, and a second spelling would let the
+two disagree. A value declared twice inside one `ATTR_FACES` follows the
+same rule.
+
+**Against Org's `org-level-N`, the faces form a list with ours first.** The
+keyword is appended to `font-lock-keywords` and applies with `prepend`, so
+the title reads `(org-warning org-level-1)`: the colour follows the
+attribute, and everything the attribute's face does not specify — the
+height, the family — still comes from Org. The stars keep `org-level-1` by
+itself, which is what keeps `org-hide-leading-stars` working. Measured, the
+alternatives are all worse. At the *front* of the keyword list ours claims
+the headline outright and `org-level-N` is destroyed, because Org's own
+headline keyword applies with override nil. `append` gives `(org-level-1
+org-warning)`, where Org's colour wins and ours is dead weight. `keep` never
+applies at all. And override `t` gives `org-warning` alone, **destroying**
+`org-level-N` — the height, the family, the lot.
+
+The keyword faces the heading *text* and never the trailing newline, so
+`org-fontify-whole-heading-line` still governs the fill of the line and this
+mode governs the text on it.
+
+### Two refusals
+
+**No geometry.** Tinderbox's `$Width`, `$Xpos` and `$Height` are
+deliberately not ported. They describe a **map view**, and Org has no map:
+there is nothing in an outline for them to mean, so no spelling of them is
+reserved and none is planned.
+
+**No writes of any kind from an appearance declaration.** Setting a tag, a
+TODO state or a property from a resolved value is action code arriving
+through another door. What makes it different in kind from facing a headline
+is that it would be *inheritable behaviour*: a master's declaration running
+in every follower's file, in files you never opened, is what part 3 of
+`docs/research/action-code-safety.md` says makes per-file trust
+meaningless. Any such thing goes through the action-code trust model or not
+at all.
+
+One thing is neither refused nor done: facing by a **member** of a `set` or
+`list` rather than by the whole value. `ATTR_FACES` maps whole values today,
+so a `set` is faced only where its entire value equals a declared key.
+
 ## Corpus-wide column view
 
-Here is what those three add up to, and the reason there is no renderer in
-this package. **`org-agenda-columns` already works inside an `org-ql-search`
+Here is what the first three of those readers add up to, and the reason
+there is no renderer in this package. **`org-agenda-columns` already works inside an `org-ql-search`
 results buffer.** That buffer is an `org-agenda-mode` buffer carrying
 `org-hd-marker` on every result line; `org-agenda-columns` reads its
 format from the matched entry's inherited `:COLUMNS:`, through the
@@ -625,6 +806,8 @@ refused by name rather than rendered wrongly.
 | `org-agents-list-approvals` | list every remembered approval and refusal, each with the query its hash covers; `d` forgets an approval, `r` turns it into a refusal, `u` lifts a refusal |
 | `org-agents-mode` | update this buffer's agents before each save |
 | `global-org-agents-mode` | turn `org-agents-mode` on in every Org buffer whose text mentions `:AGENT_QUERY:` |
+| `org-agents-faces-mode` | face this buffer's headlines from declared attribute values; changes no bytes. See "Appearance from attribute values" |
+| `global-org-agents-faces-mode` | turn `org-agents-faces-mode` on in **every** Org buffer. Not only those whose text mentions a property: a value arriving through a prototype or a default is spelled nowhere, so a text scan would miss exactly the entries the mode exists for |
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -637,7 +820,9 @@ refused by name rather than rendered wrongly.
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
 | `org-agents-attributes-file` | `"~/org/attributes.org"` | the Org file declaring the corpus's user attributes. Optional: one that is missing or unreadable declares nothing and says nothing about it, and the package never creates it. See "The attribute registry" below |
 
-Every option in that table is `:risky t`, and so is `global-org-agents-mode`.
+Every option in that table is `:risky t`, and so are both of the globalized
+modes' own options, `global-org-agents-mode` and
+`global-org-agents-faces-mode`.
 Emacs will not apply a file-local setting of a risky variable without asking,
 and will not offer to trust one permanently or directory-wide. The reason is
 that each of them names either Lisp to evaluate (`org-agents-exclude`), a
@@ -648,6 +833,14 @@ already been approved or refused (`org-agents-safe-queries`,
 `org-agents-refused-queries`, `org-agents-refused-heads`). A file that could
 set any of them from its own local-variables block could pre-approve its own
 query, delete a refusal, or name the binary to execute.
+
+The two globalized modes are risky for a reason of their own, since neither
+names Lisp or a program. Turning `global-org-agents-mode` on is what makes
+every save of an Org file run that file's agents' queries; turning
+`global-org-agents-faces-mode` on is what makes every Org buffer read the
+registry and walk prototype chains as it redisplays. A file that could
+enable either from its own local-variables block would be deciding that for
+the whole session, not for itself.
 
 An approval is recorded as `(HASH . QUERY-TEXT)` — the hash and the very
 text it was taken of, so `org-agents-list-approvals` can show what each
@@ -840,15 +1033,15 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 327 tests, no external service needed
+make test        # 344 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `327 tests, 327 results as expected, 0 unexpected` and
+`make test` reports `344 tests, 344 results as expected, 0 unexpected` and
 takes about half a minute. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `292 results as expected, 0
+set up. Where `rg` is not on `PATH` it reports `309 results as expected, 0
 unexpected, 35 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing. No test asserts
