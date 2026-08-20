@@ -2814,15 +2814,17 @@ tree and org-ql matches through it, so without it the candidate set would be
 narrower than the scope's own file list — a lost match rather than a slow one.
 See `org-agents--rg-args` and README's honest limitation 4.
 
-* TODO [#B] Harden the query gate before any new feature
+* DONE [#B] Harden the query gate before any new feature
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-harden-the-gate-fkl
 :LABELS:   []
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 20:47]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 20:47]
+:CLOSE_REASON: All five issues shipped and tested: e82a26e, 34d83db, 74b9d4c, acf221c, 63052f8, 59d8d00, then the verification fixes c4c671e, 8f804ce, 9b36c79, c5d72d7, 03f11a2. Suite 232 tests, 0 unexpected; make gate zero warnings. Epic 2 is unblocked.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2836,15 +2838,17 @@ everything in it makes the existing approval story mean what it says.
 Ordering: this epic blocks every other epic of the dynamic-properties design
 (docs/2026-08-19-dynamic-properties-design.md).
 
-* TODO [#B] Gate and hash the form that actually runs, exclude included
+* DONE [#B] Gate and hash the form that actually runs, exclude included
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-harden-the-gate-fkl.1
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 20:47]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 20:47]
+:CLOSE_REASON: Gate and hash the effective form: org-agents--effective-query builds (and QUERY EXCLUDE) before the gate, and org-agents--collect and org-agents-preview each gate the very object they hand org-ql (e82a26e, 34d83db; verified eq at both sites). Pre-epic hashes re-prompt once where the exclusion is non-nil.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2887,15 +2891,17 @@ The gate does not cover the form that actually runs.
 ]
 #+end_src
 
-* TODO [#B] Mark every org-agents defcustom risky
+* DONE [#B] Mark every org-agents defcustom risky
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-harden-the-gate-fkl.2
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 20:47]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 20:47]
+:CLOSE_REASON: All eight defcustoms carry :risky t, and so does org-agents--session-approved, the defvar that IS the approval record the gate consults first (63052f8, c4c671e). Owned-list test asserts every gate-read variable is marked and derives the option set by name, not by group, so an option under another group cannot slip through.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2936,15 +2942,17 @@ No org-agents defcustom is marked risky, so all of them can be set file-locally.
 ]
 #+end_src
 
-* TODO [#C] The approval prompt must show what the hash covers
+* DONE [#C] The approval prompt must show what the hash covers
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-harden-the-gate-fkl.3
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 20:47]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 20:47]
+:CLOSE_REASON: One printer, org-agents--query-text, binds every printer variable that can change what it prints: print-level/length/circle, print-escape-newlines, print-escape-control-characters, print-gensym, print-quoted, float-output-format (e82a26e, 8f804ce). Prompt, batch message, stored text and hash are the same string; the leftover-ref diagnostic goes through it too.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2983,15 +2991,17 @@ The approval prompt can display less than the hash covers.
 ]
 #+end_src
 
-* TODO [#C] Approvals must be inspectable and revocable
+* DONE [#C] Approvals must be inspectable and revocable
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-harden-the-gate-fkl.4
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 20:47]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 20:47]
+:CLOSE_REASON: Approvals record (HASH . TEXT); org-agents-list-approvals lists saved, session-only and refused decisions with their query text, and d/r/u revoke, refuse and lift at point (acf221c, 9b36c79). A refusal is recorded for the query inside the form as well as the form, so editing org-agents-exclude cannot lift one; it beats every approval and org-ql-ask-unsafe-queries.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -3027,15 +3037,17 @@ stands for, and the only way to unapprove is to hand-edit custom-file.
 ]
 #+end_src
 
-* TODO [#C] A refused-heads list, consulted before the safe list
+* DONE [#C] A refused-heads list, consulted before the safe list
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-harden-the-gate-fkl.5
 :LABELS:   []
 :ISSUE_TYPE: bug
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-19 Wed 20:47]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-19 Wed 20:47]
+:CLOSE_REASON: org-agents-refused-heads (:risky t, default (semantic)) is consulted before the safe list and before any approval, descends every cons including quoted data and the exclusion, and names the head it refused (74b9d4c). Documented in README's honest limitations and in docs/init-snippet.org, including what removing semantic costs.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
