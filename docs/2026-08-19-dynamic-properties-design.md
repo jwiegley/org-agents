@@ -144,6 +144,15 @@ so the pushed pattern is the alternation
 
     ^[ \t]*:(NAME\+?|PROTOTYPE\+?):
 
+As shipped, that is the **existence** form's pattern (spelled as a
+distributed alternation, `(?:^[ \t]*:NAME\+?:|^[ \t]*:PROTOTYPE\+?:)`). The
+**value** form puts the value on the NAME arm —
+`(?:^[ \t]*:NAME\+?:[ \t]+VALUE[ \t]*$|^[ \t]*:PROTOTYPE\+?:)` — which is
+strictly narrower and sound by the identical argument: a matching entry
+either spells the value on one line of its own file, or carries a
+`:PROTOTYPE:` line in it. A value ripgrep cannot carry on one line degrades
+to the existence arm, which is wider and always sound.
+
 **Exception:** when the tested value equals the registry's `ATTR_DEFAULT`
 (or the query is bare existence and a default is declared), an entry with
 neither line also matches — nothing can narrow, and the conjunct stays

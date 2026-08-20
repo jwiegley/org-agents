@@ -3387,6 +3387,73 @@ ordinary configuration; a test has to arrange that explicitly."
       (org-agents-test--at-entry (funcall F "f.org") "Follows a bare uuid"
         (should (equal "corpus-master" (org-agents-resolve-property "OWNER")))))))
 
+(ert-deftest org-agents-test-prototype-id-untracked-says-so ()
+  "A dangling `id:' names the ID table when the table is why it dangled.
+The two causes want different fixes and used to read alike.  MEASURED, a
+master one file away with an empty `org-id-locations' resolved nil and
+said only `no prototype `id:...' named by `F'' -- which sends the user
+hunting for a typo in the FOLLOWER's drawer, the one thing spelled
+correctly.  The cause is that `org-id-find-id-file' answers the current
+buffer's own file on a table miss, so the id is sought in the follower's
+file rather than the master's; teaching org-id the location, and changing
+nothing else, resolves it.
+
+A misspelled NAME must not gain the clause, or it would say the opposite
+of the truth."
+  (let ((uuid "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+    (org-agents-test--with-attr-corpus org-agents-test--prototype-registry
+        `(("masters.org" . ,(concat "\
+* Master out in the corpus
+:PROPERTIES:
+:ID:      " uuid "
+:OWNER:   ida
+:END:
+"))
+          ("f.org" . ,(concat "\
+* TODO Follows an id nothing tracks
+:PROPERTIES:
+:PROTOTYPE: id:" uuid "
+:END:
+* TODO Follows a name that is a typo
+:PROPERTIES:
+:PROTOTYPE: Tsak
+:END:
+")))
+      ;; The fixture starts with an empty table, which is the case.
+      (should (org-agents--prototype-id-untracked-p uuid))
+      (org-agents-test--at-entry (funcall F "f.org") "Follows an id nothing"
+        (let* ((org-agents--prototype-warned (make-hash-table :test #'equal))
+               (texts (org-agents-test--messages
+                        (should-not
+                         (org-agents-resolve-property-quietly "OWNER")))))
+          (should (= 1 (length texts)))
+          (should (string-match-p "no prototype" (car texts)))
+          (should (string-match-p "org-id knows no file" (car texts)))))
+      ;; A name gets the ordinary message and no such clause.
+      (org-agents-test--at-entry (funcall F "f.org") "Follows a name that is"
+        (let* ((org-agents--prototype-warned (make-hash-table :test #'equal))
+               (texts (org-agents-test--messages
+                        (should-not
+                         (org-agents-resolve-property-quietly "OWNER")))))
+          (should (= 1 (length texts)))
+          ;; Quoted per `text-quoting-style', so the name alone.
+          (should (string-match-p "no prototype" (car texts)))
+          (should (string-match-p "Tsak" (car texts)))
+          (should-not (string-match-p "org-id knows" (car texts)))))
+      ;; And once the table knows the file, it resolves and says nothing.
+      (let ((org-id-locations-file (expand-file-name ".org-id-locations" dir)))
+        (puthash uuid (funcall F "masters.org") org-id-locations)
+        (should-not (org-agents--prototype-id-untracked-p uuid))
+        (setq org-agents--prototype-id-cache nil)
+        (org-agents-test--at-entry (funcall F "f.org") "Follows an id nothing"
+          (let* ((org-agents--prototype-warned
+                  (make-hash-table :test #'equal))
+                 (texts (org-agents-test--messages
+                          (should (equal "ida"
+                                         (org-agents-resolve-property
+                                          "OWNER"))))))
+            (should-not texts)))))))
+
 (ert-deftest org-agents-test-prototype-id-cache-invalidates-on-an-unsaved-edit ()
   "An unsaved edit to an id-named master is what the next resolution sees.
 `org-agents-test-prototype-cache-invalidates-on-an-unsaved-edit' pins this
@@ -3665,6 +3732,36 @@ should skip this rather than fail it."
       ;; And it is not silent for want of anything in it.
       (should (member "STATUS" names))
       (should (equal prototypes '("Task" "Urgent Task"))))))
+
+(ert-deftest org-agents-test-caret-is-not-short-for-the-value-form ()
+  "`$NAME^' is the EXISTENCE form, and three documents used to say otherwise.
+They claimed `(and (todo) $STATUS^)' was
+`(and (todo) (property-resolved \"STATUS\" \"wip\"))' \"written short\".  It is
+not, and the difference is not academic: MEASURED against the shipped
+`docs/attributes-example.org' as a live registry, the value form selected
+the two followers the file prints and the caret form selected those two
+AND an unrelated TODO carrying no `:STATUS:' and no `:PROTOTYPE:' at all --
+because that file declares `:ATTR_DEFAULT: open', and a declared default
+makes the existence form true of every entry in the corpus.
+
+The cost travels with the wrong answer.  A bare existence test on a name
+with a declared default is exactly the conjunct the prefilter must leave
+residual, so the query a reader copied narrows NOTHING and scans its whole
+scope live.
+
+Held here rather than in prose: the expansions are asserted to differ, so
+a document may not describe them as one thing again without a test
+failing."
+  (should (equal (org-agents--expand '$STATUS^) '(property-resolved "STATUS")))
+  (should-not (equal (org-agents--expand '$STATUS^)
+                     '(property-resolved "STATUS" "wip")))
+  (should (equal (org-agents--expand '(and (todo) $STATUS^))
+                 '(and (todo) (property-resolved "STATUS"))))
+  ;; The three axes stay three, which is what makes the sugar readable.
+  (should-not (equal (org-agents--expand '$STATUS^)
+                     (org-agents--expand '$STATUS)))
+  (should-not (equal (org-agents--expand '$STATUS^)
+                     (org-agents--expand '$STATUS*))))
 
 ;;; The predicate
 

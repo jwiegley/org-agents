@@ -174,8 +174,12 @@
 ;; whose every entry is a MASTER: an ordinary entry whose drawer holds
 ;; ordinary properties, which any entry in the corpus may read through by
 ;; naming it in `:PROTOTYPE:' -- by name out of that section, or by
-;; `id:UUID', which resolves to any entry in the corpus carrying that
-;; `:ID:'.  This is Tinderbox's prototype, and like Tinderbox's it is
+;; `id:UUID', which resolves to an entry carrying that `:ID:' wherever
+;; `org-id-locations' says it lives.  That table is the one precondition
+;; the feature has: see `org-agents--prototype-id-read' for why the
+;; resolver consults it rather than calling `org-id-find', and for what a
+;; reference whose id the table does not know does instead.
+;; This is Tinderbox's prototype, and like Tinderbox's it is
 ;; independent of the outline: it relates two entries rather than saying
 ;; anything about where either sits.  Resolution order, per attribute:
 ;; the entry's own drawer with inheritance OFF, then the chain nearest hop
@@ -3927,19 +3931,43 @@ happens to live in."
                     (assoc-delete-all id org-agents--prototype-id-cache)))
         found))))
 
+(defun org-agents--prototype-id-untracked-p (id)
+  "Non-nil when `org-id' has no file recorded for ID.
+Which is the difference between \"that master is not there\" and \"org-id
+does not know where to look\", and the two want different fixes: the first
+is a typo in a drawer, the second is `org-id-track-globally' and a
+populated `org-id-locations-file'.  `org-agents--prototype-id-read' says
+why the table is consulted rather than `org-id-find', which would rebuild
+it from a predicate body."
+  (not (and (hash-table-p org-id-locations)
+            (gethash id org-id-locations))))
+
 (defun org-agents--prototype-entry (ref pom)
   "The prototype REF names, as a plist, or nil with ONE diagnostic.
 POM is the entry that named it, so that the diagnostic can say where the
 reference was written.  Keyed on the reference and not on the text, so a
 hundred entries naming one missing master cost one message naming the
-first of them."
-  (or (if-let* ((id (org-agents--prototype-id ref)))
-          (org-agents--prototype-id-entry id)
-        (cdr (assoc-string ref (org-agents--prototypes-alist) t)))
-      (org-agents--prototype-report
-       (concat "dangling\0" (downcase ref))
-       "org-agents: no prototype `%s' named by %s"
-       ref (org-agents--prototype-where pom))))
+first of them.
+
+An `id:' the location table does not know says so, because otherwise the
+message names the FOLLOWER and the follower is the one thing that is
+spelled correctly: MEASURED, a master one file away with an empty table
+resolved nil and reported `no prototype `id:...' named by `F'', which
+sends the user hunting for a typo in a drawer that has none.  The cause is
+that `org-id-find-id-file' answers the current buffer's own file on a
+table miss -- so the id is looked for in the follower's file and not in
+the master's."
+  (let ((id (org-agents--prototype-id ref)))
+    (or (if id
+            (org-agents--prototype-id-entry id)
+          (cdr (assoc-string ref (org-agents--prototypes-alist) t)))
+        (org-agents--prototype-report
+         (concat "dangling\0" (downcase ref))
+         "org-agents: no prototype `%s' named by %s%s"
+         ref (org-agents--prototype-where pom)
+         (if (and id (org-agents--prototype-id-untracked-p id))
+             "; org-id knows no file for that id"
+           "")))))
 
 (defconst org-agents--prototype-chain-limit 1000
   "How many hops `org-agents--prototype-chain' walks before it refuses.

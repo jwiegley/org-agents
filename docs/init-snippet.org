@@ -29,9 +29,15 @@ nothing about it. =docs/attributes-example.org= is a whole one, written out.
 That same file carries the prototypes. A reserved top-level =* Prototypes=
 section holds master entries, and any entry in the corpus reads through one
 by naming it in =:PROTOTYPE:= — by name, or by =id:UUID= for a master that
-lives out in the corpus instead. Prototypes add NO option of their own:
-there is nothing more to configure than the file above, and no command and
-no hook was added for them.
+lives out in the corpus instead. Prototypes add NO option of their own, and
+no command and no hook was added for them.
+
+The =id:= spelling does lean on one setting that already exists: it resolves
+through =org-id='s location table, so =org-id= must know which file holds the
+master (=org-id-track-globally= on and a populated =org-id-locations-file=, or
+the master in the follower's own file). Otherwise the reference dangles with
+a one-line diagnostic. Naming a master by =name= needs nothing but the file
+above.
 
 There is nothing else that must be configured. The candidate-file
 prefilter is ripgrep, which needs no DSN, no config file and no
@@ -233,10 +239,15 @@ spelling it, =(property "STATUS" "wip")= does not match it and
 :END:
 #+end_example
 
-=(and (todo) $STATUS^)= is the same query written short. The =^= suffix is
-the prototype axis and the =*= suffix is the outline one — =$STATUS*= is
-=org-entry-get= with inheritance, which is a different question — and a
-reference carries at most one of them.
+=(and (todo) $STATUS^)= is NOT that query written short: =$STATUS^= expands
+to =(property-resolved "STATUS")=, which asks whether =STATUS= resolves at
+all rather than whether it resolves to =wip= — and where the registry
+declares an =:ATTR_DEFAULT:= for the name, that is true of every entry. Write
+the value out when you mean the value.
+
+The =^= suffix is the prototype axis and the =*= suffix is the outline one —
+=$STATUS*= is =org-entry-get= with inheritance, which is a different
+question — and a reference carries at most one of them.
 
 The whole property vocabulary implemented today: =AGENT_QUERY= (required),
 =AGENT_VIEW= (=children= default, =list=, =table=), =AGENT_SCOPE= (=agenda= default,

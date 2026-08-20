@@ -172,17 +172,26 @@ An agent that matches through that inheritance:
 :END:
 #+end_example
 
-=(and (todo) $STATUS^)= is the same query written short, and
-=(and (todo) (property "STATUS" "wip"))= is NOT: it matches only entries
-that spell the value in their own drawer, which is neither of these two.
+=(and (todo) $STATUS^)= is NOT that query written short. =$STATUS^= expands
+to =(property-resolved "STATUS")= — one argument, no value — which asks only
+whether =STATUS= resolves *at all*; and because =STATUS= declares
+=:ATTR_DEFAULT: open= above, every entry in the corpus resolves it. So the
+short form matches every TODO there is, and it narrows nothing: a bare
+existence test on a name with a declared default is exactly the case the
+prefilter cannot push, so it is an unnarrowed scan of the whole scope. A
+value has to be written out.
+
+=(and (todo) (property "STATUS" "wip"))= is narrower than either, and wrong
+for a different reason: it matches only entries that spell the value in
+their own drawer, which is neither of the two above.
 
 =$STATUS^= in boolean position is a known org-ql predicate and runs
 unremarked. In value position — =(string-match "w" $STATUS^)= — it becomes
 residual Lisp and the evaluation gate asks about it once, exactly as it does
 for =$STATUS*=.
 
-A master may also be named by id, which reaches an entry anywhere in the
-corpus and needs no heading in this file at all:
+A master may also be named by id, which reaches an entry out in the corpus
+and needs no heading in this file at all:
 
 #+begin_example
 ,* TODO Ship the doohickey
@@ -190,3 +199,10 @@ corpus and needs no heading in this file at all:
 :PROTOTYPE: id:1f2e3d4c-5b6a-7890-abcd-ef0123456789
 :END:
 #+end_example
+
+That form resolves through =org-id='s location table, which is the one thing
+prototypes need configured: =org-id= has to know which file holds the master
+(=org-id-track-globally= on and a populated =org-id-locations-file=, or the
+master in the same file as the follower). Where the table has no answer the
+reference simply dangles, with the ordinary one-message diagnostic. Naming a
+master by =name= out of the section above needs none of that.

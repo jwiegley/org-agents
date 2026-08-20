@@ -148,10 +148,14 @@ This is the whole of it, as implemented.
 | `AGENT_MATCH` | written by the package on a generated alias, never by hand. |
 | `AGENT_MATCHED` | written by the package after an update: how many entries matched, and when. |
 
-`PROTOTYPE` is the only property outside that table that this package reads
-by name — it names the entry a value is inherited *from*, and is described
-under [Prototypes](#prototypes). Every other property in a drawer is data
-the package reads only because a query asked for it.
+`PROTOTYPE` and `ID` are the only properties outside that table the package
+reads by name. `PROTOTYPE` names the entry a value is inherited *from*, and
+is described under [Prototypes](#prototypes). `ID` is how a match is linked
+to: every rendered match is read for one, and an entry that has one is
+registered with `org-id-add-location` so the link resolves — so an update
+does touch `org-id` state. `COLUMNS` is *written* by the column-view command,
+which says so where it is described. Every other property in a drawer is
+data the package reads only because a query asked for it.
 
 Org reads the value `nil` as no value at all, so `:AGENT_VIEW: nil` is an
 agent with no view rather than an error, and takes the default.
@@ -394,11 +398,25 @@ The master every task follows.
 
 That entry's `OWNER` is `johnw`, and nothing was written into its drawer to
 make it so. `:PROTOTYPE:` takes a **name** out of that section, or an
-`id:UUID` (or a bare UUID), which resolves to any entry in the corpus that
-carries the `:ID:` — so a master need not live in the registry at all. This
+`id:UUID` (or a bare UUID), which resolves to an entry that carries the
+`:ID:` — so a master need not live in the registry at all. This
 is Eastgate Tinderbox's prototype, and like Tinderbox's it is independent
 of the outline: a prototype is a relation between two entries, not a fact
 about where either sits.
+
+An `id:` reference resolves **through `org-id`'s location table**, and that
+is the one precondition prototypes have. The resolver takes the two steps
+`org-id-find` takes before its rescan — it deliberately does not call
+`org-id-find` itself, because that would rescan the corpus and write
+`org-id-locations-file` from inside a predicate body, once per candidate
+entry — so an id resolves when `org-id-locations` already knows the master's
+file, which is the ordinary state of a corpus where `org-id-track-globally`
+is on and the file has been visited or scanned. Where the table has no
+answer, `org-id-find-id-file` falls back to the *follower's own* file: a
+master in a sibling file is then not found, and the reference dangles with
+the ordinary one-message diagnostic. Measured, with an empty table and the
+master one file away: `nil`, and one `no prototype` message. A master named
+by **name** out of the registry needs none of this.
 
 ### The resolution order
 
@@ -455,7 +473,10 @@ and `org-agents-resolve-property` for a caller in Lisp.
 A `:PROTOTYPE:` naming nothing — a misspelled master, or an `id:` the ID
 table does not know — is **one message** naming the reference and the first
 entry that carried it, and resolution answers as though the line were not
-there. Not an error: the resolver runs at every candidate entry of an
+there. Where the reference is an `id:` that `org-id-locations` has no file
+for, the message says so (`; org-id knows no file for that id`), because
+that is a different fix from a typo: the drawer may be perfectly correct and
+the table simply empty. Not an error: the resolver runs at every candidate entry of an
 update, and a signal from inside org-ql's generated matcher aborts that
 agent's whole update, so one drawer's typo would cost the agent.
 
@@ -467,8 +488,15 @@ once per update however many entries hit them.
 ### `property-resolved`, and why it exists
 
 ```elisp
-(and (todo) (property-resolved "STATUS" "open"))   ; or: (and (todo) $STATUS^)
+(and (todo) (property-resolved "STATUS" "open"))
 ```
+
+`$STATUS^` is *not* short for that. It expands to the bare
+`(property-resolved "STATUS")` — existence, not this value — so the two
+match different entry sets whenever anything resolves `STATUS` to something
+other than `open` — and where the registry declares an `:ATTR_DEFAULT:` for
+the name, the bare form is true of *every* entry and narrows nothing. The
+sugar is one of the rows in [The query language](#the-query-language).
 
 The predicate is **preamble-free by construction**, and the reason is not
 the obvious one. org-ql's plain `property` forms attach no `:inherit` and
@@ -493,8 +521,16 @@ a call the package cannot distinguish from any other call in a query.
 
 ### What this adds to the configuration
 
-Nothing. Prototypes live in the file `org-agents-attributes-file` already
-names, and this epic adds no option, no command and no hook.
+No option of its own. Prototypes live in the file
+`org-agents-attributes-file` already names, and this epic adds no option, no
+command and no hook.
+
+One existing setting does matter, though, and only for masters named by
+`id:`: those resolve through `org-id`'s location table, so `org-id` has to
+know where the master's file is — `org-id-track-globally` on and a populated
+`org-id-locations-file`, or the master in the same file as the follower. A
+master named by **name** out of the registry's `Prototypes` section needs
+nothing beyond the file above.
 
 ## Corpus-wide column view
 
@@ -863,7 +899,7 @@ which is intersected with the files the agent's scope names so that org-ql
 opens fewer buffers.
 
 Only a conjunct whose ripgrep answer is *provably a superset* of org-ql's is
-pushed; everything else stays residual and is applied by org-ql. Six
+pushed; everything else stays residual and is applied by org-ql. Seven
 shapes push today:
 
 | Conjunct | Pattern | Why it is a superset |
