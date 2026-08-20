@@ -232,6 +232,8 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'cus-edit)                     ; `custom-file', the FUNCTION
+(require 'tabulated-list)               ; `org-agents-list-approvals'
 (require 'org)
 (require 'org-id)
 (require 'org-ql)
@@ -410,20 +412,78 @@ This is where such a head goes.  Matching is by literal symbol, so an
 alias of an IO-bearing predicate has to be listed too."
   :type '(repeat symbol) :group 'org-agents)
 
-(defcustom org-agents-safe-queries nil
-  "List of sha1 hashes of queries approved to run without prompting.
-Managed like `safe-local-variable-values': approving a query
-interactively offers to persist its hash here.
+(defconst org-agents--approval-type
+  '(repeat (choice (string :tag "Hash only (legacy)")
+                   (cons (string :tag "Hash") (string :tag "Query"))))
+  "Customize type of `org-agents-safe-queries' and its negative twin.
+An entry is either a `(HASH . TEXT)' cons or, from a version that
+recorded only the hash, a bare HASH string.  Both are read; only the cons
+is written.  Strings and conses of strings are all this holds, so a saved
+value evaluates nothing when `custom-file' is read back.")
 
-Persisting goes through `customize-save-variable', which writes to
-`custom-file' or, without one, to `user-init-file'.  Where the real init
-is an Org file that is tangled, `user-init-file' is the tangled output,
-and the saved approval will be overwritten the next time it is generated.
-Set `custom-file' to a file of its own to keep approvals."
-  :type '(repeat string) :group 'org-agents)
+(defcustom org-agents-refused-queries nil
+  "Records of forms refused outright, whatever else has said about them.
+A form whose hash is here is refused before the safe list is consulted
+and before `org-ql-ask-unsafe-queries' is looked at, and the refusal
+outlives the session that made it, exactly as an approval does.
+
+Entries have the same shape as `org-agents-safe-queries', so one listing
+can show an approval and a refusal side by side, each with the text its
+hash covers.  Manage this through `org-agents-list-approvals' rather than
+by hand."
+  :type org-agents--approval-type :group 'org-agents)
+
+(defcustom org-agents-safe-queries nil
+  "Records of forms approved to run without prompting.
+Managed like `safe-local-variable-values': approving a form interactively
+offers to persist it here.
+
+An entry is a `(HASH . TEXT)' cons, where TEXT is what
+`org-agents--query-text' printed and HASH is the sha1 of that very text.
+The two are therefore self-consistent by construction, and
+`org-agents-list-approvals' can show precisely what each hash covers.  A
+bare HASH string is a legacy entry, written by a version that recorded no
+text; it is still honoured, and listed as legacy, since nothing can
+recover the query it stood for.
+
+Persisting goes through `customize-save-variable', which writes to the
+file `(custom-file t)' names -- and answers nil, writing nothing, unless
+`user-init-file' is set.  Where the real init is an Org file that is
+tangled, `user-init-file' is the tangled output, and a saved approval
+will be overwritten the next time it is generated.  Set `custom-file' to
+a file of its own to keep approvals."
+  :type org-agents--approval-type :group 'org-agents)
 
 (defvar org-agents--session-approved (make-hash-table :test 'equal)
   "Query hashes approved for this session only.")
+
+(defun org-agents--approval-hash (entry)
+  "The hash ENTRY records, whether ENTRY is a cons or a legacy string."
+  (if (consp entry) (car entry) entry))
+
+(defun org-agents--approval-text (entry)
+  "The query text ENTRY records, or nil where it records only a hash."
+  (and (consp entry) (cdr entry)))
+
+(defun org-agents--approval-entry (hash entries)
+  "The entry in ENTRIES recording HASH, or nil for none.
+`member' answered for a list of bare hashes and for nothing else, so the
+moment a cons was written it would have stopped matching what it wrote."
+  (cl-find hash entries :key #'org-agents--approval-hash :test #'equal))
+
+(defun org-agents--persist-approvals (var value)
+  "Set VAR to VALUE, saved where customize has a file to save it in.
+`customize-save-variable' writes to `(custom-file t)', which answers nil
+whenever `user-init-file' is nil -- and then it does not write: it says
+so in a message and merely sets the variable.  So the file is what is
+asked about here, and not `custom-file' and `user-init-file' separately.
+The guard this replaced asked whether EITHER was set, passed where only
+`custom-file' was, and left the user told an approval had been remembered
+permanently when nothing had been written at all."
+  (cond ((custom-file t) (customize-save-variable var value))
+        (t (set-default var value)
+           (message "org-agents: `%s' changed for this session only; \
+customize has no file to save it in" var))))
 
 (defconst org-agents--misspelled-heads
   '((headline . heading) (re . regexp) (p . priority))
@@ -556,18 +616,26 @@ Structurally safe queries always pass.  Unsafe queries pass when
 the user confirms; in `noninteractive' (or CONTEXT `batch') they are
 skipped instead of prompting.
 
-A head in `org-agents-refused-heads' signals rather than returning nil.
-The callers turn nil into one generic \"query not approved\", which would
-say nothing about which head was refused or why no approval can help."
+A refusal -- a head in `org-agents-refused-heads', or a hash in
+`org-agents-refused-queries' -- signals rather than returning nil.  The
+callers turn nil into one generic \"query not approved\", which would say
+nothing about which head was refused, or that no approval can help."
   (org-agents--check-spelling query)
   (when-let* ((head (org-agents--refused-head query)))
     (user-error "org-agents: `%s' is refused by `org-agents-refused-heads'"
                 head))
+  ;; Guarded on the list being non-empty so the common case does not pay
+  ;; for a sha1 nothing will be looked up in.
+  (when (and org-agents-refused-queries
+             (org-agents--approval-entry (org-agents--query-hash query)
+                                         org-agents-refused-queries))
+    (user-error
+     "org-agents: this query is refused; see `org-agents-refused-queries'"))
   (or (org-agents--structurally-safe-p query)
       (not org-ql-ask-unsafe-queries)
       (let ((hash (org-agents--query-hash query)))
         (or (gethash hash org-agents--session-approved)
-            (member hash org-agents-safe-queries)
+            (org-agents--approval-entry hash org-agents-safe-queries)
             (if (or noninteractive (eq context 'batch))
                 (progn
                   (message "org-agents: skipping unapproved query %s"
@@ -582,14 +650,153 @@ say nothing about which head was refused or why no approval can help."
                      (format "Query contains arbitrary Lisp: %s — run it? "
                              (org-agents--query-text query)))
                 (puthash hash t org-agents--session-approved)
-                ;; Only offer to persist where customize has a file to
-                ;; write; without one `customize-save-variable' errors.
-                (when (and (or (bound-and-true-p custom-file) user-init-file)
+                ;; Only offer to remember where customize has a file to
+                ;; write.  Without one `customize-save-variable' writes
+                ;; nothing and says so in a message -- so asking would be
+                ;; a promise this cannot keep.
+                (when (and (custom-file t)
                            (yes-or-no-p "Remember this approval permanently? "))
-                  (customize-save-variable
+                  ;; The text goes in beside the hash so the approval can
+                  ;; afterwards be read, and revoked, for what it is.
+                  (org-agents--persist-approvals
                    'org-agents-safe-queries
-                   (cons hash org-agents-safe-queries)))
+                   (cons (cons hash (org-agents--query-text query))
+                         org-agents-safe-queries)))
                 t))))))
+
+;;;; Approval listing
+
+;; The two records the gate keeps are hashes, and a hash says nothing
+;; about what it stands for.  Every entry written from here on therefore
+;; carries the printed form beside its hash -- the same text the hash was
+;; taken of and the same text the prompt showed, by way of the one
+;; printer -- so a remembered decision can be read, revoked, or turned
+;; into a refusal instead of being taken on trust.
+
+(defconst org-agents--approvals-buffer "*org-agents approvals*"
+  "Name of the buffer `org-agents-list-approvals' shows.")
+
+(defconst org-agents--approvals-unrecorded "(query text not recorded)"
+  "Stands in the Query column for an entry holding only a hash.
+An empty cell would not tell a legacy entry apart from one whose query
+really is empty text, and telling them apart is the point of listing.")
+
+(defun org-agents--approvals-rows ()
+  "Rows for `org-agents-list-approvals': approvals first, then refusals.
+A row's id is `(VARIABLE . HASH)', so a hash recorded in both lists still
+yields two rows that the commands can tell apart."
+  (cl-loop for (var . state) in '((org-agents-safe-queries . "approved")
+                                  (org-agents-refused-queries . "refused"))
+           append
+           (cl-loop for entry in (symbol-value var)
+                    for hash = (org-agents--approval-hash entry)
+                    for text = (org-agents--approval-text entry)
+                    collect
+                    (list (cons var hash)
+                          (vector (if text state (concat state " (legacy)"))
+                                  (substring hash 0 (min 12 (length hash)))
+                                  (or text org-agents--approvals-unrecorded))))))
+
+(defun org-agents--approvals-refresh ()
+  "Recompute the listing's rows from the two variables."
+  (setq tabulated-list-entries (org-agents--approvals-rows)))
+
+(defun org-agents--approvals-redisplay ()
+  "Recompute and reprint the listing, keeping point where it can be kept."
+  (org-agents--approvals-refresh)
+  (tabulated-list-print t))
+
+(defun org-agents--approvals-at-point ()
+  "Return `(VARIABLE . HASH)' for the row point is on."
+  (or (tabulated-list-get-id)
+      (user-error "org-agents: no remembered decision on this line")))
+
+(defun org-agents--approvals-forget (var hash)
+  "Remove HASH's entry from the list VAR names, and save the result."
+  (org-agents--persist-approvals
+   var (cl-remove hash (symbol-value var)
+                  :key #'org-agents--approval-hash :test #'equal)))
+
+(defvar-keymap org-agents-approvals-mode-map
+  :doc "Keymap for `org-agents-approvals-mode'."
+  "d" #'org-agents-approvals-revoke
+  "r" #'org-agents-approvals-refuse
+  "u" #'org-agents-approvals-unrefuse)
+
+(define-derived-mode org-agents-approvals-mode tabulated-list-mode "Approvals"
+  "Major mode for the listing `org-agents-list-approvals' shows.
+
+Each row is one remembered decision: what state it is in, the first
+twelve characters of its hash, and the query text that hash covers.  A
+row written by a version that recorded no text says so rather than
+showing an empty cell.
+
+\\<org-agents-approvals-mode-map>\
+\\[org-agents-approvals-revoke] forgets the approval on this line, here
+and on disk; \\[org-agents-approvals-refuse] turns it into a refusal,
+which no later approval can undo; \\[org-agents-approvals-unrefuse] lifts
+a refusal, returning the query to needing approval rather than to having
+it; \\[tabulated-list-revert] rereads the two lists."
+  (setq tabulated-list-format [("State" 18 t) ("Hash" 14 t) ("Query" 0 t)])
+  (setq tabulated-list-padding 1)
+  (add-hook 'tabulated-list-revert-hook #'org-agents--approvals-refresh nil t)
+  (tabulated-list-init-header))
+
+(defun org-agents-approvals-revoke ()
+  "Forget the approval on this line, in this session and on disk.
+The session table is cleared as well: an approval revoked only where it
+was saved goes on working until Emacs is restarted, which is not what
+revoking one means."
+  (interactive nil org-agents-approvals-mode)
+  (pcase-let ((`(,var . ,hash) (org-agents--approvals-at-point)))
+    (unless (eq var 'org-agents-safe-queries)
+      (user-error "org-agents: this line is a refusal; `u' lifts one"))
+    (org-agents--approvals-forget var hash)
+    (remhash hash org-agents--session-approved)
+    (org-agents--approvals-redisplay)))
+
+(defun org-agents-approvals-refuse ()
+  "Refuse the query on this line, however it was approved before.
+The approval is forgotten, the session copy with it, and the same entry
+-- hash and text together -- is recorded as a refusal, which the gate
+consults before it consults anything else."
+  (interactive nil org-agents-approvals-mode)
+  (pcase-let ((`(,var . ,hash) (org-agents--approvals-at-point)))
+    (when (eq var 'org-agents-refused-queries)
+      (user-error "org-agents: this line is already a refusal"))
+    (let ((entry (org-agents--approval-entry hash (symbol-value var))))
+      (org-agents--approvals-forget var hash)
+      (remhash hash org-agents--session-approved)
+      (org-agents--persist-approvals
+       'org-agents-refused-queries
+       (cons entry org-agents-refused-queries)))
+    (org-agents--approvals-redisplay)))
+
+(defun org-agents-approvals-unrefuse ()
+  "Lift the refusal on this line.
+The query goes back to needing approval, not to having it: lifting a
+refusal is not the same as saying yes.  A refusal list with no way out
+would be a trap."
+  (interactive nil org-agents-approvals-mode)
+  (pcase-let ((`(,var . ,hash) (org-agents--approvals-at-point)))
+    (unless (eq var 'org-agents-refused-queries)
+      (user-error "org-agents: this line is an approval; `d' forgets one"))
+    (org-agents--approvals-forget var hash)
+    (org-agents--approvals-redisplay)))
+
+;;;###autoload
+(defun org-agents-list-approvals ()
+  "List every form this package remembers being told to run, or not to run.
+Each row carries the query text its hash covers, so a remembered decision
+can be read instead of guessed at, and the listing's own keys revoke one,
+refuse one, or lift a refusal.  See `org-agents-approvals-mode'."
+  (interactive)
+  (let ((buffer (get-buffer-create org-agents--approvals-buffer)))
+    (with-current-buffer buffer
+      (org-agents-approvals-mode)
+      (org-agents--approvals-refresh)
+      (tabulated-list-print))
+    (pop-to-buffer buffer)))
 
 ;;;; Splitter
 

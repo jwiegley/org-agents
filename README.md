@@ -171,6 +171,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-update-all` | update every agent in the files `org-agents-files` names |
 | `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded and gated exactly as an agent's is, with `org-agents-exclude` appended, over `org-agenda-files` |
 | `org-agents-insert-dblock` | insert an empty `org-agents` block at point |
+| `org-agents-list-approvals` | list every remembered approval and refusal, each with the query its hash covers; `d` forgets an approval, `r` turns it into a refusal, `u` lifts a refusal |
 | `org-agents-mode` | update this buffer's agents before each save |
 | `global-org-agents-mode` | turn `org-agents-mode` on in every Org buffer whose text mentions `:AGENT_QUERY:` |
 
@@ -179,15 +180,30 @@ refused by name rather than rendered wrongly.
 | `org-agents-files` | `'("~/org/agents.org")` | where `org-agents-update-all` looks: files, directories, or the symbol `agenda` |
 | `org-agents-exclude` | `(not (property "AGENT_MATCH"))` | conjunct appended to every agent query and every preview, so agents do not consume each other's aliases. Part of the form the gate approves: Lisp here is gated like Lisp in a query, and changing it invalidates every remembered approval |
 | `org-agents-refused-heads` | `(semantic)` | predicate heads refused outright, before the safe list and before any approval, because org-ql runs their normalizers past the gate |
-| `org-agents-safe-queries` | `nil` | SHA-1 hashes of queries approved to run without prompting |
+| `org-agents-refused-queries` | `nil` | forms refused outright by hash, beating every approval; managed through `org-agents-list-approvals` |
+| `org-agents-safe-queries` | `nil` | forms approved to run without prompting, each recorded as `(HASH . QUERY-TEXT)` |
 | `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
 
-`org-agents-safe-queries` is persisted through `customize-save-variable`,
-which writes to `custom-file` or, without one, to `user-init-file`. Where
-the real init is a tangled Org file, `user-init-file` is the tangled output
-and a saved approval is lost the next time it is generated. Set
-`custom-file` to a file of its own to keep approvals.
+An approval is recorded as `(HASH . QUERY-TEXT)` — the hash and the very
+text it was taken of, so `org-agents-list-approvals` can show what each
+remembered decision covers instead of a bare forty characters of SHA-1.
+From that listing `d` forgets an approval (in this session as well as on
+disk — an approval revoked only where it was saved would go on working
+until Emacs restarted), `r` turns it into a refusal recorded in
+`org-agents-refused-queries`, and `u` lifts a refusal, which returns the
+query to *needing* approval rather than to having it. A refusal is
+consulted before the safe list and before `org-ql-ask-unsafe-queries`, so
+no later yes can undo one. An entry that is a bare hash string was written
+by an earlier version; it is still honoured, and listed as legacy, because
+nothing can recover the query it stood for.
+
+Both lists are persisted through `customize-save-variable`, which writes to
+the file `(custom-file t)` names — and writes nothing at all unless
+`user-init-file` is set, saying so in a message. Where the real init is a
+tangled Org file, `user-init-file` is the tangled output and a saved
+approval is lost the next time it is generated. Set `custom-file` to a file
+of its own to keep approvals.
 
 ## Updating on save
 

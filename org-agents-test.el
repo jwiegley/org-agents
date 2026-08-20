@@ -615,6 +615,254 @@ pushed pattern would return NO files for a query that matches thousands."
                   '(property-ts "NEXT_REVIEW" :to today))
                  '((property "NEXT_REVIEW")))))
 
+;;;; Approvals
+
+(defconst org-agents-test--approval-vars
+  '(org-agents-safe-queries org-agents-refused-queries)
+  "The two variables the approval records live in.")
+
+(defconst org-agents-test--customize-properties
+  '(saved-value saved-variable-comment theme-value variable-comment force-value)
+  "The symbol properties `customize-save-variable' writes.
+They live on the symbol, not in any binding, so `let' does not contain
+them -- and `custom-save-all' writes out EVERY variable carrying a
+`saved-value', not merely the one just saved.  Left behind, one test's
+saved value is written into the next test's `custom-file', where an
+assertion about what that file does not contain finds it there.")
+
+(defun org-agents-test--approval-properties ()
+  "The current `org-agents-test--customize-properties', to be put back."
+  (cl-loop for var in org-agents-test--approval-vars
+           collect (cons var
+                         (cl-loop for prop in org-agents-test--customize-properties
+                                  collect (cons prop (get var prop))))))
+
+(defun org-agents-test--restore-approval-properties (saved)
+  "Put back what `org-agents-test--approval-properties' collected as SAVED."
+  (pcase-dolist (`(,var . ,props) saved)
+    (pcase-dolist (`(,prop . ,value) props)
+      (if value (put var prop value) (cl-remprop var prop)))))
+
+(defmacro org-agents-test--with-custom-file (&rest body)
+  "Run BODY with a temp `custom-file' and empty approval lists.
+`customize-save-variable' writes nothing unless `custom-file' AND
+`user-init-file' are both set: it calls `(custom-file t)', which answers
+nil whenever `user-init-file' is nil, and then merely `set's the variable
+after saying so in a message.  Batch implies `-q', so both have to be
+bound here or every persistence assertion in this section would be
+vacuously true.  `file' is bound to the temp file.
+
+The customize properties are put back afterwards, for the reason
+`org-agents-test--customize-properties' gives."
+  (declare (indent 0))
+  `(let* ((file (make-temp-file "org-agents-custom" nil ".el"
+                               ";;; -*- lexical-binding: t -*-\n"))
+          (custom-file file)
+          (user-init-file file)
+          (org-agents-safe-queries nil)
+          (org-agents-refused-queries nil)
+          (org-agents--session-approved (make-hash-table :test 'equal))
+          (properties (org-agents-test--approval-properties)))
+     (unwind-protect (progn ,@body)
+       (org-agents-test--restore-approval-properties properties)
+       (delete-file file))))
+
+(defconst org-agents-test--residual-query
+  '(and (todo) (string-match "distinctive-leaf" (or (org-entry-get nil "URL") "")))
+  "A query the gate has to ask about, carrying a leaf worth grepping for.")
+
+(ert-deftest org-agents-test-approval-stores-the-query-text ()
+  "An approval records the query beside its hash, and is persisted.
+A list of bare hashes can be neither read nor revoked: nothing in it says
+what was approved."
+  (org-agents-test--with-custom-file
+    (let ((noninteractive nil)
+          (form (org-agents--effective-query org-agents-test--residual-query)))
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+        (should (org-agents--gate form)))
+      (should (= 1 (length org-agents-safe-queries)))
+      (let ((entry (car org-agents-safe-queries)))
+        (should (consp entry))
+        (should (equal (car entry) (org-agents--query-hash form)))
+        (should (equal (cdr entry) (org-agents--query-text form)))
+        (should (string-match-p "distinctive-leaf" (cdr entry))))
+      ;; And it really was written, not merely set for this session.
+      (let ((text (org-agents-test--file-text file)))
+        (should (string-match-p "org-agents-safe-queries" text))
+        (should (string-match-p "distinctive-leaf" text))))))
+
+(ert-deftest org-agents-test-approval-does-not-promise-what-it-cannot-save ()
+  "The gate offers to remember only where customize has a file to write.
+The guard was `(or custom-file user-init-file)', which is not the
+condition `customize-save-variable' uses: with `custom-file' set and
+`user-init-file' nil the user was asked \"Remember this approval
+permanently?\", answered yes, and nothing was written."
+  (let* ((file (make-temp-file "org-agents-custom" nil ".el"))
+         (custom-file file)
+         (user-init-file nil)
+         (org-agents-safe-queries nil)
+         (org-agents--session-approved (make-hash-table :test 'equal))
+         (noninteractive nil)
+         (prompts nil)
+         (form (org-agents--effective-query org-agents-test--residual-query)))
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'yes-or-no-p)
+                     (lambda (p &rest _) (push p prompts) t)))
+            (should (org-agents--gate form)))
+          (should (cl-some (lambda (p) (string-match-p "run it" p)) prompts))
+          (should-not (cl-some (lambda (p) (string-match-p "Remember" p)) prompts))
+          (should (equal "" (org-agents-test--file-text file))))
+      (delete-file file))))
+
+(ert-deftest org-agents-test-approval-honours-legacy-and-new-entries ()
+  "A stored list may hold bare hashes and hash-with-text conses alike.
+`member' answered for a list of bare strings only, so once the gate began
+writing conses it would have stopped honouring what it had just written."
+  (let* ((legacy '(and (todo) (ignore)))
+         (recent '(and (todo) (ignore) (ignore)))
+         (org-agents-safe-queries
+          (list (org-agents--query-hash legacy)
+                (cons (org-agents--query-hash recent)
+                      (org-agents--query-text recent))))
+         (org-agents-refused-queries nil)
+         (org-agents--session-approved (make-hash-table :test 'equal))
+         (noninteractive t))
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "must not prompt"))))
+      (should (org-agents--gate legacy))
+      (should (org-agents--gate recent)))))
+
+(defmacro org-agents-test--with-approvals-buffer (&rest body)
+  "Run BODY in the buffer `org-agents-list-approvals' pops up, then kill it."
+  (declare (indent 0))
+  `(unwind-protect
+       (progn (save-window-excursion (org-agents-list-approvals))
+              (with-current-buffer "*org-agents approvals*" ,@body))
+     (when-let* ((buffer (get-buffer "*org-agents approvals*")))
+       (kill-buffer buffer))))
+
+(ert-deftest org-agents-test-list-approvals-shows-the-query ()
+  "The listing shows what each remembered decision covers."
+  (org-agents-test--with-custom-file
+    (let* ((approved '(and (todo) (ignore)))
+           (refused '(and (todo) (ignore) (ignore)))
+           (org-agents-safe-queries
+            (list (cons (org-agents--query-hash approved)
+                        (org-agents--query-text approved))
+                  "0123456789abcdef0123456789abcdef01234567"))
+           (org-agents-refused-queries
+            (list (cons (org-agents--query-hash refused)
+                        (org-agents--query-text refused)))))
+      (org-agents-test--with-approvals-buffer
+        (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+          (should (string-match-p (regexp-quote (org-agents--query-text approved))
+                                  text))
+          (should (string-match-p (regexp-quote (org-agents--query-text refused))
+                                  text))
+          ;; A legacy entry is listed AS legacy: an empty cell would leave
+          ;; the reader unable to tell it from a query with no text.
+          (should (string-match-p "legacy" text))
+          (should (string-match-p "not recorded" text))
+          (should (string-match-p "refused" text)))))))
+
+(ert-deftest org-agents-test-revoke-approval-at-point ()
+  "Revoking an approval removes it from the file AND from this session.
+Without the session `remhash' a revoked approval goes on working until
+Emacs is restarted, which is not what revoking means."
+  (org-agents-test--with-custom-file
+    (let* ((form '(and (todo) (ignore)))
+           (hash (org-agents--query-hash form))
+           (noninteractive t))
+      (org-agents--persist-approvals
+       'org-agents-safe-queries
+       (list (cons hash (org-agents--query-text form))))
+      (puthash hash t org-agents--session-approved)
+      (should (string-match-p hash (org-agents-test--file-text file)))
+      (org-agents-test--with-approvals-buffer
+        (goto-char (point-min))
+        (should (equal (cons 'org-agents-safe-queries hash)
+                       (tabulated-list-get-id)))
+        (org-agents-approvals-revoke))
+      (should (null org-agents-safe-queries))
+      (should-not (gethash hash org-agents--session-approved))
+      (should-not (string-match-p hash (org-agents-test--file-text file)))
+      ;; And the gate asks again: in batch that means it skips.
+      (should-not (org-agents--gate form)))))
+
+(ert-deftest org-agents-test-refuse-beats-a-remembered-approval ()
+  "A refusal outranks every approval, and the master switch as well."
+  (let* ((form '(and (todo) (ignore)))
+         (hash (org-agents--query-hash form))
+         (org-agents-safe-queries (list (cons hash (org-agents--query-text form))))
+         (org-agents-refused-queries
+          (list (cons hash (org-agents--query-text form))))
+         (org-agents--session-approved (make-hash-table :test 'equal))
+         (noninteractive t))
+    (puthash hash t org-agents--session-approved)
+    (let ((err (should-error (org-agents--gate form) :type 'user-error)))
+      (should (string-match-p "refused" (error-message-string err))))
+    (let ((org-ql-ask-unsafe-queries nil))
+      (should-error (org-agents--gate form) :type 'user-error))))
+
+(ert-deftest org-agents-test-refuse-at-point-moves-the-entry ()
+  "Refusing an approved query revokes it and records the refusal."
+  (org-agents-test--with-custom-file
+    (let* ((form '(and (todo) (ignore)))
+           (hash (org-agents--query-hash form))
+           (noninteractive t))
+      (org-agents--persist-approvals
+       'org-agents-safe-queries
+       (list (cons hash (org-agents--query-text form))))
+      (puthash hash t org-agents--session-approved)
+      (org-agents-test--with-approvals-buffer
+        (goto-char (point-min))
+        (org-agents-approvals-refuse))
+      (should (null org-agents-safe-queries))
+      (should-not (gethash hash org-agents--session-approved))
+      (should (equal hash (org-agents--approval-hash
+                           (car org-agents-refused-queries))))
+      (should-error (org-agents--gate form) :type 'user-error)
+      ;; And un-refusing puts it back to needing approval, not to approved.
+      (org-agents-test--with-approvals-buffer
+        (goto-char (point-min))
+        (org-agents-approvals-unrefuse))
+      (should (null org-agents-refused-queries))
+      (should-not (org-agents--gate form)))))
+
+(ert-deftest org-agents-test-refusal-survives-a-restart ()
+  "A refusal is written where startup will read it back.
+Tested the only way batch can: run the refusal, then reload the file
+`custom-file' names, which is exactly what startup does with it.
+
+The reload cannot be contained by `let'.  `custom-set-variables' assigns
+through `custom-set-default', which calls `set-default-toplevel-value' --
+by design, so a `custom-file' read while something has a variable
+`let'-bound still changes what that variable will be afterwards.  So the
+top-level value is cleared, the file is loaded, and the top-level value is
+put back by hand."
+  (org-agents-test--with-custom-file
+    (let* ((form '(and (todo) (ignore)))
+           (hash (org-agents--query-hash form))
+           (noninteractive t)
+           (outer (default-toplevel-value 'org-agents-refused-queries)))
+      (org-agents--persist-approvals
+       'org-agents-safe-queries
+       (list (cons hash (org-agents--query-text form))))
+      (org-agents-test--with-approvals-buffer
+        (goto-char (point-min))
+        (org-agents-approvals-refuse))
+      (should org-agents-refused-queries)
+      (unwind-protect
+          (progn
+            (set-default-toplevel-value 'org-agents-refused-queries nil)
+            (load file nil t)
+            (let ((restored (default-toplevel-value 'org-agents-refused-queries)))
+              (should (equal hash (org-agents--approval-hash (car restored))))
+              (should (equal (org-agents--query-text form)
+                             (org-agents--approval-text (car restored))))))
+        (set-default-toplevel-value 'org-agents-refused-queries outer)))))
+
 ;;;; Collection
 
 (defmacro org-agents-test--with-corpus (&rest body)
