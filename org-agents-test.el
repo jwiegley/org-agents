@@ -871,6 +871,11 @@ pushed pattern would return NO files for a query that matches thousands."
     org-agents-exclude
     org-agents-files
     org-agents-attributes-file
+    ;; The bound on how many entries one `org-agents-apply-actions' may
+    ;; edit, which is the only thing that bounds an action's blast
+    ;; radius: a file that could raise it could have the command edit
+    ;; the whole corpus.
+    org-agents-action-limit
     ;; `define-globalized-minor-mode' generates a `defcustom' too, and it
     ;; lands in this group like any other.  One per globalized mode.
     global-org-agents-mode
@@ -9448,6 +9453,1042 @@ on a keystroke, not about a save that might hang."
         (org-entry-put nil "AGENT_SCOPE" "all")
         (org-agents-update-buffer)
         (should (file-exists-p sentinel))))))
+
+;;;; Actions
+
+;; This is the one section whose subject is WRITING to the corpus, so
+;; every fixture here builds its own temporary directory and every
+;; assertion is made against a file inside it.  Nothing here may name a
+;; path under the developer's own `org-directory': an action pointed at
+;; the real corpus would edit the user's data, and a test is exactly
+;; where that would happen by accident.
+;;
+;; The GUARANTEES come first, and deliberately so.  An action that ran on
+;; save, that arrived through a prototype, that evaluated its own
+;; argument, or that answered its own confirmation would be a hole no
+;; feature test would notice -- so the four tests that say none of those
+;; happens are written before the vocabulary they guard, and each names
+;; the mutation it exists to fail.
+
+(defconst org-agents-test--action-verbs
+  '(org-agents-action/set-property!
+    org-agents-action/delete-property!
+    org-agents-action/tag!
+    org-agents-action/todo!
+    org-agents-action/priority!
+    org-agents-action/scheduled!
+    org-agents-action/deadline!
+    org-agents-action/effort!
+    org-agents-action/archive!)
+  "The shipped vocabulary, written out here on purpose.
+This test owns the list.  A verb added to the package and not to it fails
+`org-agents-test-action-vocabulary-is-complete', which is what keeps a
+tenth verb from arriving without the destructive declaration and the
+tripwire coverage the other nine have.")
+
+(defvar org-agents-test--verb-calls 0
+  "How many times `org-agents-test--with-verb-tripwire' caught a verb.")
+
+(defmacro org-agents-test--with-verb-tripwire (&rest body)
+  "Run BODY with every action verb replaced by a counting tripwire.
+`org-agents-test--verb-calls' counts the calls, and the tripwire signals
+as well, so a path that reaches a verb cannot go on to do anything with
+what it got back.  `org-agents--action-call' is replaced too: it is the
+one call site, so a caller that reached the machinery without naming a
+verb is caught as well.
+
+Not `cl-letf': the places are a computed list rather than literals, and
+where a verb does not exist yet -- which is the state every one of these
+tests was first run in -- this still puts the world back.
+
+The tripwire takes `(PHASE &rest _)' and not `(&rest _)', and the
+signature is load-bearing: `org-agents--parse-actions' checks a verb's
+arity with `func-arity', so a `(&rest _)' stand-in reports a minimum of
+zero, is refused as \"not a usable verb\", and the parse fails before
+any verb could be reached -- which would make this macro assert nothing
+at all while looking as though it had."
+  (declare (indent 0))
+  `(let ((org-agents-test--verb-calls 0)
+         (saved (mapcar (lambda (s) (cons s (and (fboundp s)
+                                                 (symbol-function s))))
+                        (cons 'org-agents--action-call
+                              org-agents-test--action-verbs))))
+     (unwind-protect
+         (progn
+           (dolist (cell saved)
+             (fset (car cell)
+                   (lambda (_phase &rest _)
+                     (setq org-agents-test--verb-calls
+                           (1+ org-agents-test--verb-calls))
+                     (error "org-agents-test: an action verb was reached"))))
+           ,@body)
+       (dolist (cell saved)
+         (if (cdr cell)
+             (fset (car cell) (cdr cell))
+           (fmakunbound (car cell)))))))
+
+(defmacro org-agents-test--with-action-corpus (action &rest body)
+  "Run BODY over a temporary corpus whose agents carry ACTION.
+ACTION is the `:AGENT_ACTION:' text, or nil for agents that carry none.
+
+`dir' is the corpus root and `org-directory' is it, so no test here can
+reach the developer's own; `a' and `b' name the two corpus files and
+`agent-file' the file holding the agents; `org-agenda-files' is the
+corpus.  Buffers visiting the corpus are killed afterwards, because the
+files they visit are about to be deleted.
+
+TWO agents are written -- a `children' one and a `list' one with a
+dynamic block -- because the entry-point enumeration has to exercise the
+block writer as well as the two render paths, and both must be shown to
+reach no verb.
+
+The window configuration is put back for the reason
+`org-agents-test--with-corpus' gives: `org-update-dblock' indents in the
+selected window's buffer, which in batch is `*scratch*'."
+  (declare (indent 1))
+  `(save-window-excursion
+     (let* ((dir (make-temp-file "org-agents-action" t))
+            (a (expand-file-name "a.org" dir))
+            (b (expand-file-name "b.org" dir))
+            (agent-file (expand-file-name "agents.org" dir))
+            (org-directory dir)
+            (org-agents-prefilter nil)
+            (org-use-property-inheritance nil)
+            (org-element-use-cache nil)
+            (org-id-track-globally nil)
+            (org-id-locations (make-hash-table :test #'equal))
+            (org-id-files nil)
+            (org-agenda-files (list a b))
+            (action ,action))
+       (ignore action)
+       (unwind-protect
+           (progn
+             (with-temp-file a
+               (insert "* TODO Fix widget :api:\n"
+                       ":PROPERTIES:\n:NEXT_REVIEW: [2020-01-01 Wed]\n:END:\n"
+                       "* TODO Fix gadget :api:stale:\n"
+                       ":PROPERTIES:\n:NEXT_REVIEW: [2020-01-02 Thu]\n:END:\n"))
+             (with-temp-file b (insert "* TODO Nothing to review here\n"))
+             (with-temp-file agent-file
+               (insert "* Review agent\n:PROPERTIES:\n"
+                       ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+                       ":AGENT_SCOPE: (\"" a "\" \"" b "\")\n"
+                       (if action (concat ":AGENT_ACTION: " action "\n") "")
+                       ":END:\n"
+                       "* Review list\n:PROPERTIES:\n"
+                       ":AGENT_QUERY: (and (todo) (property \"NEXT_REVIEW\"))\n"
+                       ":AGENT_SCOPE: (\"" a "\" \"" b "\")\n"
+                       ":AGENT_VIEW: list\n"
+                       (if action (concat ":AGENT_ACTION: " action "\n") "")
+                       ":END:\n"
+                       "#+BEGIN: org-agents\n#+END:\n"))
+             ,@body)
+         (dolist (buf (buffer-list))
+           (when-let* ((f (buffer-file-name buf)))
+             (when (string-prefix-p (file-name-as-directory dir) f)
+               (with-current-buffer buf (set-buffer-modified-p nil))
+               (kill-buffer buf))))
+         (delete-directory dir t)))))
+
+(defmacro org-agents-test--at-agent (action &rest body)
+  "Run BODY at the `children' agent of `org-agents-test--with-action-corpus'."
+  (declare (indent 1))
+  `(org-agents-test--with-action-corpus ,action
+     (with-current-buffer (find-file-noselect agent-file)
+       (goto-char (point-min))
+       ,@body)))
+
+(defun org-agents-test--action-property (file heading property)
+  "PROPERTY at the entry of FILE whose heading text holds HEADING."
+  (with-current-buffer (find-file-noselect file)
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (should (re-search-forward (concat "^\\*+.*" (regexp-quote heading))
+                               nil t))
+     (org-back-to-heading t)
+     (org-entry-get nil property))))
+
+(defun org-agents-test--action-tags (file heading)
+  "The own tags of the entry of FILE whose heading text holds HEADING."
+  (with-current-buffer (find-file-noselect file)
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (should (re-search-forward (concat "^\\*+.*" (regexp-quote heading))
+                               nil t))
+     (org-back-to-heading t)
+     (org-get-tags nil t))))
+
+(defmacro org-agents-test--answering-yes (&rest body)
+  "Run BODY as though a user were there and said yes to everything.
+`noninteractive' is bound off because that is the fact this suite runs
+under and `org-agents--action-confirm' refuses on it -- which is the
+whole of `org-agents-test-action-batch-refuses-a-destructive-verb'.  A
+test of what happens when the answer is yes has to arrange somebody to
+ask."
+  (declare (indent 0))
+  `(let ((noninteractive nil)
+         (inhibit-interaction nil))
+     ;; `yes-or-no-p' as well as `y-or-n-p', and it is not decoration:
+     ;; with `noninteractive' bound off, ANY prompt this suite has not
+     ;; stubbed reads standard input, and a test that reads standard
+     ;; input hangs the suite for whoever runs it from a terminal.  The
+     ;; gate asks with `yes-or-no-p', and so does `find-file-noselect'
+     ;; about a file that changed on disk.
+     (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+               ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+       ,@body)))
+
+(defun org-agents-test--action-finds-nothing-to-apply ()
+  "Assert `org-agents-apply-actions' here finds no action and runs no verb.
+Everything is caught, and the assertions are made on WHAT was caught
+rather than on its type.  That is deliberate, and measured: under the
+mutation the wrk.5 tests exist to fail -- an inheriting read -- the
+command does find an action, gets as far as the plan, and refuses there
+for an entirely different reason.  A test that asked only \"was there a
+`user-error'?\" would pass, because the batch refusal is one too.
+
+It also means no test here can reach a prompt: the verb tripwire signals
+in the plan phase, which is before the confirmation, so nothing ever
+reads standard input however this is run."
+  (org-agents-test--with-verb-tripwire
+    (let ((signalled nil))
+      (condition-case err
+          (org-agents-apply-actions)
+        (t (setq signalled (error-message-string err))))
+      (should signalled)
+      (should (string-match-p "no :AGENT_ACTION: at point" signalled))
+      (should (= 0 org-agents-test--verb-calls)))))
+
+(defmacro org-agents-test--answering-no (&rest body)
+  "Run BODY as though a user were there and said no to everything."
+  (declare (indent 0))
+  `(let ((noninteractive nil)
+         (inhibit-interaction nil))
+     (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
+               ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
+       ,@body)))
+
+;;;; Actions: the guarantees
+
+(defconst org-agents-test--action-entry-points
+  '((org-agents-list-approvals    . autoload)
+    (org-agents-allowed-values    . autoload)
+    (org-agents-check-attributes  . autoload)
+    (org-agents-attribute-columns . autoload)
+    (org-dblock-write:org-agents  . autoload)
+    (org-agents-update            . autoload)
+    (org-agents-update-buffer     . autoload)
+    (org-agents-update-all        . autoload)
+    (org-agents-preview           . autoload)
+    (org-agents-insert-dblock     . autoload)
+    (org-agents-mode              . autoload)
+    (global-org-agents-mode       . autoload)
+    (org-agents-faces-mode        . autoload)
+    (global-org-agents-faces-mode . autoload)
+    (org-agents-apply-actions     . the-only-one-that-may)
+    (org-agents--collect          . internal)
+    (org-agents--update-on-save   . internal)
+    (org-agents--update-agent     . internal)
+    (org-agents--update-markers   . internal)
+    (org-agents--render-children  . internal)
+    (org-agents--write-matched    . internal))
+  "Every entry point, and whether it may reach an action verb.
+This test owns the list, in the same style as
+`org-agents-test--defcustoms'.  The `autoload' half is checked against
+the source text by
+`org-agents-test-action-entry-point-list-is-complete', so a fifteenth
+autoload fails the suite until somebody adds it here and exercises it;
+the `internal' half is the write machinery the save path is built out
+of.  Exactly one row may reach a verb, and it is asserted to, so the
+tripwire is proved live rather than assumed.")
+
+(ert-deftest org-agents-test-action-entry-points-never-run-a-verb ()
+  "No entry point but `org-agents-apply-actions' reaches an action verb.
+The P1 guarantee of wrk.4, and it ENUMERATES: every row of
+`org-agents-test--action-entry-points' is exercised against a fixture
+whose agents carry `:AGENT_ACTION: set-property!(REVIEWED, today)
+archive!', with all nine verbs and `org-agents--action-call' replaced by
+a tripwire, and the count is asserted zero for every row but the one
+that is allowed to be non-zero -- which is asserted non-zero, so a
+tripwire that had quietly stopped working would fail this test rather
+than pass it everywhere.
+
+Saving is included twice over, with `org-agents-mode' on and with
+`global-org-agents-mode' on, because a save is the path a user does not
+ask for.
+
+Mutation that must fail it: call `org-agents--action-call' -- or any
+verb -- from anywhere on any of those paths."
+  (org-agents-test--with-action-corpus
+      "set-property!(REVIEWED, today) archive!"
+    (let ((exercises
+           (list
+            (cons 'org-agents-list-approvals
+                  (lambda () (org-agents-list-approvals)))
+            (cons 'org-agents-allowed-values
+                  (lambda () (org-agents-allowed-values "STATUS")))
+            (cons 'org-agents-check-attributes
+                  (lambda () (org-agents-check-attributes 'agenda)))
+            (cons 'org-agents-attribute-columns
+                  (lambda () (org-agents-attribute-columns '("STATUS"))))
+            (cons 'org-dblock-write:org-agents
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (goto-char (point-min))
+                      (search-forward "#+BEGIN: org-agents")
+                      (org-agents-update))))
+            (cons 'org-agents-update
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (goto-char (point-min))
+                      (org-agents-update))))
+            (cons 'org-agents-update-buffer
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (org-agents-update-buffer))))
+            (cons 'org-agents-update-all
+                  (lambda ()
+                    (let ((org-agents-files (list agent-file)))
+                      (org-agents-update-all))))
+            (cons 'org-agents-preview
+                  (lambda ()
+                    (unwind-protect (org-agents-preview "(todo)")
+                      (dolist (buf (buffer-list))
+                        (when (string-match-p "org-ql" (buffer-name buf))
+                          (kill-buffer buf))))))
+            (cons 'org-agents-insert-dblock
+                  (lambda ()
+                    (with-temp-buffer (org-mode) (org-agents-insert-dblock))))
+            (cons 'org-agents-mode
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (org-agents-mode 1)
+                      (unwind-protect
+                          (progn (set-buffer-modified-p t) (save-buffer))
+                        (org-agents-mode -1)))))
+            (cons 'global-org-agents-mode
+                  (lambda ()
+                    (unwind-protect
+                        (progn
+                          (global-org-agents-mode 1)
+                          (with-current-buffer (find-file-noselect agent-file)
+                            (set-buffer-modified-p t)
+                            (save-buffer)))
+                      (global-org-agents-mode -1))))
+            (cons 'org-agents-faces-mode
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (unwind-protect
+                          (progn (org-agents-faces-mode 1) (font-lock-ensure))
+                        (org-agents-faces-mode -1)))))
+            (cons 'global-org-agents-faces-mode
+                  (lambda ()
+                    (unwind-protect
+                        (progn
+                          (global-org-agents-faces-mode 1)
+                          (with-current-buffer (find-file-noselect agent-file)
+                            (font-lock-ensure)))
+                      (global-org-agents-faces-mode -1))))
+            (cons 'org-agents-apply-actions
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (goto-char (point-min))
+                      (org-agents-apply-actions))))
+            (cons 'org-agents--collect
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (goto-char (point-min))
+                      (org-agents--collect (org-agents--read-agent)))))
+            (cons 'org-agents--update-on-save
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (org-agents--update-on-save))))
+            (cons 'org-agents--update-agent
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (goto-char (point-min))
+                      (org-agents--update-agent (point-marker)))))
+            (cons 'org-agents--update-markers
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (org-agents--update-markers
+                       (org-agents--buffer-agents)))))
+            (cons 'org-agents--render-children
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (goto-char (point-min))
+                      (let ((agent (org-agents--read-agent)))
+                        (org-agents--render-children
+                         agent (org-agents--collect agent))))))
+            (cons 'org-agents--write-matched
+                  (lambda ()
+                    (with-current-buffer (find-file-noselect agent-file)
+                      (goto-char (point-min))
+                      (org-agents--write-matched (point-marker) 1)))))))
+      ;; The table and the exercises name the same set, so a row cannot be
+      ;; added without something that actually runs it.
+      (should (equal (sort (mapcar (lambda (c) (symbol-name (car c)))
+                                   exercises)
+                           #'string<)
+                     (sort (mapcar (lambda (c) (symbol-name (car c)))
+                                   org-agents-test--action-entry-points)
+                           #'string<)))
+      (org-agents-test--with-verb-tripwire
+        (pcase-dolist (`(,name . ,kind) org-agents-test--action-entry-points)
+          (setq org-agents-test--verb-calls 0)
+          ;; Everything is caught, `quit' included: what is under test is
+          ;; whether a verb was reached, not whether the entry point
+          ;; managed to finish with its verbs shot out from under it.
+          (condition-case nil
+              (funcall (cdr (assq name exercises)))
+            (t nil))
+          (if (eq kind 'the-only-one-that-may)
+              (should (> org-agents-test--verb-calls 0))
+            (should (= 0 org-agents-test--verb-calls))))))))
+
+(ert-deftest org-agents-test-action-entry-point-list-is-complete ()
+  "The `autoload' half of the entry-point table is every autoload in the file.
+Derived from the SOURCE TEXT rather than from the runtime, because
+\"autoload\" is a property of the file: a cookie is a comment, and by the
+time the package is loaded there is nothing left to ask.  The same
+\"derive the set, own the list\" discipline as
+`org-agents-test-every-defcustom-is-risky'.
+
+A fifteenth -- or sixteenth -- autoload therefore fails this suite until
+somebody adds it to the table and exercises it against the verb
+tripwire, which is what keeps a new command from arriving with no proof
+that it runs no action."
+  (let* ((library (locate-library "org-agents"))
+         (source (concat (file-name-sans-extension library) ".el"))
+         (found nil))
+    (should (file-readable-p source))
+    (with-temp-buffer
+      (insert-file-contents source)
+      (goto-char (point-min))
+      (while (re-search-forward "^;;;###autoload$" nil t)
+        (forward-line 1)
+        (when (looking-at "^([^ \t\n]+[ \t]+\\([^ \t\n()]+\\)")
+          (push (intern (match-string 1)) found)))
+      (should found))
+    (should (equal
+             (sort (mapcar #'symbol-name found) #'string<)
+             (sort (mapcar #'symbol-name
+                           (cl-loop for (name . kind)
+                                    in org-agents-test--action-entry-points
+                                    unless (eq kind 'internal) collect name))
+                   #'string<)))))
+
+(ert-deftest org-agents-test-action-save-differs-only-by-the-render ()
+  "A save of a file whose agent carries an action writes only the render.
+The byte comparison that makes \"only by the render\" a statement rather
+than a hope: two fixtures, identical but for their `:AGENT_ACTION:'
+lines, both saved with `org-agents-mode' on, both read back off disk --
+and the two texts are equal once the action lines are deleted from the
+one that had them and the stamps are masked in both.  Any write an
+action caused would show up as a difference the mask does not cover.
+
+The corpus file the agents matched is compared too, and that is the
+sharper half: an action's edits land THERE, in a file the save was never
+about.  It is compared in the BUFFER as well as on disk, and the buffer
+is asserted unmodified.  The buffer comparison is the one that
+discriminates, and only doing it the hard way showed why: a save path
+that applied the action it found wrote into the buffers visiting the
+matched files and saved none of them, so the bytes on disk were
+identical and every off-disk assertion passed.  \"No write beyond the
+render\" has to mean no write at all, buffers included.
+
+The temporary directory is masked because the two fixtures have
+different ones, and the scope property and every rendered link spell it.
+
+Mutations that must fail it: call the action machinery from
+`org-agents--update-on-save'; add the action text to the
+`org-agents--read-agent' plist and act on it; stamp anything extra when
+an action is present."
+  (let (with-action without-action with-corpus without-corpus
+        with-live without-live)
+    (org-agents-test--with-action-corpus
+        "set-property!(REVIEWED, today) tag!(+reviewed)"
+      (with-current-buffer (find-file-noselect agent-file)
+        (org-agents-mode 1)
+        (set-buffer-modified-p t)
+        (save-buffer))
+      (with-current-buffer (find-file-noselect a)
+        ;; A save of the agent's file must leave the matched entries'
+        ;; buffer alone, and that means UNMODIFIED: an edit nobody saved
+        ;; is still an edit.
+        (should-not (buffer-modified-p))
+        (setq with-live (buffer-substring-no-properties (point-min)
+                                                       (point-max))))
+      (setq with-action (replace-regexp-in-string
+                         (regexp-quote dir) "DIR"
+                         (org-agents-test--file-text agent-file))
+            with-corpus (org-agents-test--file-text a)))
+    (org-agents-test--with-action-corpus nil
+      (with-current-buffer (find-file-noselect agent-file)
+        (org-agents-mode 1)
+        (set-buffer-modified-p t)
+        (save-buffer))
+      (with-current-buffer (find-file-noselect a)
+        (should-not (buffer-modified-p))
+        (setq without-live (buffer-substring-no-properties (point-min)
+                                                           (point-max))))
+      (setq without-action (replace-regexp-in-string
+                            (regexp-quote dir) "DIR"
+                            (org-agents-test--file-text agent-file))
+            without-corpus (org-agents-test--file-text a)))
+    ;; The file the agents matched is untouched, byte for byte, on disk
+    ;; and in the buffer that visits it.
+    (should (equal with-corpus without-corpus))
+    (should (equal with-live without-live))
+    (should (equal (org-agents--mask-matched
+                    (replace-regexp-in-string "^:AGENT_ACTION:.*\n" ""
+                                              with-action))
+                   (org-agents--mask-matched without-action)))))
+
+(ert-deftest org-agents-test-action-does-not-travel-through-a-prototype ()
+  "An action does not arrive through a `:PROTOTYPE:' chain.
+The P1 guarantee of wrk.5, and the reason is per-file trust: if a
+prototype could pass an action down, the code that edits your corpus
+when you act on file A is written in file B.
+
+A master in the registry's `Prototypes' section carries
+`:AGENT_ACTION: archive!'; a follower agent naming it resolves that name
+to nothing, reads it out of its own drawer as nothing, and
+`org-agents-apply-actions' on it refuses with no verb called.
+
+Mutations that must fail it: drop `AGENT_' from
+`org-agents--prototype-opaque-re'; read the action through
+`org-agents-resolve-property'."
+  (org-agents-test--with-attr-corpus
+      "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+
+* Prototypes
+** Acting Task
+:PROPERTIES:
+:AGENT_ACTION: archive!
+:AGENT_QUERY:  (todo)
+:END:
+A master that would hand its followers an action, if behaviour travelled.
+"
+      '(("follower.org" . "\
+* Follower agent
+:PROPERTIES:
+:PROTOTYPE:    Acting Task
+:AGENT_QUERY:  (todo)
+:AGENT_SCOPE:  (\"follower.org\")
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "follower.org") "Follower agent"
+      ;; The resolver will not surface it, which is Epic 3's side.
+      (should-not (org-agents-resolve-property "AGENT_ACTION"))
+      ;; And this epic's own read finds nothing either.
+      (should-not (org-agents--entry-get "AGENT_ACTION"))
+      (org-agents-test--action-finds-nothing-to-apply))))
+
+(ert-deftest org-agents-test-action-never-evaluates-an-argument ()
+  "An argument that spells Lisp is stored as the characters it spells.
+Nothing in `:AGENT_ACTION:' is `read', evaluated, `format'ted into a
+form, or interned into a function position: the argument below spells a
+`progn' of a tripwire call and a shell command, and what reaches the
+entry is the text.  The tripwire counts evaluations that must not
+happen, and the sentinel file is what a shell would have created.
+
+Quoted, because an argument spelling a bare sexp is refused BY SHAPE --
+see `org-agents-test-action-parse-refuses-a-sexp-shaped-argument', which
+is the other half of this guarantee.  Quoting is the documented way to
+store literal parentheses, and this is what quoting gets you: text.
+
+Mutation that must fail it: `read', `eval' or a `format'-into-a-form
+anywhere in the parse or in the verb."
+  (let* ((sentinel (make-temp-name
+                    (expand-file-name "org-agents-action-pwned"
+                                      temporary-file-directory)))
+         (spelled (format
+                   "(progn (org-agents-test--tripwire) (shell-command \"touch %s\"))"
+                   sentinel))
+         (org-agents-test--tripwire-count 0))
+    (unwind-protect
+        (org-agents-test--at-agent
+            (concat "set-property!(NOTE, \""
+                    (replace-regexp-in-string "\"" "\\\\\"" spelled)
+                    "\")")
+          ;; The parse itself hands the text through as one string.
+          (let ((parsed (org-agents--parse-actions
+                         (org-agents--entry-get "AGENT_ACTION"))))
+            (should (equal parsed
+                           (list (list 'org-agents-action/set-property!
+                                       "NOTE" spelled)))))
+          (should (= 0 org-agents-test--tripwire-count))
+          (should-not (file-exists-p sentinel))
+          ;; And applying it writes those characters into the drawer.
+          (org-agents-test--answering-yes (org-agents-apply-actions))
+          (should (equal spelled
+                         (org-agents-test--action-property a "Fix widget"
+                                                           "NOTE")))
+          (should (= 0 org-agents-test--tripwire-count))
+          (should-not (file-exists-p sentinel)))
+      (when (file-exists-p sentinel) (delete-file sentinel)))))
+
+(ert-deftest org-agents-test-action-batch-refuses-a-destructive-verb ()
+  "In batch there is nobody to ask, so the run is refused rather than assumed.
+MEASURED: `y-or-n-p' in `-batch' READS STANDARD INPUT and returns t for
+a `y' on it, and signals `end-of-file' where stdin is closed.  So a
+script, a CI job or an `emacs -batch' invocation whose stdin happened to
+carry text would answer yes for the user.  The refusal is therefore
+checked BEFORE `y-or-n-p' is called at all -- which is also why this
+test cannot hang however it is run.
+
+`y-or-n-p' is stubbed to a tripwire, and the assertion is that the
+signal is the REFUSAL and not the tripwire: that is what says stdin was
+never read.  The refusal also names the destructive verb, so the user is
+told what it was that could not be asked about.
+
+`noninteractive' is bound rather than assumed, so the test holds when
+the suite is run inside a live Emacs too.
+
+Mutation that must fail it: move the `noninteractive' check after
+`y-or-n-p' -- then the tripwire's error is signalled instead and the
+message assertion fails."
+  (org-agents-test--at-agent "archive!"
+    (let ((before-a (org-agents-test--file-text a))
+          (noninteractive t))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (&rest _)
+                   (error "org-agents-test: must not prompt"))))
+        (let ((err (should-error (org-agents-apply-actions)
+                                 :type 'user-error)))
+          (should (string-match-p "refused, because there is no one to ask"
+                                  (error-message-string err)))
+          (should (string-match-p "archive!" (error-message-string err)))))
+      ;; And nothing was archived on the way to the refusal.
+      (should (equal before-a (org-agents-test--file-text a))))))
+
+(ert-deftest org-agents-test-action-does-not-travel-down-the-outline ()
+  "An action does not arrive from an outline ancestor.
+The mutation `org-agents-test-action-does-not-travel-through-a-prototype'
+CANNOT see, and this is why that test is not enough on its own: a
+prototype master is not an outline ancestor, so adding `t' as
+`org-entry-get''s INHERIT argument leaves the prototype test passing.
+MEASURED with that mutation in place -- the prototype test passed and
+this one failed, which is the whole argument for writing both.
+
+Asserted under `org-use-property-inheritance' nil AND t, because the
+option is a user's and the guarantee is not theirs to weaken.
+
+Mutation that must fail it: add `t' as the INHERIT argument to the read
+in `org-agents-apply-actions'."
+  (dolist (inheritance '(nil t))
+    (org-agents-test--with-action-corpus nil
+      (with-current-buffer (find-file-noselect agent-file)
+        ;; The action goes on an ANCESTOR of the agent, which is where an
+        ;; inheriting read would find it.
+        (goto-char (point-min))
+        (insert "* Container\n:PROPERTIES:\n:AGENT_ACTION: archive!\n:END:\n")
+        (goto-char (point-min))
+        (search-forward "* Review agent")
+        (org-back-to-heading t)
+        (org-demote-subtree)
+        (let ((org-use-property-inheritance inheritance))
+          (should-not (org-agents--entry-get "AGENT_ACTION"))
+          (org-agents-test--action-finds-nothing-to-apply))))))
+
+(ert-deftest org-agents-test-action-does-not-come-from-a-keyword-or-a-global ()
+  "An action does not arrive from `#+PROPERTY:' or `org-global-properties'.
+The other two routes an inheriting read opens, and the second is the
+worst of them: `org-global-properties' is a VARIABLE, so an action would
+be spelled in no file at all -- there would be nothing to grep for and
+nothing to read before trusting it.
+
+MEASURED: with INHERIT `t', `(org-entry-get nil \"AGENT_ACTION\" t)'
+answers `\"archive!\"' from a `#+PROPERTY:' line, and answers it from
+`org-global-properties' in a buffer with no such line anywhere.
+
+Mutation that must fail it: the same INHERIT argument, by two further
+routes."
+  ;; A file keyword.
+  (org-agents-test--with-action-corpus nil
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (insert "#+PROPERTY: AGENT_ACTION archive!\n")
+      (org-mode-restart)
+      (goto-char (point-min))
+      (search-forward "* Review agent")
+      (org-back-to-heading t)
+      (should-not (org-agents--entry-get "AGENT_ACTION"))
+      (org-agents-test--action-finds-nothing-to-apply)))
+  ;; And a variable, spelled in no file.
+  (org-agents-test--at-agent nil
+    (let ((org-global-properties '(("AGENT_ACTION" . "archive!"))))
+      (should-not (org-agents--entry-get "AGENT_ACTION"))
+      (org-agents-test--action-finds-nothing-to-apply))))
+
+(ert-deftest org-agents-test-action-property-is-read-once-from-the-agent ()
+  "The action is read with `org-entry-get' and never through the resolver.
+`org-agents-resolve-property' refuses `AGENT_' names itself, so routing
+the read through it would be SAFE today -- and that is exactly why this
+test exists: a guarantee that lives in another section's regexp is a
+guarantee one edit away from gone.  The resolver is counted and must not
+be asked about `AGENT_ACTION' at all.
+
+Mutation that must fail it: read the action through
+`org-agents-resolve-property' (measured -- the prototype test above
+passes with that mutation in place, and this one does not)."
+  (org-agents-test--at-agent "tag!(+reviewed)"
+    (let ((asked nil)
+          (real (symbol-function 'org-agents-resolve-property)))
+      (cl-letf (((symbol-function 'org-agents-resolve-property)
+                 (lambda (name &optional pom)
+                   (push name asked)
+                   (funcall real name pom))))
+        (org-agents-test--answering-yes (org-agents-apply-actions)))
+      (should-not (member "AGENT_ACTION" asked)))))
+
+(ert-deftest org-agents-test-action-registry-default-cannot-supply-one ()
+  "A registry declaring `AGENT_ACTION' with a default supplies nothing.
+The fifth donor: the attribute registry's `:ATTR_DEFAULT:' is the last
+step of the resolution order, and an `AGENT_' name short-circuits before
+it.  So a registry cannot hand an action to a corpus either.
+
+Mutation that must fail it: drop the `ATTR_DEFAULT' arm of the opaque
+short-circuit -- that is, resolve `AGENT_' names like any other name."
+  (org-agents-test--with-attr-corpus
+      "\
+* AGENT_ACTION
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_DEFAULT: archive!
+:END:
+A declaration that would hand every entry in the corpus an action.
+"
+      '(("follower.org" . "\
+* Plain agent
+:PROPERTIES:
+:AGENT_QUERY: (todo)
+:AGENT_SCOPE: (\"follower.org\")
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "follower.org") "Plain agent"
+      (should-not (org-agents-resolve-property "AGENT_ACTION"))
+      (should-not (org-agents--entry-get "AGENT_ACTION"))
+      (org-agents-test--action-finds-nothing-to-apply))))
+
+(ert-deftest org-agents-test-action-never-edits-its-own-agent-or-an-alias ()
+  "An agent's action edits neither the agent itself nor a generated alias.
+Both fall out of machinery this epic did not write --
+`org-agents--self-match-p' drops the agent from its own match set, and
+`org-agents-exclude' defaults to `(not (property \"AGENT_MATCH\"))' --
+and both are pinned here anyway, because if the self-skip regressed an
+action would rewrite the very drawer it was read from.
+
+The agent is made to match its own query for the occasion: the scope
+takes in the agent's own file and the agent is given the property the
+query looks for.
+
+Mutations that must fail it: remove the self-skip; change the default
+exclude."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    ;; The agent now matches its own query, and lives in scope.
+    (org-entry-put nil "AGENT_SCOPE" (format "(\"%s\" \"%s\")" a agent-file))
+    (org-entry-put nil "NEXT_REVIEW" "[2020-01-01 Wed]")
+    (org-entry-put nil "TODO" "TODO")
+    (save-buffer)
+    (goto-char (point-min))
+    (org-agents-test--answering-yes (org-agents-update))
+    (goto-char (point-min))
+    (org-agents-test--answering-yes (org-agents-apply-actions))
+    ;; The two entries in a.org were stamped.
+    (should (org-agents-test--action-property a "Fix widget" "REVIEWED"))
+    ;; The agent was not, and neither was any alias it wrote.
+    (goto-char (point-min))
+    (should-not (org-entry-get nil "REVIEWED"))
+    (goto-char (point-min))
+    (while (re-search-forward "^\\*+ " nil t)
+      (org-back-to-heading t)
+      (when (org-entry-get nil "AGENT_MATCH")
+        (should-not (org-entry-get nil "REVIEWED")))
+      (end-of-line))))
+
+;;;; Actions: the parser
+
+(ert-deftest org-agents-test-action-parse-two-verbs ()
+  "The design's own example parses to exactly the two-element list.
+`(VERB . ARGS)' per verb, in the order written, with the verb a symbol
+that `fboundp' answered t for and every argument a string."
+  (should (equal (org-agents--parse-actions
+                  "set-property!(REVIEWED, today) tag!(+reviewed)")
+                 '((org-agents-action/set-property! "REVIEWED" "today")
+                   (org-agents-action/tag! "+reviewed")))))
+
+(ert-deftest org-agents-test-action-parse-arguments-are-strings ()
+  "Every argument is a string, and nothing else ever is one.
+Not a symbol, not a number, not a list, not a hash table, not a
+byte-code object -- the whole answer is symbols in the car position and
+strings after it.  That is the property everything downstream rests on:
+a verb receives DATA.
+
+Mutation that must fail it: convert a bare argument with `read' or
+`intern'."
+  (dolist (text '("set-property!(N, 7)"
+                  "effort!(0:30)"
+                  "todo!(DONE)"
+                  "priority!(A)"
+                  "scheduled!(+7d)"
+                  "tag!(+a -b)"
+                  "set-property!(N, nil)"
+                  "set-property!(N, t)"))
+    (pcase-dolist (`(,verb . ,args) (org-agents--parse-actions text))
+      (should (symbolp verb))
+      (should (fboundp verb))
+      (should (string-prefix-p "org-agents-action/" (symbol-name verb)))
+      (dolist (arg args)
+        (should (stringp arg))))))
+
+(ert-deftest org-agents-test-action-parse-refuses-a-sexp-shaped-argument ()
+  "An unquoted argument shaped like a sexp is refused BY SHAPE.
+Parentheses are outside `org-agents--action-bare-re', so this never
+becomes a value that has to be proved harmless: it is a parse error, and
+the error names the verb and the argument's position, which is what the
+reader has to go and look at.
+
+The other half of the no-evaluation guarantee, the first half being
+`org-agents-test-action-never-evaluates-an-argument': what a QUOTED
+argument gets you is text.
+
+Mutation that must fail it: widen `org-agents--action-bare-re' to admit
+parentheses."
+  (let ((err (should-error
+              (org-agents--parse-actions
+               "set-property!(X, (shell-command \"touch /tmp/pwned\"))")
+              :type 'user-error)))
+    (should (string-match-p "set-property!" (error-message-string err)))
+    (should (string-match-p "argument 2" (error-message-string err))))
+  ;; A leading sexp is refused as an unreadable token rather than run.
+  (should-error (org-agents--parse-actions "(shell-command \"x\")")
+                :type 'user-error))
+
+(ert-deftest org-agents-test-action-parse-quoting-and-whitespace ()
+  "Bare arguments are trimmed; a quoted one survives whole.
+A quoted argument may hold the comma, the parenthesis and the escaped
+quote that a bare one may not, and that is the documented escape hatch
+for both shape rules.  A newline between verbs is whitespace, because a
+`:AGENT_ACTION+:' continuation may join its pieces with one.
+
+Mutations that must fail it: drop the `string-trim'; drop the escape
+branch of `org-agents--action-quoted-re'."
+  (should (equal (org-agents--parse-actions "set-property!( SPACED , trimmed )")
+                 '((org-agents-action/set-property! "SPACED" "trimmed"))))
+  (should (equal (org-agents--parse-actions
+                  "set-property!(NOTE, \"has, comma and \\\"quote\\\"\")")
+                 '((org-agents-action/set-property!
+                    "NOTE" "has, comma and \"quote\""))))
+  (should (equal (org-agents--parse-actions
+                  "set-property!(NOTE, \"parens (and) commas, too\")")
+                 '((org-agents-action/set-property!
+                    "NOTE" "parens (and) commas, too"))))
+  (should (equal (org-agents--parse-actions "tag!(+a)\ntag!(-b)")
+                 '((org-agents-action/tag! "+a")
+                   (org-agents-action/tag! "-b"))))
+  ;; And leading and trailing whitespace around the whole text.
+  (should (equal (org-agents--parse-actions "  tag!(+a)  ")
+                 '((org-agents-action/tag! "+a")))))
+
+(ert-deftest org-agents-test-action-parse-unresolved-token-names-it ()
+  "A token naming no verb is a syntax error that names the token.
+Both spellings: the token as written, and the function name that does
+not exist -- because the second is what a reader has to define, or spell
+differently, to fix it.
+
+Mutations that must fail it: have the resolver answer with a symbol
+without asking `fboundp'; make the message generic."
+  (let ((err (should-error (org-agents--parse-actions "frobnicate!(x)")
+                           :type 'user-error)))
+    (should (string-match-p "frobnicate!" (error-message-string err)))
+    (should (string-match-p "org-agents-action/frobnicate!"
+                            (error-message-string err))))
+  ;; A name that IS a function but is not in the namespace resolves to
+  ;; nothing, because the name the resolver builds is the only one it
+  ;; ever looks up.
+  (should-error (org-agents--parse-actions "ignore!(x)") :type 'user-error)
+  (should-error (org-agents--parse-actions "shell-command!(x)")
+                :type 'user-error)
+  ;; And an unresolved token does not leave a symbol behind: `intern-soft'
+  ;; of a constructed name interns nothing.
+  (should-not (intern-soft "org-agents-action/never-seen-before!")))
+
+(ert-deftest org-agents-test-action-parse-error-runs-no-query-and-no-verb ()
+  "A parse error fires before the query runs, so nothing is even opened.
+There is no partial application to undo, because parsing is step 2 of
+`org-agents-apply-actions' and collecting the matches is step 3.  This
+is what holds that ordering: `org-agents--collect' is replaced by a
+tripwire and must not be reached.
+
+Mutation that must fail it: move the parse after the collect."
+  (org-agents-test--at-agent "frobnicate!(x)"
+    (let ((collected 0))
+      (cl-letf (((symbol-function 'org-agents--collect)
+                 (lambda (&rest _)
+                   (setq collected (1+ collected))
+                   (error "org-agents-test: the query was run"))))
+        (org-agents-test--with-verb-tripwire
+          (should-error (org-agents-apply-actions) :type 'user-error)
+          (should (= 0 org-agents-test--verb-calls))))
+      (should (= 0 collected)))))
+
+(ert-deftest org-agents-test-action-parse-is-pure ()
+  "Parsing reads no buffer, creates none, and writes nothing.
+A hundred parses in a fixture buffer leave the modification tick where
+it was, the buffer unmodified, and the same buffer current.  Purity is
+what lets the command parse before it has decided to do anything at all.
+
+Mutation that must fail it: parse with `with-temp-buffer' and
+`looking-at'."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today) tag!(+reviewed)"
+    (let ((tick (buffer-chars-modified-tick))
+          (buffer (current-buffer))
+          (modified (buffer-modified-p))
+          (point (point)))
+      (dotimes (_ 100)
+        (org-agents--parse-actions
+         "set-property!(REVIEWED, today) tag!(+reviewed)"))
+      (should (eq buffer (current-buffer)))
+      (should (= tick (buffer-chars-modified-tick)))
+      (should (eq modified (buffer-modified-p)))
+      (should (= point (point))))))
+
+(ert-deftest org-agents-test-action-parse-arity ()
+  "A verb given the wrong number of arguments is refused, with the counts.
+`func-arity' does the work, so a verb defined in init is checked with no
+declaration of its own.
+
+Mutation that must fail it: drop the `func-arity' check."
+  (let ((err (should-error (org-agents--parse-actions "todo!()")
+                          :type 'user-error)))
+    (should (string-match-p "todo!" (error-message-string err)))
+    (should (string-match-p "takes 1 argument, and 0 were given"
+                            (error-message-string err))))
+  (let ((err (should-error (org-agents--parse-actions "todo!(A, B)")
+                          :type 'user-error)))
+    (should (string-match-p "takes 1 argument, and 2 were given"
+                            (error-message-string err))))
+  ;; A verb with no arguments given one, and given none, which is right.
+  (should-error (org-agents--parse-actions "archive!(x)") :type 'user-error)
+  (should (equal (org-agents--parse-actions "archive!")
+                 '((org-agents-action/archive!))))
+  ;; And an empty argument list is the same as none.
+  (should (equal (org-agents--parse-actions "archive!()")
+                 '((org-agents-action/archive!))))
+  (should-error (org-agents--parse-actions "set-property!(ONE)")
+                :type 'user-error))
+
+(ert-deftest org-agents-test-action-parse-archive-must-be-last ()
+  "A terminal verb must be the last one, and may appear once.
+`archive!' removes the subtree a later verb would edit, so the ordering
+is refused HERE rather than discovered half way through an apply pass.
+Declared with a symbol property, so a verb defined in init can say the
+same of itself.
+
+Mutation that must fail it: drop the rule."
+  (should (org-agents--action-terminal-p 'org-agents-action/archive!))
+  (let ((err (should-error (org-agents--parse-actions "archive! tag!(+x)")
+                          :type 'user-error)))
+    ;; Quote characters are left out of every pattern here on purpose:
+    ;; `user-error' passes its format through `format-message', which
+    ;; turns a grave accent and an apostrophe into curly quotes.
+    (should (string-match-p "archive!" (error-message-string err)))
+    (should (string-match-p "must be the last verb"
+                            (error-message-string err))))
+  (should-error (org-agents--parse-actions "archive! archive!")
+                :type 'user-error)
+  ;; The other way round is fine, and is the documented shape.
+  (should (equal (org-agents--parse-actions "tag!(+x) archive!")
+                 '((org-agents-action/tag! "+x")
+                   (org-agents-action/archive!)))))
+
+(ert-deftest org-agents-test-action-parse-rejects-reader-syntax ()
+  "Reader syntax has no meaning here, and this test says what happens instead.
+Three of these four are refused by SHAPE, because each holds a
+parenthesis, a bracket or a quote that no bare argument may hold; and
+the fourth -- `#$' -- is accepted as the two characters it is.  That is
+the honest answer and it is a STRONGER statement than a refusal would
+be: `#$' is exactly the syntax that, handed to `read-from-string' inside
+a file being loaded, yields that file's own name.  Here it yields `#$',
+because nothing read anything.
+
+MEASURED, as the argument list of one verb, `read-from-string' answers
+`(#$)' with the loading file's name; `(#s(hash-table test equal))' with
+a live hash table; `(#1=(a . #1#))' with a CIRCULAR cons, which
+`format' \"%s\" prints forever unless `print-circle' happens to be
+bound -- a denial of service out of a property; and
+`(#[257 \"...\" [1] 2])' with a byte-code object, a callable arriving as
+data.  This test COMPLETING is part of what it asserts: the circular one
+cannot be built, so no report line can loop on it.
+
+Mutation that must fail it: lex with `read-from-string'."
+  (should (equal (org-agents--parse-actions "set-property!(X, #$)")
+                 '((org-agents-action/set-property! "X" "#$"))))
+  (dolist (text '("set-property!(X, #s(hash-table test equal))"
+                  "set-property!(X, #1=(a . #1#))"
+                  "set-property!(X, #[257 \"\\300\\207\" [1] 2])"))
+    (should-error (org-agents--parse-actions text) :type 'user-error)))
+
+(ert-deftest org-agents-test-action-parse-anchors-at-the-index ()
+  "Every token is matched at the index, not merely somewhere after it.
+MEASURED: a regexp beginning `\\\\=' handed to `string-match' with a
+non-zero START does not anchor at START, and the first prototype of this
+lexer therefore reported an error at character 4 of a bare `archive!'.
+`org-agents--action-at' compares `match-beginning' with the index
+instead, and these are the inputs that tell the two apart.
+
+Mutation that must fail it: replace `org-agents--action-at' with a
+`\\\\='-prefixed regexp."
+  (should (equal (org-agents--parse-actions "archive!")
+                 '((org-agents-action/archive!))))
+  (should (equal (org-agents--parse-actions "tag!(+a) tag!(-b) tag!(+c)")
+                 '((org-agents-action/tag! "+a")
+                   (org-agents-action/tag! "-b")
+                   (org-agents-action/tag! "+c"))))
+  ;; The helper itself, at an index in the middle of a string.
+  (should (org-agents--action-at "tag!" "xxxtag!" 3))
+  (should-not (org-agents--action-at "tag!" "xxxytag!" 3)))
+
+(ert-deftest org-agents-test-action-parse-unreadable-text-names-the-place ()
+  "Text that is no token at all is refused with a character position.
+The one diagnostic that cannot name a verb, because it has not read one
+yet -- so it names where it stopped and quotes what it found there."
+  (let ((err (should-error (org-agents--parse-actions "tag!(+a) junk here")
+                          :type 'user-error)))
+    (should (string-match-p "unreadable at character 10"
+                            (error-message-string err)))
+    (should (string-match-p "junk here" (error-message-string err))))
+  ;; An unclosed argument list names the verb instead.
+  (let ((err (should-error (org-agents--parse-actions "tag!(+a")
+                          :type 'user-error)))
+    (should (string-match-p "tag!" (error-message-string err)))
+    (should (string-match-p "argument list is not closed"
+                            (error-message-string err)))))
+
+(ert-deftest org-agents-test-action-vocabulary-is-complete ()
+  "The shipped vocabulary is exactly the nine verbs this suite owns.
+Derived by `mapatoms' over the namespace, in the same style as
+`org-agents-test-every-defcustom-is-risky': a tenth verb added to the
+package and not to `org-agents-test--action-verbs' fails here, which is
+what keeps one from arriving without the destructive declaration and the
+tripwire coverage the other nine have."
+  (let (found)
+    (mapatoms (lambda (symbol)
+                (when (and (fboundp symbol)
+                           (string-prefix-p "org-agents-action/"
+                                            (symbol-name symbol)))
+                  (push symbol found))))
+    (should found)
+    (should (equal (sort (mapcar #'symbol-name found) #'string<)
+                   (sort (mapcar #'symbol-name
+                                 (copy-sequence org-agents-test--action-verbs))
+                         #'string<)))))
 
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here
