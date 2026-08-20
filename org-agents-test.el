@@ -9608,6 +9608,20 @@ selected window's buffer, which in batch is `*scratch*'."
      (org-back-to-heading t)
      (org-entry-get nil property))))
 
+(defun org-agents-test--put-property (file heading property value)
+  "Set PROPERTY to VALUE at the entry of FILE whose heading holds HEADING.
+For the tests that need a property to BE there before an action can do
+anything with it -- a row that would change nothing is not counted as an
+edit and is not asked about, so a fixture that lacks the property proves
+nothing about the verb that deletes it."
+  (with-current-buffer (find-file-noselect file)
+    (org-with-wide-buffer
+     (goto-char (point-min))
+     (should (re-search-forward (concat "^\\*+.*" (regexp-quote heading))
+                               nil t))
+     (org-back-to-heading t)
+     (org-entry-put nil property value))))
+
 (defun org-agents-test--action-tags (file heading)
   "The own tags of the entry of FILE whose heading text holds HEADING."
   (with-current-buffer (find-file-noselect file)
@@ -10289,9 +10303,12 @@ branch of `org-agents--action-quoted-re'."
                   "set-property!(NOTE, \"parens (and) commas, too\")")
                  '((org-agents-action/set-property!
                     "NOTE" "parens (and) commas, too"))))
-  (should (equal (org-agents--parse-actions "tag!(+a)\ntag!(-b)")
+  ;; Two verbs, and deliberately two DIFFERENT fields: one action writes
+  ;; each field once, so `tag!(+a) tag!(-b)' is a refusal of its own and
+  ;; would test the lexer no further than the first token.
+  (should (equal (org-agents--parse-actions "tag!(+a)\npriority!(A)")
                  '((org-agents-action/tag! "+a")
-                   (org-agents-action/tag! "-b"))))
+                   (org-agents-action/priority! "A"))))
   ;; And leading and trailing whitespace around the whole text.
   (should (equal (org-agents--parse-actions "  tag!(+a)  ")
                  '((org-agents-action/tag! "+a")))))
@@ -10317,7 +10334,24 @@ without asking `fboundp'; make the message generic."
                 :type 'user-error)
   ;; And an unresolved token does not leave a symbol behind: `intern-soft'
   ;; of a constructed name interns nothing.
-  (should-not (intern-soft "org-agents-action/never-seen-before!")))
+  (should-not (intern-soft "org-agents-action/never-seen-before!"))
+  ;; The `fboundp' half, which the cases above cannot see: they name
+  ;; symbols that are not interned at all, so `intern-soft' already
+  ;; answers nil and dropping `fboundp' changes nothing.  MEASURED with
+  ;; the check dropped, a symbol that IS interned and has no function
+  ;; reached `func-arity' and died `void-function' -- the raw signal
+  ;; instead of the sentence naming the token and the function to define.
+  ;; A user who renames a verb in init and leaves the token in a property
+  ;; is in exactly this state.
+  (unwind-protect
+      (progn
+        (intern "org-agents-action/vanished!")
+        (let ((err (should-error (org-agents--parse-actions "vanished!(x)")
+                                 :type 'user-error)))
+          (should (string-match-p "vanished!" (error-message-string err)))
+          (should (string-match-p "is not an action verb"
+                                  (error-message-string err)))))
+    (unintern "org-agents-action/vanished!" obarray)))
 
 (ert-deftest org-agents-test-action-parse-error-runs-no-query-and-no-verb ()
   "A parse error fires before the query runs, so nothing is even opened.
@@ -10447,10 +10481,12 @@ Mutation that must fail it: replace `org-agents--action-at' with a
 `\\\\='-prefixed regexp."
   (should (equal (org-agents--parse-actions "archive!")
                  '((org-agents-action/archive!))))
-  (should (equal (org-agents--parse-actions "tag!(+a) tag!(-b) tag!(+c)")
+  ;; Three tokens in a row, each writing a different field -- three
+  ;; `tag!'s would be refused before the second was lexed.
+  (should (equal (org-agents--parse-actions "tag!(+a) priority!(A) effort!(0:30)")
                  '((org-agents-action/tag! "+a")
-                   (org-agents-action/tag! "-b")
-                   (org-agents-action/tag! "+c"))))
+                   (org-agents-action/priority! "A")
+                   (org-agents-action/effort! "0:30"))))
   ;; The helper itself, at an index in the middle of a string.
   (should (org-agents--action-at "tag!" "xxxtag!" 3))
   (should-not (org-agents--action-at "tag!" "xxxytag!" 3)))
@@ -10540,8 +10576,17 @@ Mutation that must fail it: any verb body."
       (org-agents-action/archive! 'apply))
     (with-current-buffer (find-file-noselect a)
       (should-not (string-match-p "Fix widget" (buffer-string))))
-    (should (file-exists-p (concat a "_archive")))
-    (delete-file (concat a "_archive"))))
+    ;; The subtree is in the archive BUFFER, and the archive file is NOT
+    ;; on disk: MEASURED, `org-archive-subtree' ends with `save-buffer'
+    ;; because `org-archive-subtree-save-file-p' defaults to `from-org',
+    ;; and a run whose summary says "nothing was saved" may not leave a
+    ;; file behind that no `undo' can take back.
+    (should-not (file-exists-p (concat a "_archive")))
+    (let ((archive (get-file-buffer (concat a "_archive"))))
+      (should archive)
+      (should (buffer-modified-p archive))
+      (should (string-match-p "Fix widget"
+                              (with-current-buffer archive (buffer-string)))))))
 
 (ert-deftest org-agents-test-action-verbs-plan-writes-nothing ()
   "Every verb's `plan' phase writes nothing and answers (OLD . NEW).
@@ -10674,6 +10719,11 @@ variable, or hoist the ask out of the loop."
   ;; matches on would make the SECOND run match nothing, and the test
   ;; would then pass for the wrong reason -- no asks because no entries.
   (org-agents-test--at-agent "delete-property!(OWNER)"
+    ;; And the property has to BE there: a row that would change nothing
+    ;; is neither counted nor asked about, so deleting a property no
+    ;; entry carries would ask once and prove nothing.
+    (org-agents-test--put-property a "Fix widget" "OWNER" "ada")
+    (org-agents-test--put-property a "Fix gadget" "OWNER" "grace")
     (let ((asked 0))
       (let ((noninteractive nil)
             (inhibit-interaction nil))
@@ -10683,6 +10733,11 @@ variable, or hoist the ask out of the loop."
           (org-agents-apply-actions)
           ;; One for the plan, one for each of the two entries.
           (should (= 3 asked))
+          ;; Put it back, for the same reason: the second run has to have
+          ;; something to do.  What is under test is that saying yes once
+          ;; is not remembered.
+          (org-agents-test--put-property a "Fix widget" "OWNER" "ada")
+          (org-agents-test--put-property a "Fix gadget" "OWNER" "grace")
           (goto-char (point-min))
           (org-agents-apply-actions)
           (should (= 6 asked)))))))
@@ -10718,8 +10773,10 @@ Mutation that must fail it: make the refusal unconditional."
     (with-current-buffer (find-file-noselect a)
       (should-not (string-match-p "Fix widget" (buffer-string)))
       (should-not (string-match-p "Fix gadget" (buffer-string))))
-    (should (file-exists-p (concat a "_archive")))
-    (delete-file (concat a "_archive"))))
+    ;; Archived into a BUFFER, and no file on disk -- see
+    ;; `org-agents-test-action-archive-saves-no-file'.
+    (should-not (file-exists-p (concat a "_archive")))
+    (should (get-file-buffer (concat a "_archive")))))
 
 (ert-deftest org-agents-test-action-value-keywords ()
   "Three value keywords, expanded by the verb, and shadowed by quoting.
@@ -11114,6 +11171,11 @@ know which edits were never even tried."
                (if (= n 3)
                    (error "org-agents-test: the third one fails")
                  (org-entry-put nil name "x"))))))
+        ;; Two calls of one verb, so it has to say what it writes: one
+        ;; action writes each field once, and without this declaration
+        ;; both calls claim the same field and the parse refuses them.
+        (put 'org-agents-action/third! 'org-agents-action-field
+             (lambda (args) (format "the property %s" (upcase (car args)))))
         (org-agents-test--at-agent "third!(P) third!(Q)"
           (org-agents-test--answering-yes (org-agents-apply-actions))
           (let ((lines (org-agents-test--action-edit-lines)))
@@ -11123,6 +11185,7 @@ know which edits were never even tried."
             (should (string-match-p "FAILED" (nth 2 lines)))
             (should (string-match-p "  not attempted\\'" (nth 3 lines))))))
     (put 'org-agents-action/third! 'count nil)
+    (put 'org-agents-action/third! 'org-agents-action-field nil)
     (fmakunbound 'org-agents-action/third!)))
 
 (ert-deftest org-agents-test-action-saves-nothing ()
@@ -11426,6 +11489,530 @@ that is there now and the value that would replace it."
                  (and (string-match-p "effort!(0:30)" line)
                       (string-match-p "nil -> 0:30" line)))
                lines)))))
+
+;;;; Actions: what the report says is what the run did
+
+;; Every test in this section came out of an adversarial pass over the
+;; shipped feature, and every one of them names the measurement that
+;; found the hole.  They share one subject: the dry run is the sentence
+;; the user answered, so a run that writes anything the report does not
+;; name -- a file on disk, an entry outside the match set, a value other
+;; than the one on the line -- has broken the only promise this feature
+;; has to keep.
+
+(ert-deftest org-agents-test-action-archive-saves-no-file ()
+  "`archive!' leaves the archive in a BUFFER, and puts no file on disk.
+MEASURED, with the stock default: `org-archive-subtree' ends with
+`save-buffer' on the archive file because
+`org-archive-subtree-save-file-p' defaults to `from-org', so a confirmed
+`archive!' wrote `a.org_archive' to disk while the command's own summary
+said `nothing was saved' -- and `undo' in the source buffer cannot take
+a file back off the disk.  The archive buffer is also NAMED in the
+summary, because it is one of the buffers there is now something to
+review and save by hand.
+
+Mutations that must fail it: drop the `org-archive-subtree-save-file-p'
+binding from `org-agents--with-action-quiet-hooks'; report only the
+buffer the row names."
+  (should (eq 'from-org (default-value 'org-archive-subtree-save-file-p)))
+  (org-agents-test--at-agent "archive!"
+    (let ((said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (setq said (apply #'format format args)))))
+        (org-agents-test--answering-yes (org-agents-apply-actions)))
+      (should-not (file-exists-p (concat a "_archive")))
+      (let ((archive (get-file-buffer (concat a "_archive"))))
+        (should archive)
+        (should (buffer-modified-p archive))
+        (should (string-match-p (regexp-quote (buffer-name archive)) said)))
+      (should (string-match-p "nothing was saved" said)))))
+
+(ert-deftest org-agents-test-action-todo-refuses-a-repeater ()
+  "`todo!' refuses a repeating entry, naming it, and writes nothing at all.
+MEASURED on `* TODO Item / SCHEDULED: <2020-01-01 Wed +1w>' with the verb
+as first shipped: the report line read `todo!(DONE)  TODO -> DONE
+applied', and the entry afterwards was still `TODO', with its stamp moved
+to `<2020-01-08 Wed +1w>' and a `:LAST_REPEAT:' property it did not have
+before.  Two unreported edits and an outcome the entry never reached.
+The refusal is raised in the `plan' phase, so nothing is written and no
+entry is half done.
+
+Mutation that must fail it: drop the `org-get-repeat' check."
+  (org-agents-test--at-agent "todo!(DONE)"
+    (with-current-buffer (find-file-noselect a)
+      (org-with-wide-buffer
+       (goto-char (point-min))
+       (should (re-search-forward "^\\*+.*Fix widget" nil t))
+       (end-of-line)
+       (insert "\nSCHEDULED: <2020-01-01 Wed +1w>")))
+    (let ((before (org-agents-test--action-corpus-snapshot a)))
+      (let ((err (should-error
+                  (org-agents-test--answering-yes (org-agents-apply-actions))
+                  :type 'user-error)))
+        (should (string-match-p "repeating entry" (error-message-string err)))
+        (should (string-match-p "LAST_REPEAT" (error-message-string err)))
+        (should (string-match-p "a.org:1" (error-message-string err))))
+      (should (equal before (org-agents-test--action-corpus-snapshot a))))))
+
+(ert-deftest org-agents-test-action-set-property-refuses-a-planted-agent ()
+  "`set-property!' will not write an `AGENT_' name, `PROTOTYPE' or `ARCHIVE'.
+MEASURED: `set-property!(\"AGENT_QUERY\", \"(todo)\")
+set-property!(\"AGENT_ACTION\", \"archive!\")' left both properties on a
+matched entry -- one confirmed action turning every entry it matched into
+an agent carrying its own action, written into files the user never
+edited.  That is the per-file trust the non-inheritance rule exists to
+keep, undone by a verb.  `ARCHIVE' is refused for a different measured
+reason: it steers where `archive!' puts the subtree, and the dry run
+names the destination read before that.
+
+Mutation that must fail it: check only `org-special-properties'."
+  (org-agents-test--with-action-corpus nil
+    (org-agents-test--at-match
+      (dolist (name '("AGENT_QUERY" "AGENT_ACTION" "AGENT_MATCH" "PROTOTYPE"
+                      "agent_query" "prototype" "ARCHIVE" "archive"))
+        (let ((err (should-error
+                    (org-agents-action/set-property! 'plan name "x")
+                    :type 'user-error)))
+          (should (string-match-p (regexp-quote name)
+                                  (error-message-string err))))
+        (should-error (org-agents-action/set-property! 'apply name "x")
+                      :type 'user-error))
+      ;; A name that merely CONTAINS one of them is not one of them.
+      (should (org-agents-action/set-property! 'plan "MY_AGENT_NOTE" "x"))
+      (should (org-agents-action/set-property! 'plan "PROTOTYPES" "x")))))
+
+(ert-deftest org-agents-test-action-archive-destination-is-checked-again ()
+  "`archive!' will not archive anywhere the dry run did not name.
+MEASURED, before this check existed: `set-property!(\"ARCHIVE\",
+\"/elsewhere.org::\") archive!' reported the innocuous default
+destination next to the source file and wrote -- and saved -- the subtree
+to the other one, because the whole plan is computed before any row is
+applied.  `set-property!' now refuses the name outright; this is the lock
+that holds however the value arrived, including an inherited property
+changed between the report and the answer, which is what the stub below
+does: the confirmation is asked in exactly that gap.
+
+Mutation that must fail it: archive without recomputing the destination."
+  (org-agents-test--at-agent "archive!"
+    (let ((elsewhere (expand-file-name "elsewhere.org" dir))
+          (noninteractive nil)
+          (inhibit-interaction nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (&rest _)
+                   (org-agents-test--put-property
+                    a "Fix widget" "ARCHIVE" (concat elsewhere "::"))
+                   t))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+        (org-agents-apply-actions))
+      (should-not (file-exists-p elsewhere))
+      (should-not (get-file-buffer elsewhere))
+      (let ((lines (org-agents-test--action-edit-lines)))
+        (should (string-match-p "FAILED" (nth 0 lines)))
+        (should (string-match-p "elsewhere.org" (nth 0 lines)))
+        (should (string-match-p "not attempted" (nth 1 lines))))
+      ;; And the subtree is still where it was.
+      (should (string-match-p
+               "Fix widget"
+               (with-current-buffer (find-file-noselect a) (buffer-string)))))))
+
+(ert-deftest org-agents-test-action-apply-runs-no-user-hook ()
+  "Applying a verb runs no hook and writes no log the report did not name.
+MEASURED, through the real command: one function on
+`org-after-todo-state-change-hook' that wrote a property left
+`:TRIGGERED:' on an entry the query never matched, while the report said
+`1 edit at 1 entry in 1 file'; and `org-log-done' `time' added a
+`CLOSED:' line no line of the report named.  `org-trigger-hook' is
+org-edna's own mechanism, so a corpus with `org-edna-mode' on would have
+scheduled successors and flipped blockers in other files -- unreported,
+and uncounted against `org-agents-action-limit'.
+
+Mutation that must fail it: drop a binding from
+`org-agents--with-action-quiet-hooks'."
+  (org-agents-test--at-agent "todo!(DONE)"
+    (let ((ran nil)
+          (org-log-done 'time)
+          (org-after-todo-state-change-hook
+           (list (lambda ()
+                   (push 'state-change ran)
+                   (org-entry-put nil "TRIGGERED" "yes"))))
+          (org-trigger-hook (list (lambda (_) (push 'trigger ran))))
+          (org-property-changed-functions
+           (list (lambda (&rest _) (push 'property ran)))))
+      (org-agents-test--answering-yes (org-agents-apply-actions))
+      (should-not ran)
+      (should (equal "DONE"
+                     (org-agents-test--action-property a "Fix widget" "TODO")))
+      (should-not (org-agents-test--action-property a "Fix widget" "CLOSED"))
+      (should-not (org-agents-test--action-property a "Fix widget" "TRIGGERED"))
+      (should-not (string-match-p
+                   "CLOSED:"
+                   (with-current-buffer (find-file-noselect a)
+                     (buffer-string)))))))
+
+(ert-deftest org-agents-test-action-planner-that-writes-elsewhere-is-caught ()
+  "The dry-run tripwire covers every buffer, not just the one being planned at.
+MEASURED, when the tick was read per buffer: a verb whose `plan' arm
+wrote into ANOTHER buffer -- a shared scratch, an index, a log --
+completed the command with no error at all and left that buffer modified,
+including on the runs the user cancelled.  What
+`org-agents--action-plan' promises is that the pass writes NOWHERE.
+
+Mutation that must fail it: compare the tick of the planned entry's
+buffer alone."
+  (let ((victim (get-buffer-create "*org-agents-test-victim*")))
+    (unwind-protect
+        (progn
+          (defun org-agents-action/elsewhere! (phase name)
+            "A verb whose `plan' arm writes into another buffer."
+            (when-let* ((buffer (get-buffer "*org-agents-test-victim*")))
+              (with-current-buffer buffer (insert "the planner wrote here\n")))
+            (pcase phase
+              ('plan (cons nil name))
+              ('apply (org-entry-put nil name "x"))))
+          (org-agents-test--at-agent "elsewhere!(SNEAK)"
+            (let ((err (should-error
+                        (org-agents-test--answering-yes
+                          (org-agents-apply-actions))
+                        :type 'user-error)))
+              (should (string-match-p "elsewhere!" (error-message-string err)))
+              (should (string-match-p "victim" (error-message-string err)))
+              (should (string-match-p "nothing was applied"
+                                      (error-message-string err))))
+            (should-not (org-agents-test--action-property a "Fix widget"
+                                                          "SNEAK"))))
+      (fmakunbound 'org-agents-action/elsewhere!)
+      (kill-buffer victim))))
+
+(ert-deftest org-agents-test-action-parse-refuses-two-writes-of-one-field ()
+  "One action writes each field once, and the refusal names both verbs.
+MEASURED: `tag!(+alpha) tag!(+beta)' at an entry tagged `:api:' reported
+`:api: -> :api:beta:' on its second line and left the entry
+`:api:alpha:beta:' -- a report that showed LESS change than the run made,
+because every planner runs against the state the run began in.  Refused
+by the parser, before the corpus is opened.
+
+Mutations that must fail it: drop the field check; give
+`delete-property!' a field of its own."
+  (dolist (text '("tag!(+a) tag!(-b)"
+                  "set-property!(P, 1) set-property!(P, 2)"
+                  "set-property!(P, 1) delete-property!(P)"
+                  "set-property!(p, 1) set-property!(P, 2)"
+                  "todo!(DONE) todo!(TODO)"
+                  "priority!(A) priority!(B)"
+                  "scheduled!(today) scheduled!(+7d)"
+                  "effort!(0:30) set-property!(Effort, 1:00)"))
+    (let ((err (should-error (org-agents--parse-actions text)
+                             :type 'user-error)))
+      (should (string-match-p "each field once" (error-message-string err)))))
+  ;; Different fields, and a whole action of them, parse.
+  (should (= 4 (length (org-agents--parse-actions
+                        (concat "set-property!(P, 1) delete-property!(Q)"
+                                " tag!(+a) todo!(DONE)")))))
+  ;; A verb defined in init says what it writes with the same property,
+  ;; and without one every call of it claims the same field.
+  (unwind-protect
+      (progn
+        (defun org-agents-action/twice! (phase name)
+          "A verb used twice in one action."
+          (pcase phase
+            ('plan (cons (org-entry-get nil name) "x"))
+            ('apply (org-entry-put nil name "x"))))
+        (should-error (org-agents--parse-actions "twice!(P) twice!(Q)")
+                      :type 'user-error)
+        (put 'org-agents-action/twice! 'org-agents-action-field
+             (lambda (args) (upcase (car args))))
+        (should (= 2 (length (org-agents--parse-actions
+                              "twice!(P) twice!(Q)"))))
+        (should-error (org-agents--parse-actions "twice!(P) twice!(p)")
+                      :type 'user-error))
+    (put 'org-agents-action/twice! 'org-agents-action-field nil)
+    (fmakunbound 'org-agents-action/twice!)))
+
+(ert-deftest org-agents-test-action-nothing-to-do-is-not-an-edit ()
+  "A row that would change nothing is not counted, not asked about, not applied.
+MEASURED: `delete-property!(ABSENT)' at an entry without the property
+reported `1 edit at 1 entry in 1 file' and, because the verb is
+destructive, asked a `y-or-n-p' about deleting nothing.  Over ninety
+matched entries of which four carry the property, that is ninety
+confirmations, eighty-six of them about nothing, in the one sentence the
+design leans on for informed consent.
+
+Mutations that must fail it: count a no-op as an edit; ask about one."
+  (org-agents-test--at-agent "delete-property!(ABSENT)"
+    (let ((asked 0)
+          (before (org-agents-test--action-corpus-snapshot a))
+          (noninteractive nil)
+          (inhibit-interaction nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (&rest _) (setq asked (1+ asked)) t))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+        (org-agents-apply-actions))
+      (should (= 0 asked))
+      (should (equal before (org-agents-test--action-corpus-snapshot a)))
+      (let ((lines (org-agents-test--action-report-lines)))
+        (should (string-match-p "0 edits at 0 entries" (car lines)))
+        (should (string-match-p "2 with nothing to do" (car lines)))
+        (should (string-match-p "THERE IS NOTHING TO DO" (car lines)))
+        (should (= 2 (cl-count-if
+                      (lambda (line) (string-match-p "nothing to do\\'" line))
+                      (cdr lines))))))))
+
+(ert-deftest org-agents-test-action-report-shows-an-empty-value-as-one ()
+  "An empty value is `\"\"' on the line, and nothing at all is `nil'.
+MEASURED: removing a tag an entry only INHERITS is correctly a no-op, and
+the line for it read `tag!(-inherited)   ->  ' -- nothing on either side
+of the arrow, which reads as a truncated line rather than as the no-op it
+is.  The behaviour was right and the report was unreadable exactly where
+it mattered most.
+
+Mutation that must fail it: print the empty string as the empty string."
+  (should (equal "nil" (org-agents--action-side nil)))
+  (should (equal "\"\"" (org-agents--action-side "")))
+  (should (equal ":a:" (org-agents--action-side ":a:")))
+  ;; And in a real report: removing the only tag an entry has empties the
+  ;; set, and the line has to show that it did.
+  (org-agents-test--at-agent "tag!(-api)"
+    (org-agents-test--answering-no (org-agents-apply-actions))
+    (let ((lines (org-agents-test--action-edit-lines)))
+      (should (= 2 (length lines)))
+      (should (cl-find-if
+               (lambda (line) (string-match-p ":api: -> \"\"\\'" line))
+               lines))
+      (should (cl-find-if
+               (lambda (line) (string-match-p ":api:stale: -> :stale:\\'" line))
+               lines))))
+  ;; A row whose two sides are equal is marked in the PLANNED report,
+  ;; before anything is answered -- which is where a reader needs to know
+  ;; which of the lines would write nothing.
+  (org-agents-test--at-agent "tag!(-absent)"
+    (org-agents-test--answering-no (org-agents-apply-actions))
+    (should (= 2 (cl-count-if
+                  (lambda (line) (string-match-p "nothing to do\\'" line))
+                  (org-agents-test--action-report-lines))))))
+
+(ert-deftest org-agents-test-action-report-quotes-a-quoted-argument ()
+  "A quoted argument is printed quoted, because the two spellings differ.
+MEASURED: `set-property!(R, \"today\") set-property!(S, today)' printed
+`set-property!(R, today)' and `set-property!(S, today)' -- two identical
+call texts for two different operations, one storing five letters and one
+stamping a date.  An auditor reading the dry run could not tell which
+line did which.
+
+Mutation that must fail it: strip the quoting mark and print the text."
+  (org-agents-test--at-agent
+      "set-property!(R, \"today\") set-property!(S, today)"
+    (org-agents-test--answering-no (org-agents-apply-actions))
+    (let ((lines (org-agents-test--action-edit-lines))
+          (stamp (format-time-string (org-time-stamp-format nil t))))
+      (should (cl-find-if
+               (lambda (line)
+                 (and (string-match-p "set-property!(R, \"today\")" line)
+                      (string-match-p "nil -> today\\'" line)))
+               lines))
+      (should (cl-find-if
+               (lambda (line)
+                 (and (string-match-p "set-property!(S, today)" line)
+                      (string-match-p (concat "nil -> " (regexp-quote stamp))
+                                      line)))
+               lines))
+      ;; An escaped quote inside a quoted argument comes back escaped.
+      (should (equal "\"a \\\"b\\\" c\""
+                     (org-agents--action-arg-text
+                      (propertize "a \"b\" c" 'org-agents-action-quoted t)))))))
+
+(ert-deftest org-agents-test-action-destructive-no-at-the-entry-stops-there ()
+  "A `no' at a destructive ENTRY is honoured, and nothing after it is tried.
+The prompt count alone cannot see this: MEASURED, a mutation that asked
+at every entry and then discarded the answer -- `(not (or (confirm ...)
+t))' -- passed the whole suite, because the test that answers `no'
+answers it to the WHOLE-PLAN question and never reaches the per-entry
+one, and the test that counts the prompts answers yes throughout.  So
+this one answers YES to the plan and NO to the entry, which is the only
+way to tell an honoured answer from a decorative prompt.
+
+Mutation that must fail it: ignore the per-entry answer."
+  (org-agents-test--at-agent "delete-property!(OWNER)"
+    (org-agents-test--put-property a "Fix widget" "OWNER" "ada")
+    (org-agents-test--put-property a "Fix gadget" "OWNER" "grace")
+    (let ((asked nil)
+          (before (org-agents-test--action-corpus-snapshot a))
+          (noninteractive nil)
+          (inhibit-interaction nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt)
+                   (push prompt asked)
+                   ;; Yes to the plan, no to the entry.
+                   (not (string-match-p "apply it" prompt))))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+        (org-agents-apply-actions))
+      (should (= 2 (length asked)))
+      (let ((lines (org-agents-test--action-edit-lines)))
+        (should (= 2 (length lines)))
+        (should (string-match-p "  refused\\'" (nth 0 lines)))
+        (should (string-match-p "  not attempted\\'" (nth 1 lines))))
+      ;; Both properties are still there, in the buffer as well as on disk.
+      (should (equal "ada"
+                     (org-agents-test--action-property a "Fix widget" "OWNER")))
+      (should (equal "grace"
+                     (org-agents-test--action-property a "Fix gadget" "OWNER")))
+      (should (equal before (org-agents-test--action-corpus-snapshot a))))))
+
+(ert-deftest org-agents-test-action-quit-mid-apply-stops-and-says-so ()
+  "A `C-g' in the middle of a run stops it, and the report accounts for it.
+MEASURED, with the `quit' arm replaced by `(quit nil)': the whole suite
+stayed green while the command carried on past the interruption and left
+the remaining rows with no outcome at all, calling them `skipped' in the
+summary.  A user who hits `C-g' at edit twelve of sixty has to be able to
+read what happened from the report.
+
+Mutation that must fail it: swallow the quit and continue."
+  (unwind-protect
+      (progn
+        (defun org-agents-action/quitter! (phase name)
+          "Signal `quit' on the second apply, as a `C-g' would."
+          (pcase phase
+            ('plan (cons (org-entry-get nil name) "x"))
+            ('apply
+             (let ((n (1+ (or (get 'org-agents-action/quitter! 'count) 0))))
+               (put 'org-agents-action/quitter! 'count n)
+               (if (= n 2) (signal 'quit nil)
+                 (org-entry-put nil name "x"))))))
+        (put 'org-agents-action/quitter! 'org-agents-action-field
+             (lambda (args) (upcase (car args))))
+        (org-agents-test--at-agent "quitter!(P) quitter!(Q)"
+          (let ((said nil))
+            (cl-letf (((symbol-function 'message)
+                       (lambda (format &rest args)
+                         (setq said (apply #'format format args)))))
+              (org-agents-test--answering-yes (org-agents-apply-actions)))
+            (let ((lines (org-agents-test--action-edit-lines)))
+              (should (= 4 (length lines)))
+              (should (string-match-p "  applied\\'" (nth 0 lines)))
+              (should (string-match-p "  interrupted\\'" (nth 1 lines)))
+              (should (string-match-p "  not attempted\\'" (nth 2 lines)))
+              (should (string-match-p "  not attempted\\'" (nth 3 lines))))
+            ;; An interruption counts as a failure, not as a skip.
+            (should (string-match-p "applied 1" said))
+            (should (string-match-p "failed 1" said))
+            (should (string-match-p "2 not attempted" said)))
+          ;; The second entry was never touched.
+          (should-not (org-agents-test--action-property a "Fix gadget" "P"))))
+    (put 'org-agents-action/quitter! 'count nil)
+    (put 'org-agents-action/quitter! 'org-agents-action-field nil)
+    (fmakunbound 'org-agents-action/quitter!)))
+
+(ert-deftest org-agents-test-action-an-entry-that-diverges-stops-the-run ()
+  "An entry that did not end up as its line said stops the run, and says so.
+The backstop, and it is what covers the failures nobody has thought of.
+MEASURED, the two it was built from: `todo!' over a repeating entry left
+it in a state the report did not claim (refused outright now), and
+`org-todo' fails SILENTLY when `org-blocker-hook' blocks -- a `message'
+and a `throw', with no signal -- so a blocked row would be reported
+`applied' whatever care went into the verb.
+
+Mutation that must fail it: report `applied' without re-reading the entry."
+  (unwind-protect
+      (progn
+        (defun org-agents-action/liar! (phase name)
+          "Plan one value and write another."
+          (pcase phase
+            ('plan (cons (org-entry-get nil name) "planned"))
+            ('apply (org-entry-put nil name "something else"))))
+        (org-agents-test--at-agent "liar!(P)"
+          (let ((said nil))
+            (cl-letf (((symbol-function 'message)
+                       (lambda (format &rest args)
+                         (setq said (apply #'format format args)))))
+              (org-agents-test--answering-yes (org-agents-apply-actions)))
+            (let ((lines (org-agents-test--action-edit-lines)))
+              (should (= 2 (length lines)))
+              (should (string-match-p "APPLIED DIFFERENTLY" (nth 0 lines)))
+              (should (string-match-p "something else" (nth 0 lines)))
+              (should (string-match-p "planned" (nth 0 lines)))
+              (should (string-match-p "  not attempted\\'" (nth 1 lines))))
+            (should (string-match-p "failed 1" said)))
+          ;; Stopped means stopped: the second entry is untouched.
+          (should-not (org-agents-test--action-property a "Fix gadget" "P"))))
+    (fmakunbound 'org-agents-action/liar!)))
+
+(ert-deftest org-agents-test-action-explicit-set-never-edits-the-agent ()
+  "On the region path too, an action never edits its own agent or an alias.
+The ordinary path gets that free from `org-agents--collect'; the explicit
+one does not go through it.  MEASURED: an agent whose body held a link to
+itself, with that line in the region, applied
+`set-property!(AGENT_QUERY, hijacked)' to its own drawer -- rewriting the
+query the next run would read.  A rendered view is full of links and a
+region is a hand-made selection, so the one entry that must not be
+touched is the one most easily selected by accident.  Skipped and
+REPORTED, not dropped.
+
+Mutation that must fail it: take the region's targets without checking
+them."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (goto-char (point-min))
+    (should (re-search-forward "^:END:$" nil t))
+    (forward-line 1)
+    (insert (format "- [[file:%s::*Review agent][the agent itself]]\n"
+                    agent-file))
+    (goto-char (point-min))
+    (push-mark (save-excursion
+                 (should (re-search-forward "the agent itself" nil t))
+                 (line-end-position))
+               t t)
+    (org-agents-test--answering-yes (org-agents-apply-actions t))
+    (should (cl-find-if
+             (lambda (line)
+               (string-match-p "skipped: this is the agent itself" line))
+             (org-agents-test--action-report-lines)))
+    (should (equal "(and (todo) (property \"NEXT_REVIEW\"))"
+                   (org-agents-test--action-property agent-file "Review agent"
+                                                     "AGENT_QUERY")))
+    (should-not (org-agents-test--action-property agent-file "Review agent"
+                                                  "REVIEWED"))))
+
+(ert-deftest org-agents-test-action-scheduled-keeps-a-repeater-in-the-plan ()
+  "A repeater already on the entry is part of what `scheduled!' plans.
+MEASURED: `org--deadline-or-schedule' lifts the cookie off the old stamp
+and puts it back on the new one, so `scheduled!(+7d)' over
+`<2020-01-01 Wed +1w>' writes `<... +1w>' -- while the plan answered a
+stamp with no repeater, telling the reader it was about to be dropped.
+
+Mutation that must fail it: plan the stamp alone."
+  (org-agents-test--with-action-corpus nil
+    (org-agents-test--at-match
+      (end-of-line)
+      (insert "\nSCHEDULED: <2020-01-01 Wed +1w>")
+      (org-back-to-heading t)
+      (let ((plan (org-agents-action/scheduled! 'plan "+7d")))
+        (should (string-match-p " \\+1w>\\'" (cdr plan)))
+        (org-agents-action/scheduled! 'apply "+7d")
+        ;; What the plan said is what the entry reads.
+        (should (equal (cdr plan) (org-entry-get nil "SCHEDULED")))))))
+
+(ert-deftest org-agents-test-action-message-names-a-bounded-set-of-buffers ()
+  "The closing message names some buffers and counts the rest.
+MEASURED, over a three-thousand-entry corpus with the limit raised: the
+message named three hundred buffers -- about four kilobytes in one
+`message' call, which resizes the minibuffer to fill the frame and pushes
+the counts off the visible line.  The report buffer carries the file of
+every row, so the message does not have to.
+
+Mutation that must fail it: name every buffer."
+  (let ((buffers nil))
+    (unwind-protect
+        (progn
+          (dotimes (i (+ 3 org-agents--action-named-buffers))
+            (push (get-buffer-create (format " *org-agents-test-b%d*" i))
+                  buffers))
+          (let ((text (org-agents--action-buffer-names (nreverse buffers))))
+            (should (string-match-p "and 3 more\\'" text))
+            (should (= org-agents--action-named-buffers
+                       (length (split-string
+                                (car (split-string text " and 3 more"))
+                                ", " t))))))
+      (dolist (buffer buffers) (when (buffer-live-p buffer)
+                                 (kill-buffer buffer))))))
 
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here

@@ -6033,6 +6033,20 @@ pays a regexp scan of the displayed region and nothing else."
 ;; trusted: see `org-agents--action-plan' and its modification-tick
 ;; tripwire.
 ;;
+;; AND A FOURTH THING, which is not a refusal but the reason the three
+;; above are worth anything: THE REPORT IS THE TRUTH.  What the dry run
+;; showed is the sentence the user answered, so a run may not write
+;; anything a line did not name.  Three mechanisms hold it, each with
+;; its measurement in its own docstring:
+;; `org-agents--with-action-quiet-hooks' binds off the hooks and the
+;; logging that would edit what no line names; `org-agents--action-field'
+;; refuses two verbs writing one field, since the second's plan would be
+;; computed from before the first ran; and `org-agents--action-verify'
+;; re-reads every applied row and stops the run where the entry does not
+;; read as its line said.  Two verbs refuse outright for want of a line
+;; they could show: `todo!' on a repeating entry, and `archive!' where
+;; the destination has moved since the report.
+;;
 ;; After this section, `org-entry-delete', `org-todo', `org-set-tags',
 ;; `org-schedule', `org-deadline', `org-priority' and
 ;; `org-archive-subtree' appear exactly once each in the whole package,
@@ -6205,6 +6219,28 @@ Declared with a symbol property, like destructiveness, so that a verb
 defined in init can declare it too."
   (and (get verb 'org-agents-action-terminal) t))
 
+(defun org-agents--action-field (verb args)
+  "What VERB, called with ARGS, writes -- as one readable string.
+Used for one rule and nothing else: ONE ACTION WRITES EACH FIELD ONCE.
+
+The reason is the dry run.  Every planner runs against the state the run
+began in, so a second verb writing a field the first one already planned
+reports an `old' that is no longer there and a `new' that is not what the
+entry ends up as -- MEASURED, `tag!(+alpha) tag!(+beta)' at an entry
+tagged `:api:' reports `:api: -> :api:beta:' on its second line while the
+entry ends up `:api:alpha:beta:'.  A report that understates the run is
+the one failure a dry run may not have, so the ordering is refused by the
+parser, before the corpus is opened, rather than mis-reported afterwards.
+
+A verb declares its field with the symbol property
+`org-agents-action-field': a function of ARGS answering the string.
+Without one the field is the verb's own name, so two calls of the same
+verb collide and two different verbs do not -- which is the right default
+for a verb defined in init, and costs an extension no declaration."
+  (if-let* ((field (get verb 'org-agents-action-field)))
+      (funcall field args)
+    (format "what `%s' writes" (org-agents--action-token verb))))
+
 (defun org-agents--action-check-arity (verb token args)
   "Refuse ARGS where VERB, which TOKEN names, does not take that many.
 `func-arity' answers for a verb defined in init exactly as for one
@@ -6316,6 +6352,7 @@ does."
   (save-match-data
     (let ((length (length text))
           (index (org-agents--action-skip-ws text 0))
+          (fields (make-hash-table :test #'equal))
           (verbs nil))
       (while (< index length)
         (unless (org-agents--action-at org-agents--action-token-re text index)
@@ -6347,6 +6384,16 @@ does."
               (org-agents--action-error
                "`%s' must be the last verb"
                (org-agents--action-token previous))))
+          ;; Refused HERE too, and for the same reason: one action
+          ;; writes each field once.  See `org-agents--action-field'.
+          (let ((field (org-agents--action-field verb args)))
+            (when-let* ((earlier (gethash field fields)))
+              (org-agents--action-error
+               (concat "`%s' and `%s' both write %s, and one action writes"
+                       " each field once -- the dry run would show the second"
+                       " one's `old' from before the first had run")
+               earlier token field))
+            (puthash field token fields))
           (push (cons verb args) verbs)
           (setq index (org-agents--action-skip-ws text index))))
       (nreverse verbs))))
@@ -6359,6 +6406,69 @@ does."
 (defun org-agents--action-phase-error (token phase)
   "Signal that the verb TOKEN was called with PHASE, which is neither."
   (error "org-agents: `%s' called with bad action phase %S" token phase))
+
+(defvar org-agents--action-planned nil
+  "The NEW value the dry run reported for the row being applied, or nil.
+Bound by `org-agents--action-apply' around each `apply' call, for the one
+kind of verb that needs it: one whose destination is computed rather than
+given, and which must therefore REFUSE to write somewhere the report did
+not name.  `org-agents-action/archive!' is that verb.
+
+This is not the apply phase trusting a value the plan phase computed --
+the verb recomputes its own destination and compares.  A verb that has
+nothing to compare ignores this entirely.")
+
+(defmacro org-agents--with-action-quiet-hooks (&rest body)
+  "Run BODY with everything that would edit what the report does not name off.
+THE BLAST RADIUS OF AN ACTION IS THE ROWS THE REPORT SHOWS.  That is a
+claim about a run, and Org's editing primitives do not honour it on their
+own: they are the interactive commands, and they run the user's hooks.
+
+MEASURED, each of these, through the real command:
+
+  - one function on `org-after-todo-state-change-hook' that writes a
+    property left `:TRIGGERED: yes' on an entry the query never matched,
+    while the report said `1 edit at 1 entry in 1 file';
+  - `org-log-done' `time' added a `CLOSED:' line no report line named;
+  - `org-trigger-hook' is org-edna's own mechanism -- the system this
+    design deliberately does not extend -- so a corpus with
+    `org-edna-mode' on would schedule successors and flip blockers in
+    other files, none of it reported and none of it counted against
+    `org-agents-action-limit'.
+
+So they are bound off, and README says which.  `todo!' sets the keyword
+and nothing else: no `CLOSED' stamp, no state note, no statistics cookie
+in an ancestor, no tag trigger.  A note would be worse than unreported,
+it would PROMPT in the middle of a run over a corpus.
+
+`org-blocker-hook' is deliberately NOT here.  A blocker is the user's own
+refusal to let an entry change, and honouring a refusal is the one thing
+this section is about; binding it off would widen a run past what the
+config allows.  MEASURED, though, `org-todo' fails SILENTLY when a
+blocker blocks -- `message' and a `throw', with no signal -- so a blocked
+row would be reported `applied'.  That is what
+`org-agents--action-verify' is for."
+  (declare (indent 0))
+  `(let ((org-after-todo-state-change-hook nil)
+         (org-trigger-hook nil)
+         (org-property-changed-functions nil)
+         (org-after-tags-change-hook nil)
+         (org-archive-hook nil)
+         (org-archive-finalize-hook nil)
+         (org-log-done nil)
+         (org-todo-log-states nil)
+         (org-todo-state-tags-triggers nil)
+         (org-provide-todo-statistics nil)
+         (org-log-reschedule nil)
+         (org-log-redeadline nil)
+         ;; MEASURED: `org-archive-subtree' ends by SAVING the archive
+         ;; file, because `org-archive-subtree-save-file-p' defaults to
+         ;; `from-org'.  A run that saved a file while its own summary
+         ;; said "nothing was saved" would put a file on disk that no
+         ;; `undo' can take back off it, and the file would not even be
+         ;; among the buffers the summary names.
+         (org-archive-subtree-save-file-p nil))
+     ,@body))
 
 (defun org-agents--action-where ()
   "Where point is, as one string, for a verb's diagnostic to name it by."
@@ -6424,6 +6534,18 @@ reader can work out from the line."
          (time (org-read-date with-time t date)))
     (format-time-string (org-time-stamp-format with-time) time)))
 
+(defconst org-agents--action-repeater-re
+  "\\([.+-]+[0-9]+[hdwmy]\\(?:[/ ][-+]?[0-9]+[hdwmy]\\)?\\)"
+  "A repeater cookie inside a planning stamp.
+Deliberately the SAME pattern `org--deadline-or-schedule' matches with,
+because what this is for is predicting what that function will write.")
+
+(defun org-agents--action-repeater (stamp)
+  "The repeater cookie in STAMP, or nil when it holds none."
+  (and (org-string-nw-p stamp)
+       (string-match org-agents--action-repeater-re stamp)
+       (match-string 1 stamp)))
+
 (defun org-agents--action-planning (phase token property setter date)
   "The body `scheduled!' and `deadline!' share.
 PROPERTY is read for the plan's OLD, SETTER writes it in the apply phase,
@@ -6433,11 +6555,24 @@ SETTER is `org-schedule' or `org-deadline', called DIRECTLY.  Never
 `org-entry-put': MEASURED, it special-cases `SCHEDULED' and `DEADLINE'
 and for an empty or `earlier'/`later' value reaches
 `call-interactively' on `org-schedule' -- a prompt from inside a verb, in
-the middle of a run over a corpus."
+the middle of a run over a corpus.
+
+A REPEATER ALREADY ON THE ENTRY IS PART OF THE PLAN.  MEASURED:
+`org--deadline-or-schedule' lifts the cookie off the old stamp and puts
+it back on the new one, so `scheduled!(+7d)' over
+`<2020-01-01 Wed +1w>' writes `<2026-08-27 Thu +1w>' -- and a plan that
+answered `<2026-08-27 Thu>' would have told the reader the repeater was
+about to be dropped.  Predicted here with Org's own pattern rather than
+discovered afterwards."
   (let ((date (org-agents--action-date token date)))
     (pcase phase
-      ('plan (cons (org-entry-get nil property)
-                   (org-agents--action-stamp date)))
+      ('plan
+       (let* ((old (org-entry-get nil property))
+              (stamp (org-agents--action-stamp date))
+              (repeater (org-agents--action-repeater old)))
+         (cons old (if (and repeater (string-suffix-p ">" stamp))
+                       (concat (substring stamp 0 -1) " " repeater ">")
+                     stamp))))
       ('apply (funcall setter nil date))
       (_ (org-agents--action-phase-error token phase)))))
 
@@ -6485,13 +6620,35 @@ special-cases `TODO', `PRIORITY', `SCHEDULED' and `DEADLINE', and for a
 `SCHEDULED'/`DEADLINE' value that is empty or `earlier'/`later' it
 reaches `call-interactively' on `org-schedule'.  Org would signal for
 some of those anyway; naming the verb that does edit them turns what
-looks like a bug in this package into a diagnosis of the corpus."
+looks like a bug in this package into a diagnosis of the corpus.
+
+THREE OTHER NAMES ARE REFUSED, and each closes a hole rather than
+tidying the vocabulary.  An `AGENT_' name and `PROTOTYPE' are refused
+because an action that could write them would PLANT agents, prototype
+links and action text into files the user has never edited -- which is
+exactly the per-file trust the non-inheritance rule exists to keep, and
+it would be undone by a verb.  `ARCHIVE' is refused because it steers
+where `archive!' puts a subtree: MEASURED, `set-property!(\"ARCHIVE\",
+\"/elsewhere.org::\") archive!' reported the innocuous default
+destination in the dry run and wrote the subtree to the other file, so
+the report -- which is the whole mitigation -- named the wrong file."
   (when (member (upcase name) org-special-properties)
     (let ((instead (cdr (assoc-string (upcase name)
                                       org-agents--action-special-verbs))))
       (org-agents--action-error
        "`set-property!' will not write the special property `%s'%s" name
        (if instead (format "; use `%s'" instead) ""))))
+  (when (string-match-p org-agents--prototype-opaque-re (upcase name))
+    (org-agents--action-error
+     (concat "`set-property!' will not write `%s': an action may not plant"
+             " an agent, a prototype link or action text in another file")
+     name))
+  (when (equal (upcase name) "ARCHIVE")
+    (org-agents--action-error
+     (concat "`set-property!' will not write `%s': it steers where"
+             " `archive!' puts a subtree, and the dry run would name the"
+             " destination it read before that")
+     name))
   (let ((new (org-agents--action-value value)))
     (pcase phase
       ('plan (cons (org-entry-get nil name) new))
@@ -6549,13 +6706,32 @@ The check is a better-LOCATED version of a refusal that already exists.
 MEASURED, `org-todo' itself signals a `user-error' for a state the file
 does not admit.  Raised in the `plan' phase, so a state no file admits
 costs nothing: the command refuses before any entry is edited, rather
-than half a corpus in."
+than half a corpus in.
+
+A REPEATING ENTRY IS REFUSED, and this one is a disappointment taken
+deliberately.  MEASURED on `* TODO Item / SCHEDULED: <2020-01-01 Wed
++1w>': `org-todo' does not leave the entry in the state it was asked
+for at all -- `org-auto-repeat-maybe' runs from inside it, the entry is
+still `TODO' afterwards, its stamp has moved to `<2020-01-08 Wed +1w>'
+and it has gained a `:LAST_REPEAT:' property.  A dry run cannot show
+any of that: the shifted stamp is computed by Org's own repeater
+arithmetic at apply time, and the line the user approved said
+`TODO -> DONE'.  Advancing a repeater is a per-entry judgement anyway,
+which is what `C-c C-t' is for; a mass action that silently rolled
+ninety stamps forward while reporting something else is not a feature
+worth having, so `todo!' names the entry and refuses."
   (pcase phase
     ('plan
      (unless (member state org-todo-keywords-1)
        (org-agents--action-error
         "`todo!' state `%s' is not a keyword in %s" state
         (org-agents--action-where)))
+     (when-let* ((repeat (org-get-repeat)))
+       (org-agents--action-error
+        (concat "`todo!' will not act on the repeating entry at %s (`%s'):"
+                " `org-todo' would shift its stamp and stamp"
+                " `LAST_REPEAT', and the dry run cannot show either")
+        (org-agents--action-where) repeat))
      (cons (org-get-todo-state) state))
     ('apply (org-todo state))
     (_ (org-agents--action-phase-error "todo!" phase))))
@@ -6619,6 +6795,15 @@ which is the name Org's own column summaries read."
       ('apply (org-entry-put nil org-effort-property new))
       (_ (org-agents--action-phase-error "effort!" phase)))))
 
+(defun org-agents--action-archive-location ()
+  "Where `org-archive-subtree' would put the subtree at point.
+The expression `org-archive-subtree' itself uses, and it reads the
+entry's `ARCHIVE' property with inheritance exactly as that function
+does -- so the answer is the real destination and not an approximation
+of it."
+  (car (org-archive--compute-location
+        (or (org-entry-get nil "ARCHIVE" 'inherit) org-archive-location))))
+
 (defun org-agents-action/archive! (phase)
   "Archive the entry's subtree.
 
@@ -6631,7 +6816,23 @@ rather than letting an apply pass discover it.
 
 The destination is computed WITHOUT archiving, with the expression
 `org-archive-subtree' itself uses, so the dry run can say where the
-subtree is about to go.
+subtree is about to go -- and it is computed AGAIN, immediately before
+archiving, and the subtree is not archived at all where the two
+disagree.  MEASURED, that is not a theoretical divergence: an earlier
+`set-property!(\"ARCHIVE\", \"/elsewhere.org::\")' in the same action
+redirected the archive while the report named the default file next to
+the source, since the whole plan is computed before any row is applied.
+`set-property!' now refuses the name `ARCHIVE' as well, so there are two
+locks on the same door; this is the one that holds whatever route the
+value arrived by, including an inherited property changed between the
+report and the answer.
+
+NOTHING IS SAVED, and that takes a binding: MEASURED,
+`org-archive-subtree' ends with `save-buffer' on the archive file
+because `org-archive-subtree-save-file-p' defaults to `from-org'.  See
+`org-agents--with-action-quiet-hooks'.  The archive buffer is left
+modified and unsaved like every other buffer a run touches, and the
+run's summary names it.
 
 `org-archive-subtree' directly, and deliberately neither
 `org-archive-subtree-default' -- whose behaviour is whatever
@@ -6642,11 +6843,17 @@ would read standard input in batch and whose refusal path signals a bare
 `org-agents--action-confirm', asked by the apply pass, once per entry,
 every run."
   (pcase phase
-    ('plan (cons "<subtree>"
-                 (car (org-archive--compute-location
-                       (or (org-entry-get nil "ARCHIVE" 'inherit)
-                           org-archive-location)))))
-    ('apply (org-archive-subtree))
+    ('plan (cons "<subtree>" (org-agents--action-archive-location)))
+    ('apply
+     (let ((destination (org-agents--action-archive-location)))
+       (when (and org-agents--action-planned
+                  (not (equal destination org-agents--action-planned)))
+         (org-agents--action-error
+          (concat "`archive!' would put the subtree at %s in %s, and the dry"
+                  " run said %s; nothing was archived")
+          (org-agents--action-where) destination org-agents--action-planned))
+       (org-agents--with-action-quiet-hooks
+         (org-archive-subtree))))
     (_ (org-agents--action-phase-error "archive!" phase))))
 
 ;; Destructiveness and terminality are declared by SYMBOL PROPERTIES, and
@@ -6660,6 +6867,32 @@ every run."
 (put 'org-agents-action/delete-property! 'org-agents-action-destructive t)
 (put 'org-agents-action/archive! 'org-agents-action-destructive t)
 (put 'org-agents-action/archive! 'org-agents-action-terminal t)
+
+;; And the third property, for the same reason: what each verb WRITES, so
+;; that `org-agents--action-field' can hold the one-write-per-field rule.
+;; A property name is upcased, because Org's are case-insensitive, and
+;; `set-property!' and `delete-property!' answer the same field for the
+;; same name so that writing and deleting one property in one action is
+;; refused as the contradiction it is.  `effort!' answers the property it
+;; writes rather than "effort", so it collides with a `set-property!' of
+;; `org-effort-property' spelled by hand.
+(let ((named (lambda (args) (format "the property %s" (upcase (car args))))))
+  (put 'org-agents-action/set-property! 'org-agents-action-field named)
+  (put 'org-agents-action/delete-property! 'org-agents-action-field named))
+(put 'org-agents-action/effort! 'org-agents-action-field
+     (lambda (_args) (format "the property %s" (upcase org-effort-property))))
+(put 'org-agents-action/tag! 'org-agents-action-field
+     (lambda (_args) "tags"))
+(put 'org-agents-action/todo! 'org-agents-action-field
+     (lambda (_args) "the TODO keyword"))
+(put 'org-agents-action/priority! 'org-agents-action-field
+     (lambda (_args) "the priority"))
+(put 'org-agents-action/scheduled! 'org-agents-action-field
+     (lambda (_args) "SCHEDULED"))
+(put 'org-agents-action/deadline! 'org-agents-action-field
+     (lambda (_args) "DEADLINE"))
+(put 'org-agents-action/archive! 'org-agents-action-field
+     (lambda (_args) "the subtree"))
 
 ;;; The command: read, parse, match, gate on scale, plan, report,
 ;;; confirm, apply, say what was modified.  Nothing is saved.
@@ -6738,8 +6971,46 @@ resolved by `org-link-search' in that file's own buffer."
                (org-back-to-heading t)
                (point-marker))))))))))
 
-(defun org-agents--action-region-targets ()
+(defun org-agents--action-heading-position (marker)
+  "The position of the heading MARKER stands in, or nil.
+Two markers into the same entry may sit at different characters -- one at
+the heading, one where a link resolved -- so identity has to be the
+entry, not the character."
+  (and (markerp marker) (marker-buffer marker)
+       (org-with-point-at marker
+         (ignore-errors (org-back-to-heading t) (point)))))
+
+(defun org-agents--action-region-reason (marker agent)
+  "Why the entry at MARKER may not be acted on, given the AGENT's marker.
+Nil when it may.
+
+The ordinary path gets two protections free from `org-agents--collect':
+an action never edits the agent itself, and never edits a generated
+alias.  The EXPLICIT path does not go through `--collect' at all, so
+without this it had neither -- MEASURED, an agent whose body held a link
+to itself, with that line in the region, applied
+`set-property!(AGENT_QUERY, hijacked)' to its own drawer and rewrote the
+query the next run would read.  A region is a hand-made selection and a
+rendered view is full of links, so the entry that must not be edited is
+exactly the one most likely to be selected by accident.
+
+Reported as a skipped row rather than dropped, because a selection the
+user made and the command declined has to be visible in the report."
+  (cond
+   ((let ((here (org-agents--action-heading-position marker))
+          (there (org-agents--action-heading-position agent)))
+      (and here there
+           (eq (marker-buffer marker) (marker-buffer agent))
+           (= here there)))
+    "this is the agent itself")
+   ((and (markerp marker) (marker-buffer marker)
+         (org-with-point-at marker (org-entry-get nil "AGENT_MATCH")))
+    "this is a generated alias")))
+
+(defun org-agents--action-region-targets (&optional agent)
   "The entries the lines of the region link to, in order and without repeats.
+AGENT is the marker of the agent the action was read from, whose own
+entry is skipped -- see `org-agents--action-region-reason'.
 The FIRST bracket link on each line, read with
 `org-agents--alias-target' -- the same reading `org-agents--render-children'
 recognizes an alias by -- so this serves a children view's alias
@@ -6783,7 +7054,9 @@ somewhere other than point."
                         target)))
             (unless (gethash key seen)
               (puthash key t seen)
-              (push (list :marker marker :label target) targets))))
+              (push (list :marker marker :label target
+                          :skip (org-agents--action-region-reason marker agent))
+                    targets))))
         (forward-line 1)))
     (unless targets
       (user-error "org-agents: no links in the region to act on"))
@@ -6800,17 +7073,50 @@ set; and it never edits a generated alias, because `org-agents-exclude'
 defaults to `(not (property \"AGENT_MATCH\"))'.
 
 With EXPLICIT -- a prefix argument -- the set is
-`org-agents--action-region-targets'.
+`org-agents--action-region-targets', which is handed MARKER so that the
+same two protections hold there: it does not go through
+`org-agents--collect', so it enforces them itself.
 
-A target is a plist `(:marker M :label TEXT)', and M may be nil: a match
-whose buffer has since been killed is REPORTED rather than dropped."
+A target is a plist `(:marker M :label TEXT :skip REASON)'.  M may be
+nil, and REASON may be non-nil: a match whose buffer has since been
+killed, and an entry the command declines to act on, are both REPORTED
+rather than dropped."
   (if explicit
-      (org-agents--action-region-targets)
+      (org-agents--action-region-targets marker)
     (org-with-point-at marker
       (mapcar (lambda (element)
                 (list :marker (org-agents--live-marker element)
                       :label (or (org-element-property :raw-value element) "")))
               (org-agents--collect (org-agents--read-agent))))))
+
+(defun org-agents--action-ticks ()
+  "Every live buffer's `buffer-chars-modified-tick', as an alist.
+Taken once, before the plan pass: what the dry run promises is that the
+pass writes NOWHERE, and a promise about one buffer is not that."
+  (mapcar (lambda (buffer) (cons buffer (buffer-chars-modified-tick buffer)))
+          (buffer-list)))
+
+(defun org-agents--action-tick-tripwire (ticks token)
+  "Refuse where any buffer in TICKS has changed, naming the verb TOKEN.
+TICKS comes from `org-agents--action-ticks'.  Checked after every single
+planner call, so the verb named is the one that wrote, and the buffer
+named is the one written -- which for a cross-buffer write is not the
+buffer being planned at.
+
+A buffer CREATED during the plan pass is not in TICKS and is not
+diagnosed: creating a buffer is not writing to the corpus, and a planner
+that fontifies or visits a file must not be accused of it.  What this
+holds is that no buffer that existed when the pass began was changed."
+  (dolist (entry ticks)
+    (let ((buffer (car entry)))
+      (when (and (buffer-live-p buffer)
+                 (/= (cdr entry) (buffer-chars-modified-tick buffer)))
+        (user-error
+         (concat "org-agents: the verb `%s' modified %s during the dry run;"
+                 " nothing was applied")
+         token (if-let* ((file (buffer-file-name buffer)))
+                   (abbreviate-file-name file)
+                 (buffer-name buffer)))))))
 
 (defun org-agents--action-plan (verbs targets)
   "Plan VERBS at each of TARGETS, writing nothing; return the rows.
@@ -6828,6 +7134,12 @@ verb whose author wrote only the applier would otherwise contribute no
 line, and the report would UNDERSTATE what applying is about to do,
 which is the one failure a dry run may not have.
 
+The tripwire covers EVERY BUFFER that was alive when the plan began, and
+not only the one being planned at: MEASURED, a planner whose `plan' arm
+wrote into another buffer -- a shared scratch, an index, a log --
+completed with no error at all while that buffer was left modified.  See
+`org-agents--action-tick-tripwire'.
+
 MEASURED, and this is the load-bearing measurement of the feature:
 `buffer-read-only' cannot be the guard.  `org-entry-put' wraps its body
 in `org-no-read-only', which binds `inhibit-read-only', so under
@@ -6839,12 +7151,14 @@ not at all.  It is also the right primitive rather than
 `buffer-modified-p', because it counts character changes only -- a
 planner that provokes fontification or folding changes text properties,
 and must not be accused of writing."
-  (let ((rows nil))
+  (let ((rows nil)
+        (ticks (org-agents--action-ticks)))
     (dolist (target targets)
-      (let ((marker (plist-get target :marker)))
-        (if (not (and (markerp marker) (marker-buffer marker)))
+      (let ((marker (plist-get target :marker))
+            (skip (plist-get target :skip)))
+        (if (or skip (not (and (markerp marker) (marker-buffer marker))))
             (push (list :label (plist-get target :label)
-                        :dead t :outcome nil)
+                        :skip (or skip "no live buffer") :outcome nil)
                   rows)
           (with-current-buffer (marker-buffer marker)
             (org-with-wide-buffer
@@ -6852,15 +7166,9 @@ and must not be accused of writing."
              (let ((file (buffer-file-name (buffer-base-buffer)))
                    (line (line-number-at-pos)))
                (pcase-dolist (`(,verb . ,args) verbs)
-                 (let* ((tick (buffer-chars-modified-tick))
-                        (plan (org-agents--action-call verb 'plan args))
+                 (let* ((plan (org-agents--action-call verb 'plan args))
                         (token (org-agents--action-token verb)))
-                   (unless (= tick (buffer-chars-modified-tick))
-                     (user-error
-                      (concat "org-agents: the verb `%s' modified %s during"
-                              " the dry run; nothing was applied")
-                      token (if file (abbreviate-file-name file)
-                              (buffer-name))))
+                   (org-agents--action-tick-tripwire ticks token)
                    (unless (and (consp plan)
                                 (or (null (car plan)) (stringp (car plan)))
                                 (or (null (cdr plan)) (stringp (cdr plan))))
@@ -6873,6 +7181,15 @@ and must not be accused of writing."
                                :marker (copy-marker marker)
                                :verb verb :token token :args args
                                :old (car plan) :new (cdr plan)
+                               ;; A row that would change nothing is not
+                               ;; an edit, and must not be counted in the
+                               ;; sentence the user answers nor asked
+                               ;; about at all -- MEASURED,
+                               ;; `delete-property!(OWNER)' over ninety
+                               ;; entries where four carry `OWNER' asked
+                               ;; ninety times and called itself ninety
+                               ;; edits.
+                               :noop (equal (car plan) (cdr plan))
                                :outcome nil)
                          rows)))))))))
     (nreverse rows)))
@@ -6882,17 +7199,25 @@ and must not be accused of writing."
 `:edits' is how many lines the report holds, `:entries' how many distinct
 entries they touch, `:files' how many files those entries live in,
 `:shut' how many of those files VISITED does not name -- files nobody had
-open when the command began -- `:dead' how many targets had no live
-buffer, and `:destructive' the tokens among them that confirm."
+open when the command began -- `:skipped' how many targets the command
+declined or could not reach, `:nothing' how many rows would change
+nothing, and `:destructive' the tokens among them that confirm.
+
+A skipped row and a row with nothing to do are NOT edits.  The scale
+sentence is the one sentence the design leans on for informed consent, so
+what it counts has to be the writes: it names the others separately."
   (let ((entries (make-hash-table :test #'equal))
         (files (make-hash-table :test #'equal))
         (destructive nil)
         (edits 0)
-        (dead 0)
+        (skipped 0)
+        (nothing 0)
         (shut 0))
     (dolist (row rows)
-      (if (plist-get row :dead)
-          (setq dead (1+ dead))
+      (cond
+       ((plist-get row :skip) (setq skipped (1+ skipped)))
+       ((plist-get row :noop) (setq nothing (1+ nothing)))
+       (t
         (setq edits (1+ edits))
         (when-let* ((marker (plist-get row :marker)))
           (puthash (format "%s:%d" (buffer-name (marker-buffer marker))
@@ -6901,7 +7226,7 @@ buffer, and `:destructive' the tokens among them that confirm."
         (when-let* ((file (plist-get row :file)))
           (puthash (file-truename file) t files))
         (when (get (plist-get row :verb) 'org-agents-action-destructive)
-          (cl-pushnew (plist-get row :token) destructive :test #'equal))))
+          (cl-pushnew (plist-get row :token) destructive :test #'equal)))))
     (maphash (lambda (file _) (unless (gethash file visited)
                                 (setq shut (1+ shut))))
              files)
@@ -6909,12 +7234,13 @@ buffer, and `:destructive' the tokens among them that confirm."
           :entries (hash-table-count entries)
           :files (hash-table-count files)
           :shut shut
-          :dead dead
+          :skipped skipped
+          :nothing nothing
           :destructive (nreverse destructive))))
 
 (defun org-agents--action-scale (counts)
   "COUNTS as the clause every sentence about them shares."
-  (format "%d edit%s at %d entr%s in %d file%s%s%s"
+  (format "%d edit%s at %d entr%s in %d file%s%s%s%s"
           (plist-get counts :edits)
           (if (= 1 (plist-get counts :edits)) "" "s")
           (plist-get counts :entries)
@@ -6924,10 +7250,13 @@ buffer, and `:destructive' the tokens among them that confirm."
           (if (> (plist-get counts :shut) 0)
               (format " (%d not open before this ran)" (plist-get counts :shut))
             "")
-          (if (> (plist-get counts :dead) 0)
-              (format ", and %d entr%s skipped for want of a live buffer"
-                      (plist-get counts :dead)
-                      (if (= 1 (plist-get counts :dead)) "y" "ies"))
+          (if (> (or (plist-get counts :skipped) 0) 0)
+              (format ", and %d entr%s skipped" (plist-get counts :skipped)
+                      (if (= 1 (plist-get counts :skipped)) "y" "ies"))
+            "")
+          (if (> (or (plist-get counts :nothing) 0) 0)
+              (format ", and %d with nothing to do"
+                      (plist-get counts :nothing))
             "")))
 
 (defun org-agents--action-header (counts state)
@@ -6936,6 +7265,7 @@ buffer, and `:destructive' the tokens among them that confirm."
           (pcase state
             ('planned "Nothing written yet.")
             ('refused "NOTHING WAS APPLIED.")
+            ('nothing "THERE IS NOTHING TO DO.")
             ('applied "Nothing was saved; every edit is undoable per buffer.")
             (_ ""))))
 
@@ -6950,12 +7280,36 @@ noticed, and they belong in the sentence being answered."
                       (string-join destructive ", "))
             "")))
 
+(defun org-agents--action-arg-text (arg)
+  "ARG spelled the way the property spells it, quotes included.
+A quoted argument is printed quoted, with its escapes restored.  Not
+decoration: `org-agents--action-value' gives the two spellings DIFFERENT
+meanings -- `set-property!(R, today)' stamps a date and
+`set-property!(R, \"today\")' stores five letters -- so a report that
+printed them identically would leave an auditor unable to tell which
+line did which."
+  (let ((plain (substring-no-properties arg)))
+    (if (org-agents--action-quoted-p arg)
+        (format "\"%s\"" (replace-regexp-in-string "[\"\\\\]" "\\\\\\&"
+                                                   plain t))
+      plain)))
+
 (defun org-agents--action-call-text (row)
   "ROW's verb and arguments, spelled the way the property spells them."
   (if-let* ((args (plist-get row :args)))
       (format "%s(%s)" (plist-get row :token)
-              (mapconcat #'substring-no-properties args ", "))
+              (mapconcat #'org-agents--action-arg-text args ", "))
     (plist-get row :token)))
+
+(defun org-agents--action-side (value)
+  "VALUE as one side of a report line's `old -> new'.
+Nothing at all is `nil' and the EMPTY STRING is `\"\"', because they are
+different results and a line with nothing on either side of the arrow
+reads as a broken line rather than as a no-op -- MEASURED, removing a
+tag an entry only inherits printed `tag!(-inherited)   ->  '."
+  (cond ((null value) "nil")
+        ((string-empty-p value) "\"\"")
+        (t value)))
 
 (defun org-agents--action-line (row)
   "ROW as one report line.
@@ -6964,15 +7318,19 @@ error: `RET', `next-error' and `M-g n' then navigate to every INTENDED
 edit before anything is written, which is worth more than any prose
 about a dry run.  Same measured precedent as `org-agents--attr-report'."
   (concat
-   (if (plist-get row :dead)
-       (format "%s: skipped: no live buffer" (plist-get row :label))
+   (if-let* ((skip (plist-get row :skip)))
+       (format "%s: skipped: %s" (plist-get row :label) skip)
      (format "%s:%d: %s  %s -> %s"
              (or (plist-get row :file) "?")
              (or (plist-get row :line) 0)
              (org-agents--action-call-text row)
-             (or (plist-get row :old) "nil")
-             (or (plist-get row :new) "nil")))
-   (if-let* ((outcome (plist-get row :outcome)))
+             (org-agents--action-side (plist-get row :old))
+             (org-agents--action-side (plist-get row :new))))
+   ;; A row with nothing to do says so in the PLANNED report as well,
+   ;; where saying it is worth most: it is what tells the reader which of
+   ;; the lines they are being asked about would write anything.
+   (if-let* ((outcome (or (plist-get row :outcome)
+                          (and (plist-get row :noop) "nothing to do"))))
        (concat "  " outcome)
      "")))
 
@@ -6994,24 +7352,73 @@ the reasons `org-agents--attr-report' gives at length."
     (display-buffer buffer)
     buffer))
 
+(defun org-agents--action-verify (row)
+  "What ROW's entry reads as now, where that is not what the plan said.
+Nil when the entry reads exactly as the report's line said it would.
+
+THE REPORT IS THE CLAIM THE USER ANSWERED, so a row that applied and
+left the entry saying something else has to say so.  The check is the
+verb's own `plan' phase, run again at the same entry: its OLD is by
+definition what the field reads now, and the planned NEW is what the
+report showed.
+
+Not hypothetical.  MEASURED, before the two refusals above existed:
+`todo!(DONE)' over a repeating entry left it `TODO' with its stamp rolled
+forward, and reported `TODO -> DONE  applied'.  And `org-todo' fails
+SILENTLY when `org-blocker-hook' blocks -- a `message' and a `throw', no
+signal -- which no amount of care inside a verb can turn into a
+diagnostic.  This is the backstop for both, and for the next one nobody
+has thought of.
+
+A TERMINAL verb is exempt: `archive!' has removed the subtree the check
+would look at, and its plan was never a field's value."
+  (let ((verb (plist-get row :verb))
+        (marker (plist-get row :marker)))
+    (and (not (org-agents--action-terminal-p verb))
+         (markerp marker) (marker-buffer marker)
+         (condition-case err
+             (let ((plan (with-current-buffer (marker-buffer marker)
+                           (org-with-wide-buffer
+                            (goto-char marker)
+                            (org-agents--action-call verb 'plan
+                                                     (plist-get row :args))))))
+               (and (consp plan)
+                    (not (equal (car plan) (plist-get row :new)))
+                    (org-agents--action-side (car plan))))
+           (error (error-message-string err))))))
+
 (defun org-agents--action-apply (rows)
   "Apply ROWS in order, recording each outcome; return the buffers written.
 Destructive rows confirm INDIVIDUALLY and every time -- the whole-plan
-confirmation the caller already asked does not stand in for it.
+confirmation the caller already asked does not stand in for it.  A row
+with nothing to do is neither confirmed nor applied: there is nothing to
+ask about and nothing to write.
 
-An error, a refusal or a `C-g' STOPS the run at that row: the row is
-marked with what happened, every later row is marked `not attempted', and
-nothing after it is touched.  Deliberately not `atomic-change-group': it
-cannot span buffers, and a corpus-wide rollback does not exist.  The
-honest substitute is this report, plus `undo' one buffer at a time, plus
-the fact that nothing was saved."
+An error, a refusal, a `C-g' or an entry that did not end up as the
+report said STOPS the run at that row: the row is marked with what
+happened, every later row is marked `not attempted', and nothing after it
+is touched.  Deliberately not `atomic-change-group': it cannot span
+buffers, and a corpus-wide rollback does not exist.  The honest
+substitute is this report, plus `undo' one buffer at a time, plus the
+fact that nothing was saved.
+
+The buffers answered are the ones written, and they are found by looking
+rather than by assuming: every file-visiting buffer that BECAME modified
+during a row is one of them, whichever verb or primitive did it.  That is
+what puts an archive buffer in the summary -- the file `archive!' writes
+into is not the file the row names."
   (let ((stopped nil)
-        (buffers nil))
+        (buffers nil)
+        (known (make-hash-table :test #'eq)))
+    (dolist (buffer (buffer-list))
+      (when (and (buffer-file-name buffer) (buffer-modified-p buffer))
+        (puthash buffer t known)))
     (dolist (row rows)
       (cond
        (stopped (plist-put row :outcome "not attempted"))
-       ((plist-get row :dead)
-        (plist-put row :outcome "skipped: no live buffer"))
+       ((plist-get row :skip)
+        (plist-put row :outcome (format "skipped: %s" (plist-get row :skip))))
+       ((plist-get row :noop) (plist-put row :outcome "nothing to do"))
        (t
         (condition-case err
             (let ((verb (plist-get row :verb))
@@ -7031,16 +7438,50 @@ the fact that nothing was saved."
                 (with-current-buffer (marker-buffer marker)
                   (org-with-wide-buffer
                    (goto-char marker)
-                   (org-agents--action-call verb 'apply
-                                            (plist-get row :args))))
+                   (let ((org-agents--action-planned (plist-get row :new)))
+                     (org-agents--with-action-quiet-hooks
+                       (org-agents--action-call verb 'apply
+                                                (plist-get row :args))))))
                 (cl-pushnew (marker-buffer marker) buffers)
-                (plist-put row :outcome "applied"))))
+                (dolist (buffer (buffer-list))
+                  (when (and (buffer-file-name buffer)
+                             (buffer-modified-p buffer)
+                             (not (gethash buffer known)))
+                    (puthash buffer t known)
+                    (cl-pushnew buffer buffers)))
+                (if-let* ((reads (org-agents--action-verify row)))
+                    (progn
+                      (plist-put row :outcome
+                                 (format (concat "APPLIED DIFFERENTLY: the"
+                                                 " entry now reads %s, and the"
+                                                 " plan said %s")
+                                         reads
+                                         (org-agents--action-side
+                                          (plist-get row :new))))
+                      (setq stopped t))
+                  (plist-put row :outcome "applied")))))
           (quit (plist-put row :outcome "interrupted")
                 (setq stopped t))
           (error (plist-put row :outcome
                             (format "FAILED: %s" (error-message-string err)))
                  (setq stopped t))))))
     (nreverse buffers)))
+
+(defconst org-agents--action-named-buffers 10
+  "How many modified buffers the closing message names before summarising.
+MEASURED: over a three-thousand-entry corpus with the limit raised, the
+message named three hundred buffers -- about four kilobytes in one
+`message' call, which resizes the minibuffer to fill the frame and pushes
+the counts, the part worth reading, off the visible line.  The report
+buffer carries the file of every row, so the message does not have to.")
+
+(defun org-agents--action-buffer-names (buffers)
+  "BUFFERS as a bounded phrase: some names, then how many more."
+  (let* ((names (mapcar #'buffer-name buffers))
+         (shown (seq-take names org-agents--action-named-buffers))
+         (rest (- (length names) (length shown))))
+    (concat (string-join shown ", ")
+            (if (> rest 0) (format " and %d more" rest) ""))))
 
 (defun org-agents--action-message (rows buffers)
   "Say what ROWS did and which of BUFFERS are modified.
@@ -7055,7 +7496,9 @@ buffers are what there is to review, `undo' and save by hand."
         ("not attempted" (setq untried (1+ untried)))
         ("interrupted" (setq failed (1+ failed)))
         ((and text (guard (and (stringp text)
-                               (string-prefix-p "FAILED" text))))
+                               (or (string-prefix-p "FAILED" text)
+                                   (string-prefix-p "APPLIED DIFFERENTLY"
+                                                    text)))))
          (setq failed (1+ failed)))
         (_ (setq skipped (1+ skipped)))))
     (let ((modified (cl-remove-if-not #'buffer-modified-p buffers)))
@@ -7065,7 +7508,7 @@ buffers are what there is to review, `undo' and save by hand."
                applied refused failed skipped untried
                (if modified
                    (format "modified %s"
-                           (mapconcat #'buffer-name modified ", "))
+                           (org-agents--action-buffer-names modified))
                  "no buffer modified")
                org-agents--action-buffer))))
 
@@ -7094,16 +7537,22 @@ What happens, in order:
      NOTHING -- and is caught if it does.
   6. The plan is shown in `*Org Agents Actions*', one line per intended
      edit, `FILE:LINE:' first so `next-error' walks them.  Nothing has
-     been written at this point.
+     been written at this point.  A row that would change nothing says
+     so and is not counted as an edit; where no row would change
+     anything the command says that and asks nothing.
   7. You are asked once, about the whole plan.  In batch, or under
      `inhibit-interaction', the answer is a REFUSAL and not a yes.
-  8. The edits are applied in order.  A destructive verb asks again at
-     every entry, every run.  An error, a `no' or a `C-g' stops at that
-     edit; its line says what happened and every later line says `not
-     attempted'.
+  8. The edits are applied in order, with the hooks and the logging that
+     would edit anything the report does not name bound off -- see
+     `org-agents--with-action-quiet-hooks'.  A destructive verb asks
+     again at every entry, every run.  An error, a `no', a `C-g' or an
+     entry that did not end up as its line said stops at that edit; the
+     line says what happened and every later line says `not attempted'.
   9. The buffers that were modified are named.  NOTHING IS SAVED -- the
      worst case of a bad run is N modified buffers, reviewable and
-     undoable one at a time, and not N modified files.
+     undoable one at a time, and not N modified files.  Not even
+     `archive!' saves: the archive file is left modified like any other
+     buffer, and named.
 
 The vocabulary is the nine `org-agents-action/...' functions, and a
 tenth is a `defun' in your init file: see README's \"Action code\"."
@@ -7131,15 +7580,23 @@ tenth is a `defun' in your init file: see README's \"Action code\"."
          (length targets) org-agents-action-limit))
       (let* ((rows (org-agents--action-plan verbs targets))
              (counts (org-agents--action-counts rows visited)))
-        (org-agents--action-report rows 'planned counts)
-        (if (not (org-agents--action-confirm
-                  "%s" (org-agents--action-prompt counts)))
-            (progn
-              (org-agents--action-report rows 'refused counts)
-              (message "org-agents: nothing was applied"))
+        (cond
+         ;; Every row would change nothing, so there is no question worth
+         ;; asking: "apply 0 edits?" is not informed consent, and a
+         ;; destructive verb must not ask about an entry it would not
+         ;; touch.
+         ((= 0 (plist-get counts :edits))
+          (org-agents--action-report rows 'nothing counts)
+          (message "org-agents: there is nothing to do; nothing was applied"))
+         ((not (progn (org-agents--action-report rows 'planned counts)
+                      (org-agents--action-confirm
+                       "%s" (org-agents--action-prompt counts))))
+          (org-agents--action-report rows 'refused counts)
+          (message "org-agents: nothing was applied"))
+         (t
           (let ((buffers (org-agents--action-apply rows)))
             (org-agents--action-report rows 'applied counts)
-            (org-agents--action-message rows buffers)))))))
+            (org-agents--action-message rows buffers))))))))
 
 (provide 'org-agents)
 ;;; org-agents.el ends here
