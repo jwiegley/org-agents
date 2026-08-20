@@ -2328,8 +2328,24 @@ no file at all reads as clean otherwise."
     (let ((text (string-join (org-agents-test--attr-report-lines) "\n")))
       (should (string-match-p "no findings" text))
       ;; The counts, because a clean report over nothing is not a clean run.
-      (should (string-match-p "1 file" text))
+      (should (string-match-p "1 file in scope" text))
       (should (string-match-p "1 entry" text))
+      (should (string-match-p "3 declarations" text))
+      ;; And FILES-READ, which is new and is the honest half of a two-tier
+      ;; run: the vocabulary question is answered by ripgrep over every
+      ;; file in scope, and only the DECLARED names' files are opened.  A
+      ;; run that read every file says so by this equalling the scope
+      ;; count; a run against an empty registry reads none, and saying "1
+      ;; file, 1 entry" there would be claiming a walk that did not happen.
+      (should (string-match-p "1 read" text)))
+    ;; The same corpus over a scope with a ROOT, which is what takes the
+    ;; fast path.  The clean line must still be a clean line there, and
+    ;; must not print a different vocabulary of counts.
+    (org-agents-check-attributes 'all)
+    (should-not (org-agents-test--attr-finding-lines))
+    (let ((text (string-join (org-agents-test--attr-report-lines) "\n")))
+      (should (string-match-p "no findings" text))
+      (should (string-match-p "1 file in scope" text))
       (should (string-match-p "3 declarations" text)))))
 
 (ert-deftest org-agents-test-check-attributes-never-edits ()
@@ -2676,6 +2692,606 @@ read rather than quietly reading less than it was asked to."
         (should (string-match-p "WIDGET" (car lines)))
         (should (string-match-p "bad\\.org" (nth 1 lines)))
         (should (string-match-p "bad coding system" (nth 1 lines)))))))
+
+
+;;;; The attribute lint's two tiers
+
+;; `org-agents-check-attributes' asks two questions and used to pay
+;; per-entry Org-parsing cost for both, which is why it could not finish
+;; over a real corpus: MEASURED, killed at 600 s with no report at all.
+;; "Which property names are in use that nothing declares?" needs no Org
+;; semantics -- it is a question about text -- so it is answered by ONE
+;; ripgrep run.  "Do declared values match their declared type?" genuinely
+;; needs per-entry reading, but only for the handful of DECLARED names.
+;;
+;; The whole risk of the split is that the two enumerators could report
+;; different vocabularies, and `org-agents-test-attr-census-fast-equals-slow'
+;; is the test that says they do not.
+
+(defconst org-agents-test--attr-census-corpus
+  '(("plain.org" . "\
+* Ordinary entry
+:PROPERTIES:
+:WIDGET: x
+:END:
+")
+    ("filelevel.org" . "\
+:PROPERTIES:
+:FILEWIDE: y
+:END:
+* A heading after it
+")
+    ("case.org" . "\
+* Lower case key
+:PROPERTIES:
+:widget: lower
+:END:
+")
+    ("accum.org" . "\
+* Accumulating
+:PROPERTIES:
+:GADGET: one
+:GADGET+: two
+:END:
+")
+    ("valueless.org" . "\
+* No value at all
+:PROPERTIES:
+:SPROCKET:
+:END:
+")
+    ("notdrawers.org" . "\
+* Other packages' drawers
+:PROPERTIES:
+:REALONE: yes
+:END:
+:LOGBOOK:
+CLOCK: [2020-01-01 Wed 10:00]--[2020-01-01 Wed 11:00] =>  1:00
+:END:
+:RESULTS:
+some output
+:END:
+:bodykey: bodyvalue
+* A body drawer Org does not read
+Some text first, so what follows is not a property drawer.
+:PROPERTIES:
+:BURIED: nope
+:END:
+")
+    ("colon.org" . "\
+* A name with a colon in it
+:PROPERTIES:
+:A:B: z
+:END:
+"))
+  "Every case that could separate the ripgrep census from the live walk.
+Each file defends something specific, and the whole point of collecting
+them here is that `org-agents-test-attr-census-fast-equals-slow' runs the
+SAME corpus through both enumerators:
+
+  plain.org       the base case.
+  filelevel.org   a drawer BEFORE the first heading, which Org really does
+                  read -- `org-agents-test-check-attributes-walks-a-file-level-drawer'
+                  is the live path's version of this.
+  case.org        a lower-case key, which Org matches case-insensitively,
+                  so the census must fold it the same way.
+  accum.org       a `+' key, whose name is the key without the `+'.
+  valueless.org   a key with NOTHING after it.  The name is in use even
+                  with no value to judge, so a census pattern that
+                  required a value would UNDER-REPORT -- the one direction
+                  that matters.
+  notdrawers.org  three property-line SHAPES that are not properties: a
+                  `:LOGBOOK:' opener, a `:RESULTS:' opener, a `:bodykey:'
+                  line in body text, and a `:PROPERTIES:' drawer written
+                  after body text where `org-get-property-block' does not
+                  read it.  MEASURED on the author's corpus, `LOGBOOK'
+                  alone is 1,407 sites -- so without the confirmation pass
+                  the fast path invents attribute names.
+  colon.org       `:A:B: z' is the property `A:B' to Org, whose key
+                  pattern is the greedy `\\S-+'.  A census pattern spelling
+                  the key as a letter class truncates it to `A' and
+                  reports a name nobody wrote.
+
+The latin-1 and CRLF cases cannot be written as text here and are built
+with explicit coding systems in the test itself.")
+
+(defun org-agents-test--attr-undeclared-names ()
+  "The set of names the current report calls undeclared, sorted.
+The findings' TEXT, not their line numbers: the fast path reports one
+confirmed example site per name and the slow path reported every line, so
+the sets of NAMES are what the two enumerators must agree on and the sets
+of lines are not."
+  (sort (delete-dups
+         (delq nil
+               (mapcar (lambda (line)
+                         (when (string-match ": \\([^ ]+\\) is not declared"
+                                             line)
+                           (match-string 1 line)))
+                       (org-agents-test--attr-finding-lines))))
+        #'string<))
+
+(defun org-agents-test--write-raw (file text coding)
+  "Write TEXT to FILE encoded with CODING, and answer FILE."
+  (let ((coding-system-for-write coding))
+    (with-temp-file file (insert text)))
+  file)
+
+(ert-deftest org-agents-test-attr-census-fast-equals-slow ()
+  "THE soundness test: the ripgrep census names exactly what the walk does.
+The whole risk of splitting this command into two tiers is that its fast
+vocabulary enumerator could report a different set of names from the slow
+one, and every other test here is about a single case while this one is
+about the equivalence itself.
+
+The same corpus is linted twice.  `all' has a ROOT, so it takes the
+ripgrep census; an explicit file list names its files, so it takes the
+live walk -- the same distinction `org-agents--narrowed-files' already
+makes, reused rather than re-derived.  The two reports must name the same
+set of undeclared attributes.
+
+Asserted non-empty FIRST, so that a test which stopped exercising anything
+cannot pass by comparing nil to nil.
+
+The fixture is `org-agents-test--attr-census-corpus' plus two files that
+cannot be written as ordinary text: a latin-1 one, and a CRLF one.  See
+`org-agents--rg-census-pattern' for what each of those measured."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      org-agents-test--attr-census-corpus
+    ;; A latin-1 name.  MEASURED: with the census pattern spelling its key
+    ;; `\S+' -- or as a letter class -- this property is LOST ENTIRELY,
+    ;; because ripgrep decodes as UTF-8 and the accented byte is not
+    ;; matched.  And the name must come back as Emacs decodes it, not as
+    ;; the raw bytes ripgrep saw.
+    (org-agents-test--write-raw
+     (funcall F "latin1.org")
+     "* Latin-1 entry\n:PROPERTIES:\n:CAFÉ: x\n:END:\n" 'iso-8859-1)
+    ;; A CRLF file.  MEASURED: with `--crlf' every extracted name comes
+    ;; back with a trailing CR -- on LF files too -- and without `\r?$' in
+    ;; the pattern this file's lines are missed entirely.
+    ;; Written with `binary', so the CRs in the text are the bytes on disk
+    ;; and nothing else is added.  Written with `utf-8-dos' AND explicit
+    ;; CRs the file gets `\r\r\n', which ORG cannot read either -- its
+    ;; `:PROPERTIES:\r' line does not match `org-property-start-re', so
+    ;; there is no drawer and `org-entry-get' answers nil.  MEASURED, and
+    ;; worth recording: the census still finds the key in that file, and
+    ;; the CONFIRMATION PASS is what drops it, which is the pass doing
+    ;; exactly its job on a case nobody designed it for.
+    (org-agents-test--write-raw
+     (funcall F "crlf.org")
+     "* CRLF entry\r\n:PROPERTIES:\r\n:CARRIAGE: x\r\n:END:\r\n" 'binary)
+    (let ((all (append files (list (funcall F "latin1.org")
+                                   (funcall F "crlf.org")))))
+      ;; Fast: a corpus scope, which has a root and so takes the census.
+      (org-agents-check-attributes 'all)
+      (let ((fast (org-agents-test--attr-undeclared-names)))
+        ;; Slow: an explicit list, which names its files and so walks.
+        (org-agents-check-attributes all)
+        (let ((slow (org-agents-test--attr-undeclared-names)))
+          (should slow)
+          (should fast)
+          (should (equal fast slow))
+          ;; And the set really does hold the cases the fixture is for, so
+          ;; that an equivalence of two empty-ish sets cannot pass for one.
+          (dolist (name '("WIDGET" "FILEWIDE" "GADGET" "SPROCKET" "CAFÉ"
+                          "CARRIAGE" "A:B" "REALONE"))
+            (should (member name fast)))
+          ;; `widget' lower-case folded into `WIDGET' rather than arriving
+          ;; as a name of its own.
+          (should-not (member "widget" fast))
+          ;; And none of the property-line SHAPES that are not properties.
+          (dolist (name '("LOGBOOK" "RESULTS" "PROPERTIES" "END"
+                          "bodykey" "BODYKEY" "BURIED"))
+            (should-not (member name fast))
+            (should-not (member name slow))))))))
+
+(ert-deftest org-agents-test-attr-census-excludes-drawer-delimiters ()
+  "`PROPERTIES' and `END' are in the raw census and in neither report.
+They are what a text enumerator sees that a drawer walk cannot: the live
+walk never meets them at all, because
+`org-agents--attr-drawer-findings' walks `org-get-property-block''s range
+and that range EXCLUDES both lines.  So they are removed by a variable of
+their own, `org-agents--rg-census-delimiters', rather than folded into
+`org-agents--attributes-exempt' -- they are an artefact of an enumerator,
+not a statement about Org's vocabulary.
+
+MEASURED on the author's corpus, they are the two largest matches the
+census produces: `END' 43,277 sites and `PROPERTIES' 41,840.  Asserted at
+BOTH levels, because only the pair of assertions says the exclusion is
+doing work: present in `org-agents--attr-census-rg''s raw answer, absent
+from the report."
+  (skip-unless (executable-find "rg"))
+  (should (equal '("PROPERTIES" "END") org-agents--rg-census-delimiters))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("one.org" . "* E\n:PROPERTIES:\n:WIDGET: x\n:END:\n"))
+    (let* ((root (org-agents--scope-root 'all))
+           (census (org-agents--attr-census-rg root files))
+           (keys (mapcar #'car census)))
+      (should (member "PROPERTIES" keys))
+      (should (member "END" keys))
+      (should (member "WIDGET" keys)))
+    (org-agents-check-attributes 'all)
+    (let ((names (org-agents-test--attr-undeclared-names)))
+      (should (member "WIDGET" names))
+      (should-not (member "PROPERTIES" names))
+      (should-not (member "END" names)))))
+
+(ert-deftest org-agents-test-attr-census-excludes-org-own-vocabulary ()
+  "Org's own property names are exempt on the FAST path as well.
+`org-agents-test-check-attributes-exempts-org-own-properties' asserts this
+for the live walk; the exemption lives in `org-agents--attributes-exempt',
+which is `org-special-properties' and `org-default-properties' plus `ID'
+and the six `org-archive-subtree' writes.  A second enumerator that did
+not consult it would bury every real finding: MEASURED on the author's
+corpus, `ID' is 37,005 sites and `ARCHIVE_TIME' 21,572."
+  (skip-unless (executable-find "rg"))
+  ;; The two lists really are the source, so the assertion below cannot
+  ;; pass because somebody hard-coded these names twice.
+  (should (member "CATEGORY" org-agents--attributes-exempt))
+  (should (member "ID" org-agents--attributes-exempt))
+  (should (member "ARCHIVE_TIME" org-agents--attributes-exempt))
+  (should (cl-subsetp org-special-properties org-agents--attributes-exempt
+                      :test #'equal))
+  (should (cl-subsetp org-default-properties org-agents--attributes-exempt
+                      :test #'equal))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("one.org" . "\
+* E
+:PROPERTIES:
+:ID: 44444444-4444-4444-4444-444444444444
+:ARCHIVE_TIME: 2020-01-01
+:CATEGORY: things
+:VISIBILITY: folded
+:WIDGET: x
+:END:
+"))
+    (dolist (scope (list 'all files))
+      (org-agents-check-attributes scope)
+      (let ((names (org-agents-test--attr-undeclared-names)))
+        (should (equal '("WIDGET") names))))))
+
+(ert-deftest org-agents-test-attr-census-excludes-own-namespaces ()
+  "This package's own names, and Org's `_ALL' convention, on the fast path.
+`org-agents--attributes-exempt-re' is the rule.  `ATTR_' matters most:
+the registry commonly lives INSIDE the scope being linted, and without the
+exemption every one of its own declarations is reported as an undeclared
+property.  `_ALL' is Org's allowed-values convention -- `STATUS_ALL' is a
+declaration ABOUT `STATUS', so reporting it would be reporting the
+vocabulary as a violation of itself -- and the `+' form has to be exempt
+too, since the exemption is tested on the NAME and not on the raw key."
+  (skip-unless (executable-find "rg"))
+  (should (equal "\\`\\(?:AGENT_\\|ATTR_\\)\\|_ALL\\'"
+                 org-agents--attributes-exempt-re))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("one.org" . "\
+* E
+:PROPERTIES:
+:AGENT_QUERY: (todo)
+:ATTR_TYPE: string
+:STATUS_ALL: open wip
+:STATUS_ALL+: done
+:WIDGET: x
+:END:
+"))
+    (dolist (scope (list 'all files))
+      (org-agents-check-attributes scope)
+      (should (equal '("WIDGET") (org-agents-test--attr-undeclared-names))))))
+
+(ert-deftest org-agents-test-attr-census-confirmation-drops-a-non-property ()
+  "A property-line SHAPE outside any drawer is dropped, and SAID.
+An exclusion list cannot be enough and that is measured rather than
+argued: against the whole corpus's live census as ground truth, the
+ripgrep census reported four names the walk never sees and no list could
+have anticipated -- `LOGBOOK' (1,407 sites), `RESULTS', `SRSITEMS' and a
+stray `0'.  They are other packages' drawer openers and stray body lines,
+and the next corpus will have different ones.
+
+So each candidate is confirmed by reading a real property drawer.
+Asserted at the level of `org-agents--attr-confirm-candidate', because the
+report alone cannot distinguish \"confirmed away\" from \"never enumerated\":
+the candidate is PRESENT before confirmation and answers nil at it.
+
+And the drop is not silent.  `org-agents--attr-name-findings' counts the
+candidates that went unconfirmed, which is the visible cost of
+`org-agents--attr-confirm-limit'."
+  (skip-unless (executable-find "rg"))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("one.org" . "\
+* E
+:PROPERTIES:
+:REALONE: yes
+:END:
+:LOGBOOK:
+CLOCK: [2020-01-01 Wed 10:00]
+:END:
+:bodykey: bodyvalue
+"))
+    (let* ((root (org-agents--scope-root 'all))
+           (census (org-agents--attr-census-rg root files)))
+      ;; Enumerated, all three of them.
+      (should (assoc "LOGBOOK" census))
+      (should (assoc "BODYKEY" census))
+      (should (assoc "REALONE" census))
+      ;; And only the real one confirms.
+      (should (org-agents--attr-confirm-candidate (assoc "REALONE" census)))
+      (should-not (org-agents--attr-confirm-candidate (assoc "LOGBOOK" census)))
+      (should-not (org-agents--attr-confirm-candidate (assoc "BODYKEY" census)))
+      ;; The count of unconfirmed candidates is reported, not swallowed.
+      (pcase-let ((`(,_findings . ,unconfirmed)
+                   (org-agents--with-attributes
+                     (org-agents--attr-name-findings census t))))
+        (should (= 2 unconfirmed))))
+    (org-agents-check-attributes 'all)
+    (should (equal '("REALONE") (org-agents-test--attr-undeclared-names)))))
+
+(ert-deftest org-agents-test-attr-census-pattern-is-printable-ascii ()
+  "The census pattern is printable ASCII, like every other pushed pattern.
+Same rule as `org-agents-test-attr-drawer-pattern-is-printable-ascii' and
+for the same reason: ripgrep decodes the PATTERN as UTF-8 while Emacs may
+decode a FILE as latin-1, so a non-ASCII pattern matches LESS than Org
+does -- and for an ENUMERATOR, matching less means reporting a corpus as
+cleaner than it is."
+  (should (equal org-agents--rg-census-pattern
+                 (encode-coding-string org-agents--rg-census-pattern
+                                       'us-ascii))))
+
+(ert-deftest org-agents-test-attr-census-args-are-pinned ()
+  "The census argument vector, element by element, `--crlf' ABSENT.
+Pinned for the reason `org-agents-test-rg-args-pins-the-argument-vector'
+gives: five of the under-matches measured while this backend was designed
+were a missing flag rather than a wrong pattern.
+
+`--crlf' is the one to notice, and its absence is deliberate and measured.
+With `--crlf', a pattern holding `\\r' makes ripgrep REFUSE to run -- `the
+literal \"\\r\" is not allowed in a regex' -- and a pattern with a bare `$'
+returns every name with a trailing CR appended, on LF files as well as
+CRLF ones.  Without `--crlf' and with `\\r?$', both files' names come back
+clean.  So the census spells the terminator in the pattern, which is the
+opposite of what `org-agents--rg-args' does, and that difference is what
+this test exists to keep."
+  (should (equal (org-agents--rg-census-args "/corpus")
+                 (list "--null" "--line-number" "--with-filename"
+                       "--no-heading" "--only-matching" "--replace" "$1"
+                       "--text" "--no-ignore" "--hidden" "--follow"
+                       "--iglob" "*.org"
+                       "--regexp" org-agents--rg-census-pattern
+                       "--" "/corpus")))
+  (should-not (member "--crlf" (org-agents--rg-census-args "/corpus")))
+  ;; `string-search', not a regexp: the pattern IS a regexp, and matching
+  ;; its text with another one is two levels of escaping to get wrong.
+  (should (string-search "\\r?$" org-agents--rg-census-pattern))
+  ;; The traversal flags are carried over from the prefilter UNCHANGED,
+  ;; because the census's file set is intersected with the scope's own list
+  ;; and a file ripgrep failed to visit is a NAME LOST with no error.
+  (dolist (flag '("--text" "--no-ignore" "--hidden" "--follow"))
+    (should (member flag (org-agents--rg-census-args "/corpus")))
+    (should (member flag (org-agents--rg-args "PAT" "/corpus")))))
+
+(ert-deftest org-agents-test-attr-census-degrades-without-ripgrep ()
+  "Absent ripgrep, the lint answers the same names by walking, and never refuses.
+The degradation the whole prefilter already promises, extended to the
+census: same findings, ONE message, no refusal -- and `org-agents-prefilter'
+at `require' still does not signal, because a lint that declined to run
+would fail its own contract rather than decline an expense.  See the
+REFUSE argument of `org-agents--narrowed-files'.
+
+The registry declares three attributes here, which is the case that would
+have produced three \"not narrowed\" messages if the value tier resolved its
+own fallback per declared name."
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("one.org" . "* E\n:PROPERTIES:\n:WIDGET: x\n:STATUS: nope\n:END:\n"))
+    (should (= 3 (length (org-agents-attributes))))
+    (let (with-rg without-rg msgs)
+      (org-agents-check-attributes 'all)
+      (setq with-rg (org-agents-test--attr-undeclared-names))
+      (let ((org-agents-rg-executable "no-such-program-xyzzy")
+            (org-agents-prefilter 'require))
+        (setq msgs (org-agents-test--messages
+                     (org-agents-check-attributes 'all)))
+        (setq without-rg (org-agents-test--attr-undeclared-names)))
+      (should (equal '("WIDGET") with-rg))
+      (should (equal with-rg without-rg))
+      ;; Exactly one, however many declarations the registry holds.
+      (should (= 1 (length (cl-remove-if-not
+                            (lambda (m) (string-match-p "not narrowed" m))
+                            msgs)))))))
+
+(ert-deftest org-agents-test-attr-value-tier-narrows-per-declared-name ()
+  "The value tier opens only the files that could hold a declared name.
+And the `t'-versus-nil conflation is pinned, which is the trap:
+`org-agents--rg-files-for' answers `t' -- not nil -- when a name offered NO
+pattern, because `org-agents--rg-name-p' rejects a space, a colon or a
+non-ASCII character.  Treating that `t' as the empty list would silently
+skip that name's value checks over the whole corpus.  So a name it cannot
+narrow widens the tier to the WHOLE scope rather than to none of it.
+
+MEASURED that both arms are real: `(org-agents--rg-name-p \"TWO WORDS\")'
+and `(org-agents--rg-name-p \"CAFÉ\")' are both nil."
+  (skip-unless (executable-find "rg"))
+  (should-not (org-agents--rg-name-p "TWO WORDS"))
+  (should-not (org-agents--rg-name-p "CAFÉ"))
+  (should (org-agents--rg-name-p "STATUS"))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("has.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+        ("hasnt.org" . "* E\n:PROPERTIES:\n:WIDGET: x\n:END:\n")
+        ("neither.org" . "* E\n:PROPERTIES:\n:GADGET: y\n:END:\n"))
+    (let ((root (org-agents--scope-root 'all)))
+      ;; A narrowable declared name: only its own file is offered.
+      (pcase-let ((`(,narrowed . ,flag)
+                   (org-agents--attr-value-files files '("STATUS") root)))
+        (should flag)
+        (should (equal (list (funcall F "has.org")) narrowed)))
+      ;; A name that offers no pattern: the WHOLE scope, not none of it.
+      (pcase-let ((`(,wide . ,flag)
+                   (org-agents--attr-value-files files '("TWO WORDS") root)))
+        (should-not flag)
+        (should (equal files wide)))
+      ;; Mixed: one unnarrowable name widens the tier, it does not merely
+      ;; contribute nothing.
+      (pcase-let ((`(,wide . ,_)
+                   (org-agents--attr-value-files
+                    files '("STATUS" "TWO WORDS") root)))
+        (should (equal files wide)))
+      ;; An empty registry declares nothing, so nothing is read: which is
+      ;; exactly right for the first seeding run, and is what makes tier
+      ;; one alone answer a whole corpus.
+      (pcase-let ((`(,none . ,_)
+                   (org-agents--attr-value-files files nil root)))
+        (should-not none)))))
+
+(ert-deftest org-agents-test-attr-value-tier-reports-progress ()
+  "A run that reads many files says so rather than appearing hung.
+MEASURED, the value tier is 9 to 20 s at realistic registry sizes and its
+floor is the ~4.5 ms it costs to open one file; over the author's corpus
+the whole command was 6 s warm and 64 s cold.  Silence for that long,
+while the buffer list grows into the thousands, is exactly the \"appears
+hung\" this command was reported for.
+
+On the FILE loop, where the count is known up front, and not per entry --
+45,000 entries would make the reporter the cost.  Gated on
+`org-agents--attr-progress-threshold' so that an `agenda' scope of a
+handful of files gets no noise."
+  (let ((made 0) (updated 0) (finished 0))
+    (cl-letf (((symbol-function 'make-progress-reporter)
+               (lambda (&rest _) (cl-incf made) 'stub))
+              ((symbol-function 'progress-reporter-update)
+               (lambda (&rest _) (cl-incf updated)))
+              ((symbol-function 'progress-reporter-done)
+               (lambda (&rest _) (cl-incf finished))))
+      ;; Below the threshold: no reporter at all.
+      (org-agents--attr-findings nil nil nil)
+      (should (= 0 made))
+      ;; Above it: made once, updated once per file, finished once.
+      (let* ((n (+ 2 org-agents--attr-progress-threshold))
+             (files (make-list n "/no/such/file/for/the/reporter.org")))
+        (org-agents--attr-findings files nil nil)
+        (should (= 1 made))
+        (should (= n updated))
+        (should (= 1 finished))))))
+
+(ert-deftest org-agents-test-attr-findings-are-in-file-order ()
+  "The report is sorted by file, then by line NUMERICALLY.
+Required rather than tidy: the two tiers produce findings in different
+orders -- one walks a census keyed by name, the other walks files -- and a
+`compilation-mode' buffer that jumps backwards through a file is a worse
+report than one that does not.  It is also what keeps
+`org-agents-test-check-attributes-finds-each-kind''s positional assertions
+true, and that coupling is otherwise invisible.
+
+Numerically, or `:9:' sorts before `:10:' -- which is the whole reason the
+sort parses the line rather than comparing the strings.  Asserted directly
+on `org-agents--attr-sort', because arranging a corpus with a finding on
+line 9 and another on line 10 of one file is possible but says less."
+  (should (equal (org-agents--attr-sort
+                  '("/a/b.org:10: ten" "/a/b.org:9: nine"
+                    "/a/a.org:2: two" "/a/b.org:1: one"))
+                 '("/a/a.org:2: two" "/a/b.org:1: one"
+                   "/a/b.org:9: nine" "/a/b.org:10: ten")))
+  ;; A line that does not parse keeps its place at the end rather than
+  ;; being dropped: a report must not lose a finding to its own sort.
+  (should (equal (org-agents--attr-sort
+                  '("not a finding at all" "/a/a.org:1: one"))
+                 '("/a/a.org:1: one" "not a finding at all")))
+  ;; And end to end, over two files whose findings interleave.
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:WIDGET: x\n:END:\n")
+        ("b.org" . "* E\n:PROPERTIES:\n:GADGET: y\n:END:\n"))
+    (org-agents-check-attributes 'all)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 3 (length lines)))
+      (should (string-prefix-p (concat (funcall F "a.org") ":3:") (nth 0 lines)))
+      (should (string-prefix-p (concat (funcall F "a.org") ":4:") (nth 1 lines)))
+      (should (string-prefix-p (concat (funcall F "b.org") ":3:") (nth 2 lines))))))
+
+(ert-deftest org-agents-test-attr-line-numbers-match-line-number-at-pos ()
+  "The monotonic line cursor agrees with the function it replaced.
+`line-number-at-pos' counts from `point-min' on every call, which is
+quadratic within a large file and was one of the two accidental
+quadratics that stopped the corpus lint finishing -- MEASURED at 1.8x on a
+1,840-file sample.  `org-agents--attr-line-number' counts forward from
+where it last was instead, which is only correct because the walk ascends;
+this is what says the two agree, including across a backwards ask, which
+must recompute rather than guess."
+  (with-temp-buffer
+    (insert "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")
+    (let ((cursor (cons (point-min) 1))
+          (positions nil))
+      (goto-char (point-min))
+      (while (not (eobp))
+        (push (line-beginning-position) positions)
+        (forward-line 1))
+      (setq positions (nreverse positions))
+      ;; Ascending, which is the walk's own order.
+      (dolist (pos positions)
+        (should (= (line-number-at-pos pos)
+                   (org-agents--attr-line-number cursor pos))))
+      ;; And a backwards ask still answers correctly, by recomputing.
+      (should (= (line-number-at-pos (nth 1 positions))
+                 (org-agents--attr-line-number cursor (nth 1 positions)))))))
+
+(ert-deftest org-agents-test-attr-findings-accumulate-linearly ()
+  "Findings accumulate with `push', not by `nconc'ing onto the whole list.
+`(setq findings (nconc findings fs))' once per file makes the cost the sum
+of the findings SO FAR over every file -- quadratic in the number of
+findings.  MEASURED over a 1,840-file sample of the author's corpus:
+129.48 s with the `nconc' and 35.45 s with `push', and the term QUADRUPLES
+over the full corpus because the findings roughly double.  That, and not
+Org parsing, is where the 600-second kill came from: the same corpus's
+walk with no findings built at all is 38.59 s.
+
+Asserted by watching the LENGTH OF `nconc''s FIRST ARGUMENT rather than by
+timing, and the choice of measure is the whole test.  A duration assertion
+fails on a loaded machine and passes on a fast one.  Counting `nconc'
+CALLS measures nothing either: the calls that matter are not the frequent
+ones.  What `nconc' costs is walking its first argument to the end, so the
+longest first argument it is ever handed is exactly the thing that was
+quadratic.
+
+Over N files each yielding one finding: the old form handed `nconc' the
+accumulated list, so the longest first argument was N-1 and grew with the
+corpus.  The `apply #'nconc' over per-file lists hands it the FIRST file's
+findings, whose length has nothing to do with N."
+  (let ((longest 0))
+    (cl-letf* ((real (symbol-function 'nconc))
+               ((symbol-function 'nconc)
+                (lambda (&rest args)
+                  ;; PRIMITIVES ONLY in here, and that is not a style
+                  ;; choice: `nconc' is global, so this stub sees every
+                  ;; caller in the process, and a `cl-every' inside it
+                  ;; reaches `nconc' again and dies with
+                  ;; `excessive-lisp-nesting'.  Observed.
+                  ;;
+                  ;; Only lists of FINDINGS are measured, for the same
+                  ;; reason: Org's own calls pass through here too -- one
+                  ;; of them hands `nconc' a 50-element list -- so a bare
+                  ;; `length' would be measuring Org.
+                  (let ((rest (car args)) (n 0) (ok t))
+                    (while (and ok (consp rest))
+                      (let ((x (car rest)))
+                        (if (and (stringp x)
+                                 (string-match-p "\\`/.*:[0-9]+: " x))
+                            (setq n (1+ n) rest (cdr rest))
+                          (setq ok nil))))
+                    (when (and ok (null rest) (> n 0))
+                      (setq longest (if (> n longest) n longest))))
+                  (apply real args))))
+      (org-agents-test--with-attr-corpus org-agents-test--registry-example
+          '(("a.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+            ("b.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+            ("c.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+            ("d.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+            ("e.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+            ("f.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+            ("g.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n")
+            ("h.org" . "* E\n:PROPERTIES:\n:STATUS: nope\n:END:\n"))
+        (setq longest 0)
+        (pcase-let ((`(,_entries . ,findings)
+                     (org-agents--attr-findings files '("STATUS") nil)))
+          ;; The run really did produce one finding per file, so the bound
+          ;; below is a bound on something.
+          (should (= 8 (length findings)))
+          ;; Eight files, eight findings.  The old form's longest first
+          ;; argument was seven; this must not grow with the corpus.
+          (should (< longest (length files))))))))
 
 (ert-deftest org-agents-test-attr-drawer-pattern-is-printable-ascii ()
   "The drawer pattern is printable ASCII, like every other pushed pattern.

@@ -354,6 +354,79 @@ them — measured — so `RET`, `next-error` and `M-g n` navigate the findings
 with no navigation code written for them. A run with nothing to report says
 so, with its counts, rather than popping an empty buffer.
 
+An **undeclared name** gets one finding, not one per line — `WIDGET is not
+declared in ~/org/attributes.org (763 uses)`, at a confirmed example site.
+A **bad value** keeps one finding per line, because those are per-line facts
+about specific values and there is no summarising them. Over a corpus with
+no registry yet, the per-line form is about 149,000 findings, and a
+149,000-line buffer is not a report.
+
+#### Two tiers, and why the lint finishes
+
+The command asks two questions, and it used to pay per-entry Org-parsing
+cost for both. Over a real corpus it did not finish: measured, killed at
+**600 seconds with no report at all** — and the command is most valuable at
+exactly the scope where it could not be run, because the first whole-corpus
+run is how a registry gets seeded.
+
+The fix is that the two questions have different costs.
+
+*Which names are in use that nothing declares?* needs **no Org semantics**
+at all — it is a question about text. One ripgrep run answers it for a whole
+corpus: measured, 0.17 s for 336,628 sites and 21.5 MB of output, plus about
+a second to parse and a second and a half to confirm.
+
+*Do declared values match their declared type?* genuinely needs per-entry
+reading, but only for the **declared** names, and only in the files that
+hold them. One ripgrep run per declared name narrows those.
+
+Measured over the author's 3,616-file `active` scope: **6 seconds warm, 64
+seconds cold**, against >600 s and no report. (Cold versus warm is a factor
+of six here for the same reason it is everywhere else in this file — the OS
+page cache.) With a registry declaring `CREATED`, which is in essentially
+every file, the value tier reads the whole corpus and the run is about four
+minutes; that cost is inherent, it is what checking every value *means*, and
+it is why the command shows a progress reporter above 50 files rather than
+sitting silent.
+
+Two accidental quadratics went with it, and they, not Org, were where the
+600 seconds came from. Findings were accumulated with `nconc` onto the whole
+list once per file, which costs the sum of the findings so far over every
+file; measured on a 1,840-file sample, 129.48 s with it and 35.45 s without,
+and the term quadruples over the full corpus. And line numbers came from
+`line-number-at-pos`, which counts from the top of the buffer every time —
+another 1.8×. For comparison, the same corpus's walk with no findings built
+at all is 38.59 s.
+
+**The soundness obligation is that the fast path reports the same
+vocabulary as the slow one**, and that is a test rather than a claim:
+`org-agents-test-attr-census-fast-equals-slow` lints one fixture corpus
+through both enumerators and compares the sets of names. The fixture holds
+every case that separates them — a file-level drawer, a lower-case key, a
+`+` key, a key with no value, a name containing a colon (`:A:B:` is the
+property `A:B` to Org), a latin-1 name, a CRLF file, and four
+property-line *shapes* that are not properties.
+
+That last group is why an exclusion list is not enough. Ripgrep reads text
+and cannot see drawer structure, so it also matches `:PROPERTIES:` and
+`:END:` — removed by name — and, measured against the whole corpus, four
+names the live walk never sees and no list could have anticipated:
+`LOGBOOK` (1,407 sites), `RESULTS`, `SRSITEMS` and a stray `0`. Those are
+other packages' drawer openers and a stray body line, and the next corpus
+will have different ones. So every candidate is **confirmed** by reading a
+real property drawer before it is reported, at most 20 files per name.
+Measured: the pass drops precisely those four and nothing else, and after
+it the two enumerators' name sets are identical. The confirmation also
+supplies the name as *Emacs* decoded it, which is how a latin-1 `:CAFÉ:`
+reaches the report spelled right rather than as mojibake.
+
+The bound has a cost and the report states it rather than hiding it: a name
+whose only genuine property line sits in its twenty-first file would be
+missed, so the echo area says how many candidates went unconfirmed — "4
+names appeared in property-line shape outside any drawer and were not
+reported". Without ripgrep the whole thing falls back to the live walk with
+one message, exactly as the prefilter does, and never refuses.
+
 Org's own vocabulary is never asked about, nor the package's, nor the
 registry's: `org-special-properties`, `org-default-properties`, `ID`, the
 six `ARCHIVE_*` names `org-archive-subtree` writes, anything beginning
@@ -1940,6 +2013,14 @@ be `all`, and its `^[ \t]*:PROPERTIES:` pattern narrows a property-heavy
 corpus barely at all. Measured: a 13-file scope went from 0 visited Org
 buffers to 13. On a corpus of a few thousand files that is a few thousand
 buffers, with no message saying so.
+
+The two-tier split above makes this much better in the common case and does
+not remove it. Against an **empty** registry the value tier reads nothing at
+all, and the run's whole footprint is the confirmation pass — measured, about
+150 file opens for 112 candidate names, not 3,616. Against a registry that
+declares a name appearing in every file, the tier reads every file and the
+old footprint is back. The clean report's counts now say which happened:
+"3,616 files in scope, 3,616 read" against "3,616 files in scope, 0 read".
 
 They are ordinary file buffers, unmodified because the lint edits nothing,
 so nothing is at risk — but memory and every buffer-list operation

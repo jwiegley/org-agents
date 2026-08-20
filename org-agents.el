@@ -220,7 +220,15 @@
 ;; `org-agents-check-attributes', which lints a scope against the
 ;; registry and REPORTS, never edits: a name in use that nothing
 ;; declares, a value outside its declared vocabulary, a value that does
-;; not parse as its declared type.  And `org-agents-attribute-columns',
+;; not parse as its declared type.  It runs in TWO TIERS, because its two
+;; questions have different costs: the vocabulary question needs no Org
+;; semantics and is answered by one ripgrep run over the whole scope,
+;; while the value question needs per-entry reading but only for the
+;; DECLARED names and only in the files holding them.  MEASURED over a
+;; 3,616-file scope: 6 s warm and 64 s cold, against a single-tier command
+;; that was killed at 600 s with no report at all.  The fast enumerator
+;; reports the same vocabulary as the slow one, and
+;; `org-agents-test-attr-census-fast-equals-slow' is what says so.  And `org-agents-attribute-columns',
 ;; which builds a `COLUMNS' format out of chosen declarations -- see
 ;; README's "Corpus-wide column view" for what that is for, which is a
 ;; recipe rather than a renderer: MEASURED, `org-agenda-columns' already
@@ -2071,6 +2079,87 @@ package needs is an AND."
         "--no-ignore" "--hidden" "--follow" "--iglob" "*.org"
         "--regexp" pattern "--" root))
 
+(defconst org-agents--rg-census-pattern
+  "^[ \\t]*:((?-u:[^ \\t\\r\\n])+):(?:\\r?$|[ \\t])"
+  "The ripgrep pattern that enumerates every property-drawer KEY in a file.
+Org's own answer to what a property line is, `org-property-re', spells the
+key `\\S-+' -- ANY run of non-whitespace -- and requires the line to end
+there or continue with whitespace and a value.  This is that, in ripgrep's
+dialect, and each departure from the obvious spelling was MEASURED because
+each obvious spelling loses names.
+
+`(?-u:[^ \\t\\r\\n])+' and not `\\S+' or `[A-Za-z][A-Za-z0-9_-]*'.  A
+latin-1 file holding `:CAF\\xC9: x' is read by Emacs as the property
+`CAF\\xC9'; ripgrep decodes as UTF-8, and with `\\S+' -- or with the
+letter class -- that byte is not matched and the property is LOST
+ENTIRELY.  With Unicode mode off over a negated class it is found.  This
+is the same lesson `org-agents--rg-patterns' records for `(?-u:.)' in its
+`heading' arm, and it is the direction that matters: an enumerator that
+misses a name reports a corpus as cleaner than it is.
+
+The letter class loses a second way: it truncates.  `:A:B: z' is the
+property `A:B' to Org, whose `\\S-+' is greedy; the letter class captures
+`A' and reports a name nobody wrote.  Rust's regexp crate is
+leftmost-first over a greedy `+', so this captures `A:B' as Org does --
+verified.
+
+`\\r?$' and NOT `--crlf', which is the reverse of what
+`org-agents--rg-args' does, and the reason is that the two are mutually
+exclusive here.  MEASURED, all three combinations: `--crlf' with a `\\r'
+anywhere in the pattern makes ripgrep REFUSE to run (`the literal \"\\r\"
+is not allowed in a regex'); `--crlf' with a bare `$' works but appends a
+trailing CR to EVERY extracted name, on LF files as well as CRLF ones;
+and without `--crlf', a bare `$' misses a CRLF file's lines entirely,
+because after the closing colon comes `\\r', which is neither `$' nor
+`[ \\t]'.  Only `\\r?$' with `--crlf' absent finds both files' names and
+returns them clean.
+
+Printable ASCII throughout, which
+`org-agents-test-attr-census-pattern-is-printable-ascii' pins for the same
+reason the drawer pattern's test does: ripgrep decodes the PATTERN as
+UTF-8 while Emacs may decode the FILE as latin-1, so a non-ASCII pattern
+matches less than Org does.
+
+It matches the `:PROPERTIES:' and `:END:' drawer delimiters too, which
+are not properties.  That is an artefact of enumerating text without
+seeing drawer structure, and `org-agents--rg-census-delimiters' is what
+removes it.")
+
+(defun org-agents--rg-census-args (root)
+  "The ripgrep argument vector that enumerates property KEYS under ROOT.
+Its own function so that a test can pin it, exactly as
+`org-agents--rg-args' is pinned: five of the under-matches measured while
+the prefilter was designed were a missing flag, not a wrong pattern.
+
+Differs from `org-agents--rg-args' in exactly three ways, and carries
+every other flag UNCHANGED:
+
+  `--only-matching --replace \\='$1\\=' --line-number --with-filename
+  --no-heading' instead of `--files-with-matches': the census wants
+  SITES, not files.  `--null' then puts a NUL between the path and
+  `LINE:NAME', which is what makes the parse exact -- a NUL cannot occur
+  in a POSIX file name, so `PATH\\0LINE:NAME' splits unambiguously even
+  for a path holding a colon or a newline.
+
+  `--crlf' is ABSENT, and the pattern spells `\\r?$' instead.  See
+  `org-agents--rg-census-pattern': the two are mutually exclusive and
+  only this combination is both complete and clean.
+
+  `--ignore-case' is dropped, because this pattern holds no letter for it
+  to fold.  Keeping it would be harmless; it is named here so that nobody
+  restores it believing something depended on it.
+
+Everything else -- `--text', `--no-ignore', `--hidden', `--follow',
+`--iglob \\='*.org\\=' -- is carried over for the reason
+`org-agents--rg-args' gives for each: ripgrep's traversal must not be
+narrower than `directory-files-recursively''s, because this census's file
+set is intersected with the scope's own list and a file ripgrep failed to
+visit is a NAME LOST with no error."
+  (list "--null" "--line-number" "--with-filename" "--no-heading"
+        "--only-matching" "--replace" "$1"
+        "--text" "--no-ignore" "--hidden" "--follow" "--iglob" "*.org"
+        "--regexp" org-agents--rg-census-pattern "--" root))
+
 (defun org-agents--rg-paths (raw)
   "Split RAW, ripgrep's NUL-terminated stdout, into a list of file names.
 RAW is read as BYTES and each path decoded with the file-name coding
@@ -2105,14 +2194,21 @@ And a test that stubs the backend can stub this beside it, instead of
 having to put a program on `exec-path' to be allowed to reach the stub."
   (and (executable-find org-agents-rg-executable) t))
 
-(defun org-agents--rg-run (pattern root)
-  "Files under ROOT whose text matches PATTERN, or the symbol `unavailable'.
-Returns a LIST -- possibly the EMPTY list, which means \"ripgrep
-answered, and no file matches\".  That is an answer, and the caller must
+(defun org-agents--rg-call (args)
+  "Run ripgrep with ARGS and answer its stdout, or the symbol `unavailable'.
+The STRING is raw bytes, undecoded.  An EMPTY string means \"ripgrep
+answered, and nothing matched\" -- that is an ANSWER, and a caller must
 treat it as one: reporting it as a missing prefilter is the defect this
 backend exists to remove.  Only the symbol `unavailable' means \"no
-answer\".  Callers test with `listp', which is exact: `(listp nil)' is t
-and `(listp \\='unavailable)' is nil.
+answer\".
+
+The process half, in ONE place, because there are two callers -- the
+prefilter through `org-agents--rg-run' and the attribute census through
+`org-agents--attr-census-rg' -- and every paragraph below is a soundness
+requirement that a second spawn site would have to re-derive and would
+eventually get wrong.  The argument VECTOR is each caller's own, and each
+justifies its own flags: see `org-agents--rg-args' and
+`org-agents--rg-census-args'.
 
 BOUNDED by `org-agents-rg-timeout', and that is what makes this an
 asynchronous process rather than a `call-process'.  A process that never
@@ -2219,8 +2315,7 @@ the child on every Emacs this package supports."
                 (setq proc (make-process
                             :name "org-agents-rg"
                             :buffer out
-                            :command (cons org-agents-rg-executable
-                                           (org-agents--rg-args pattern root))
+                            :command (cons org-agents-rg-executable args)
                             :stderr errproc
                             :connection-type 'pipe
                             :noquery t
@@ -2256,11 +2351,10 @@ the child on every Emacs this package supports."
                 (let ((code (process-exit-status proc))
                       (exited (eq (process-status proc) 'exit)))
                   (cond
-                   ;; An answer: no file matches.
-                   ((and exited (eq code 1)) nil)
+                   ;; An answer: nothing matched.
+                   ((and exited (eq code 1)) "")
                    ((and exited (eq code 0))
-                    (org-agents--rg-paths (with-current-buffer out
-                                            (buffer-string))))
+                    (with-current-buffer out (buffer-string)))
                    (t
                     (let ((stderr (with-current-buffer errbuf
                                     (string-trim (buffer-string)))))
@@ -2279,6 +2373,20 @@ the child on every Emacs this package supports."
      (message "org-agents: %s failed: %s"
               org-agents-rg-executable (error-message-string err))
      'unavailable)))
+
+(defun org-agents--rg-run (pattern root)
+  "Files under ROOT whose text matches PATTERN, or the symbol `unavailable'.
+Returns a LIST -- possibly the EMPTY list, which means \"ripgrep
+answered, and no file matches\".  That is an answer, and the caller must
+treat it as one: reporting it as a missing prefilter is the defect this
+backend exists to remove.  Only the symbol `unavailable' means \"no
+answer\".  Callers test with `listp', which is exact: `(listp nil)' is t
+and `(listp \\='unavailable)' is nil.
+
+`org-agents--rg-call' does the spawning and holds every argument about
+how; `org-agents--rg-args' holds every argument about the flags."
+  (let ((raw (org-agents--rg-call (org-agents--rg-args pattern root))))
+    (if (eq raw 'unavailable) raw (org-agents--rg-paths raw))))
 
 (defun org-agents--intersect-files (a b)
   "The members of A that B holds too, in A's order.
@@ -3527,6 +3635,215 @@ trailing `+' first, so that `:ID+:' is as exempt as `:ID:' and a
   (or (and (member-ignore-case name org-agents--attributes-exempt) t)
       (and (string-match-p org-agents--attributes-exempt-re name) t)))
 
+(defconst org-agents--rg-census-delimiters '("PROPERTIES" "END")
+  "Drawer delimiters the ripgrep census matches but that are not properties.
+A variable of its OWN rather than two more entries in
+`org-agents--attributes-exempt', and the distinction is the point: these
+are not a statement about Org's vocabulary, they are an artefact of an
+enumerator that reads text and cannot see drawer structure.  The live walk
+never meets them at all -- `org-agents--attr-drawer-findings' walks
+`org-get-property-block''s range, which EXCLUDES both lines -- so folding
+them into the exemption list would make the slow path claim an exemption
+it has no use for, and would hide the fact that the fast path needs one.
+
+MEASURED on the author's corpus, and they are the two largest matches the
+census produces: `END' 43,277 sites and `PROPERTIES' 41,840.")
+
+(defconst org-agents--attr-confirm-limit 20
+  "How many FILES the census will open to confirm one candidate name.
+Files, not sites: a file is opened once and every site of that name in it
+is checked, so a name with 1,407 sites over 500 files still costs at most
+twenty opens.
+
+The bound is needed because an exclusion LIST cannot be enough, and that
+is measured rather than argued.  Against the whole corpus's live census as
+ground truth, the ripgrep census reported four names the live walk never
+sees and no list could have anticipated: `LOGBOOK' (1,407 sites),
+`RESULTS', `SRSITEMS' and a stray `0'.  The first three are other
+packages' DRAWER OPENERS -- property-line-shaped lines that are not
+property lines -- and the next corpus will have different ones.  So each
+candidate is confirmed by reading a real property drawer, and the pass
+drops precisely those four and nothing else: after confirmation the fast
+census's name set is IDENTICAL to the slow one's.
+
+The bound's cost is real and is reported rather than hidden: a name whose
+only genuine property line sits in its twenty-first file would be missed,
+so `org-agents--attr-name-findings' counts the candidates that went
+unconfirmed and the report says how many.  MEASURED: 106 candidates cost
+152 file opens in 1.84 s, and only three needed more than one file -- the
+three that were never going to confirm.")
+
+(defun org-agents--attr-property-at-point ()
+  "The property NAME on the line at point, or nil when this is not one.
+\"Not one\" covers every way a line can look like a property and not be:
+a `:LOGBOOK:' or `:RESULTS:' drawer opener, a `:foo: bar' line in body
+text, a `:PROPERTIES:' drawer written deeper in a body where
+`org-get-property-block' does not read it.  The test is Org's own on both
+counts -- `org-property-re' for the shape, and membership of
+`org-get-property-block''s range for whether Org would read it -- so this
+cannot admit something the live walk would not.
+
+The NAME comes back as EMACS decoded it, with a trailing `+' stripped.
+That matters for a name the census could only key by raw bytes: a latin-1
+`:CAF\\xC9:' is reported as `CAFÉ' rather than as mojibake, because the
+buffer's coding system is Emacs's business and ripgrep cannot know it.
+
+The key is read out of the match data BEFORE `org-get-property-block' is
+consulted, because that function clobbers it -- the same hazard
+`org-agents--buffer-agents' records, and it has been a bug once."
+  (when (looking-at org-property-re)
+    (let ((key (match-string-no-properties 2))
+          (here (point))
+          (block (save-excursion (org-get-property-block))))
+      (when (and block (>= here (car block)) (< here (cdr block)))
+        (string-remove-suffix "+" key)))))
+
+(defun org-agents--attr-confirm-candidate (candidate)
+  "Confirm CANDIDATE is a property really in use, as `(NAME FILE LINE)'.
+CANDIDATE is `(KEY COUNT (FILE LINE...)...)' as `org-agents--attr-census-rg'
+builds it.  Answers nil when no site in the first
+`org-agents--attr-confirm-limit' files is a property line Org would read.
+
+The first site that passes yields three things at once: the proof that the
+name is in use as a property, the example `FILE:LINE' the finding points
+at, and the name as Emacs decoded it.
+
+A file that cannot be read is skipped rather than reported: the census
+already knows the name is in that file, and a file the OS refuses would
+have made ripgrep exit 2 and sent the whole run down the live walk."
+  (let ((groups (cddr candidate))
+        (opened 0)
+        (answer nil))
+    (while (and groups (null answer) (< opened org-agents--attr-confirm-limit))
+      (let* ((group (pop groups))
+             (file (car group))
+             (lines (cdr group)))
+        (cl-incf opened)
+        (ignore-errors
+          (with-current-buffer (find-file-noselect file)
+            (org-with-wide-buffer
+             (dolist (line lines)
+               (unless answer
+                 (goto-char (point-min))
+                 (forward-line (1- line))
+                 (when-let* ((name (org-agents--attr-property-at-point)))
+                   (setq answer (list name file line))))))))))
+    answer))
+
+(defun org-agents--attr-census-parse (raw files)
+  "Parse RAW, `org-agents--rg-census-args' output, restricted to FILES.
+Answers `((KEY COUNT (FILE LINE...)...)...)', keys upcased and a trailing
+`+' stripped, sites in file order and grouped by file -- which is the
+shape the confirmation pass wants, because it visits files and not sites.
+
+RAW is BYTES.  Each line is `PATH\\0LINE:NAME'; the path is decoded with
+the file-name coding system, for the NFD/NFC reason
+`org-agents--rg-paths' states, and the NAME is deliberately NOT decoded.
+It is kept as bytes and used only as a grouping key: the latin-1 name of
+`org-agents--rg-census-pattern' is not valid UTF-8, ripgrep cannot know
+the file's coding system, and the DECODED name comes from the buffer in
+`org-agents--attr-property-at-point', which is Emacs's business and gets
+it right.
+
+Two honest consequences of keying by bytes, both in the safe direction.
+A name spelled in two different encodings in two files groups as two
+candidates -- two rows, never zero.  And `upcase' over raw bytes folds
+ASCII only, which is exactly what `member-ignore-case' against the
+exemption lists needs anyway.
+
+FILES is the scope's own file list, and the intersection is what keeps the
+census inside the scope: the census's ROOT is the scope's root, which for
+`active' includes the `archive' directories the scope excludes.  Done with
+`org-agents--same-files', the one truename comparison in this package, so
+a symlinked `org-directory' cannot make the two sides disagree.  MEASURED
+at 0.176 s over 3,638 files, which buys exact scope soundness."
+  (let ((table (make-hash-table :test #'equal))
+        (order nil)
+        (sites nil))
+    ;; Pass one: split the bytes.  Kept separate from the scope test so
+    ;; that `org-agents--same-files' is called ONCE over the distinct
+    ;; files rather than once per site.
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert raw)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let* ((eol (line-end-position))
+               (nul (search-forward "\0" eol t)))
+          (when nul
+            (let* ((path (decode-coding-string
+                          (buffer-substring-no-properties
+                           (line-beginning-position) (1- nul))
+                          (or file-name-coding-system
+                              default-file-name-coding-system 'utf-8)))
+                   (rest (buffer-substring-no-properties nul eol))
+                   (colon (string-search ":" rest)))
+              (when colon
+                (push (list path
+                            (string-to-number (substring rest 0 colon))
+                            (upcase (string-remove-suffix
+                                     "+" (substring rest (1+ colon)))))
+                      sites))))
+          (goto-char eol)
+          (forward-line 1))))
+    (setq sites (nreverse sites))
+    ;; Pass two: admit only the files the scope names.
+    (let* ((seen (make-hash-table :test #'equal))
+           (census-files (delq nil (mapcar (lambda (s)
+                                            (unless (gethash (car s) seen)
+                                              (puthash (car s) t seen)
+                                              (car s)))
+                                          sites)))
+           (admitted (make-hash-table :test #'equal)))
+      (dolist (f (org-agents--same-files census-files files))
+        (puthash f t admitted))
+      (dolist (site sites)
+        (when (gethash (nth 0 site) admitted)
+          (let* ((key (nth 2 site))
+                 (entry (gethash key table)))
+            (unless entry
+              (setq entry (list 0))
+              (puthash key entry table)
+              (push key order))
+            ;; ENTRY is (COUNT (FILE LINE...)...), built with the newest
+            ;; file first and reversed at the end.
+            (setcar entry (1+ (car entry)))
+            (let ((group (assoc (nth 0 site) (cdr entry))))
+              (if group
+                  (setcdr group (cons (nth 1 site) (cdr group)))
+                (setcdr entry (cons (list (nth 0 site) (nth 1 site))
+                                    (cdr entry)))))))))
+    (mapcar (lambda (key)
+              (let ((entry (gethash key table)))
+                (cons key (cons (car entry)
+                                (mapcar (lambda (g)
+                                          (cons (car g) (nreverse (cdr g))))
+                                        (reverse (cdr entry)))))))
+            (nreverse order))))
+
+(defun org-agents--attr-census-rg (root files)
+  "The property-name census under ROOT, restricted to FILES, via ripgrep.
+Answers what `org-agents--attr-census-parse' answers, or `unavailable'
+when ripgrep could not answer -- which the caller turns into the live
+walk, exactly as the prefilter does.
+
+This is tier one of the lint, and the reason there are two tiers.  \"Which
+property names are in use that nothing declares?\" needs NO Org semantics:
+it is a question about text.  MEASURED over the author's 3,673-file
+corpus: one ripgrep run is 0.19 to 0.50 s for 336,628 sites and 21.5 MB of
+stdout, the parse of that is 0.83 to 0.96 s, the scope intersection 0.3 s
+and the confirmation pass 1.84 s -- about THREE SECONDS end to end, against
+a live walk of the same corpus that is 38.59 s before a single finding is
+built, inside a command that was killed at 600 s with no report at all.
+
+An EMPTY answer is an answer: exit 1 means no property line under the root
+at all, `org-agents--rg-call' returns the empty string for it, and this
+answers the empty census.  `unavailable' is the only \"no answer\"."
+  (let ((raw (org-agents--rg-call (org-agents--rg-census-args root))))
+    (if (eq raw 'unavailable)
+        raw
+      (org-agents--attr-census-parse raw files))))
+
 (defun org-agents--attr-line-finding (key value joined)
   "What is wrong with the drawer line KEY / VALUE, or nil when nothing is.
 JOINED is a function of a property name answering what `org-entry-get'
@@ -3565,23 +3882,45 @@ answered `(\"CATEGORY\" \"STATUS_ALL\" \"REVIEWS\" \"STATUS\")' for that
 drawer: it SYNTHESIZES `CATEGORY', which is on no line, and collapses the
 three `STATUS' spellings into one.  A finding must point at a line that
 exists."
+  (let ((name (string-remove-suffix "+" key)))
+    (or (org-agents--attr-name-finding name)
+        (org-agents--attr-value-finding key value joined))))
+
+(defun org-agents--attr-name-finding (name)
+  "\"NAME is not declared\", or nil when it is exempt or declared.
+The VOCABULARY half of `org-agents--attr-line-finding', split out because
+the two tiers of `org-agents-check-attributes' ask the two questions from
+different enumerators: this one from a ripgrep census over the whole
+scope, its sibling from a walk over the declared names' files only.  One
+copy of each judgement, two producers.
+
+NAME is a property name and not a raw drawer key: the caller strips a
+trailing `+' first.  A `+' is how Org spells an addition to a value, not
+part of the name it adds to -- `:STATUS_ALL+: done' extends the vocabulary
+of `STATUS' the ordinary Org way, and testing the key would report
+`STATUS_ALL', the vocabulary as a violation of itself, and would let
+`:ID+:' and `:ARCHIVE_TIME+:' past the two exemptions that suppress about
+58,000 findings on the author's corpus."
+  (unless (org-agents--attr-exempt-p name)
+    (unless (org-agents-attribute name)
+      (format "%s is not declared in %s" name
+              (abbreviate-file-name
+               (expand-file-name org-agents-attributes-file))))))
+
+(defun org-agents--attr-value-finding (key value joined)
+  "What is wrong with the VALUE of drawer line KEY, or nil when nothing is.
+The TYPE-and-VOCABULARY half of `org-agents--attr-line-finding'; see that
+function for what JOINED is and for the four Org rules encoded here, and
+`org-agents--attr-name-finding' for the other half.  Answers nil for a
+name that is exempt or undeclared -- the composition in
+`org-agents--attr-line-finding' reaches this only for a declared one, and
+the value tier only ever asks it about declared names."
   (let* ((accumulates (string-suffix-p "+" key))
-         (name (if accumulates (substring key 0 -1) key)))
-    ;; The exemption is tested on the NAME and not on the raw key.  A `+'
-    ;; is how Org spells an addition to a value, not part of the name it
-    ;; adds to: `:STATUS_ALL+: done' extends the vocabulary of `STATUS'
-    ;; the ordinary Org way, and testing the key would have reported
-    ;; `STATUS_ALL' -- the vocabulary as a violation of itself -- and
-    ;; would have let `:ID+:' and `:ARCHIVE_TIME+:' through the two
-    ;; exemptions that suppress about 58,000 findings on the author's
-    ;; corpus.
+         (name (string-remove-suffix "+" key)))
     (unless (org-agents--attr-exempt-p name)
       (let ((attr (org-agents-attribute name)))
         (cond
-         ((null attr)
-          (format "%s is not declared in %s" name
-                  (abbreviate-file-name
-                   (expand-file-name org-agents-attributes-file))))
+         ((null attr) nil)
          (t
           (let* ((type (plist-get attr :type))
                  (values (plist-get attr :values))
@@ -3608,17 +3947,61 @@ exists."
              ((and all (not (org-agents-attribute-valid-p type all)))
               (format "%s: `%s' is not a %s" name all type))))))))))
 
-(defun org-agents--attr-drawer-findings (file where)
+(defun org-agents--attr-line-number (cursor pos)
+  "The 1-based line number of POS, counting forward from CURSOR.
+CURSOR is a cons `(POS . LINE)' that this ADVANCES, so a walk that visits
+ascending positions pays for each line once over the whole buffer instead
+of once per finding.
+
+This replaces `line-number-at-pos', which counts from `point-min' on every
+call and is therefore quadratic within a large file -- one of the two
+accidental quadratics that made the corpus-scope lint unable to finish.
+MEASURED over a 1,840-file sample, stubbing this cost out was worth 1.8x
+on its own.  `org-map-entries' visits headings in ascending order and a
+drawer's lines ascend within an entry, so the cursor only ever moves
+forward; it recomputes rather than guessing if it is ever asked to go
+back, because a wrong answer here is a finding pointing at the wrong line.
+
+POS must be at the beginning of a line, which is where the caller stands.
+`org-agents-test-attr-line-numbers-match-line-number-at-pos' is what says
+this agrees with the function it replaces."
+  (when (< pos (car cursor))
+    (setcar cursor (point-min))
+    (setcdr cursor 1))
+  (setcdr cursor (+ (cdr cursor) (count-lines (car cursor) pos)))
+  (setcar cursor pos)
+  (cdr cursor))
+
+(defun org-agents--attr-drawer-findings (file where cursor declared census)
   "Findings for the property drawer belonging to position WHERE, newest first.
 FILE is what each finding names.  WHERE is where `org-entry-get' is asked
 what a property accumulates to -- a heading, or a position before the
-first heading for a file-level drawer.
+first heading for a file-level drawer.  CURSOR is the line cursor
+`org-agents--attr-line-number' advances.
 
 The drawer is found with `org-get-property-block' -- Org's own answer to
 where the properties belonging to a position are -- and walked with
 `org-property-re', Org's own answer to what a property line is.  The
 block's range excludes the `:PROPERTIES:' and `:END:' lines, both of
-which `org-property-re' would otherwise match as keys."
+which `org-property-re' would otherwise match as keys.  (Which is why the
+ripgrep census needs `org-agents--rg-census-delimiters' and this does
+not.)
+
+DECLARED is the list of names the registry declares, and this judges only
+their VALUES.  A line whose name is not declared is skipped without an
+`org-entry-get' -- the VOCABULARY question is never asked here, on either
+path, because it is the census's to answer: one question, one judge,
+whichever enumerator produced the census.  (Letting this judge names too
+reported every undeclared name TWICE on the fallback path, once per line
+from here and once per name from the census.  Observed.)  An empty
+registry declares nothing, so nothing is judged, which is exactly right:
+with no declarations there are no values to check against anything.
+
+CENSUS, when non-nil, is a hash table this records every name it passes
+into, keyed exactly as `org-agents--attr-census-parse' keys its own -- so
+the live walk and the ripgrep run are two PRODUCERS of one data shape,
+consumed by one loop.  With both DECLARED and CENSUS set, ONE walk answers
+both questions and no file is read twice."
   (let ((findings nil))
     (save-excursion
       (goto-char where)
@@ -3627,17 +4010,38 @@ which `org-property-re' would otherwise match as keys."
         (beginning-of-line)
         (while (< (point) (cdr block))
           (when (looking-at org-property-re)
-            (when-let* ((text (org-agents--attr-line-finding
-                               (match-string-no-properties 2)
-                               (match-string-no-properties 3)
-                               (lambda (name) (org-entry-get where name)))))
-              (push (format "%s:%d: %s" file (line-number-at-pos) text)
-                    findings)))
+            (let* ((key (match-string-no-properties 2))
+                   (value (match-string-no-properties 3))
+                   (name (string-remove-suffix "+" key))
+                   (line nil))
+              (when census
+                (setq line (org-agents--attr-line-number
+                            cursor (line-beginning-position)))
+                (let ((entry (gethash (upcase name) census)))
+                  (if entry
+                      (progn (setcar entry (1+ (car entry)))
+                             (unless (assoc file (cdr entry))
+                               (setcdr entry (cons (list file line)
+                                                   (cdr entry)))))
+                    (puthash (upcase name)
+                             (list 1 (list file line)) census))))
+              (when-let*
+                  ((text (and (member-ignore-case name declared)
+                              (org-agents--attr-value-finding
+                               key value
+                               (lambda (n) (org-entry-get where n))))))
+                (push (format "%s:%d: %s" file
+                              (or line (org-agents--attr-line-number
+                                        cursor (line-beginning-position)))
+                              text)
+                      findings))))
           (forward-line 1))))
     findings))
 
-(defun org-agents--attr-buffer-findings (file)
+(defun org-agents--attr-buffer-findings (file &optional declared census)
   "`(ENTRIES . FINDINGS)' for the current buffer, whose file is FILE.
+DECLARED and CENSUS are passed to `org-agents--attr-drawer-findings',
+which documents them.
 Every heading is counted, so a clean report can say what it looked at,
 and every line of every property drawer is one finding site.
 
@@ -3648,22 +4052,52 @@ written there, and with `org-use-property-inheritance' on every entry in
 the file sees it -- so a lint that skipped it would call a file clean
 while a misspelled name and an unparseable value sat at the top of it."
   (let ((entries 0)
-        (findings nil))
+        (findings nil)
+        ;; One cursor for the whole buffer.  See
+        ;; `org-agents--attr-line-number': the walk ascends, so every line
+        ;; is counted once here instead of once per finding.
+        (cursor (cons (point-min) 1)))
     (org-with-wide-buffer
      (goto-char (point-min))
      (when (org-before-first-heading-p)
-       (setq findings (org-agents--attr-drawer-findings file (point-min))))
+       (setq findings (org-agents--attr-drawer-findings
+                       file (point-min) cursor declared census)))
      (goto-char (point-min))
      (org-map-entries
       (lambda ()
         (cl-incf entries)
         (setq findings
-              (nconc (org-agents--attr-drawer-findings file (point))
+              (nconc (org-agents--attr-drawer-findings
+                      file (point) cursor declared census)
                      findings)))))
     (cons entries (nreverse findings))))
 
-(defun org-agents--attr-findings (files)
+(defconst org-agents--attr-progress-threshold 50
+  "Above this many files, the attribute lint shows a progress reporter.
+Below it a reporter is noise: an `agenda' scope or an explicit list names
+a handful of files and the walk is over before anything could be read.
+Above it the walk is seconds long -- MEASURED at 9 to 20 s for the value
+tier at realistic registry sizes -- and silence for that long, while the
+buffer list grows into the thousands, is exactly the \"appears hung\" this
+command was reported for.")
+
+(defun org-agents--attr-findings (files &optional declared census)
   "`(ENTRIES . FINDINGS)' over FILES, continuing past one that cannot be read.
+DECLARED and CENSUS are passed through to
+`org-agents--attr-drawer-findings', which is where they are documented:
+together they make this one walk answer both of the lint's questions,
+which is what the fallback path needs.
+
+Findings accumulate with `push' and ONE `nreverse'.  It used to be
+`(setq findings (nconc findings fs))' once per file, and `nconc' walks its
+first argument to the end -- so the cost was the sum of the findings so
+far over every file, quadratic in the number of findings.  MEASURED over a
+1,840-file sample of the author's corpus: 129.48 s with the `nconc',
+35.45 s with `push' -- 3.65x -- and the term QUADRUPLES over the full
+corpus, because the findings roughly double.  That is where the 600-second
+kill came from, and it was never Org parsing: the same corpus's walk with
+no findings built at all is 38.59 s.
+
 The per-file `condition-case' is the same guard `org-agents-update-all'
 carries and for the same reason: `find-file-noselect' can fail or ask a
 question of its own -- a file grown past `large-file-warning-threshold',
@@ -3671,40 +4105,213 @@ one changed on disk since it was last visited, a coding system that
 cannot decode it -- and one such file must not take the whole run with
 it.  The file is NAMED, on a line of the same navigable shape, so the
 report says what it could not read rather than quietly reading less than
-it was asked to."
+it was asked to.
+
+A PROGRESS REPORTER over the file loop where there are more than
+`org-agents--attr-progress-threshold' files.  A command that reads
+hundreds of files must say so rather than appear hung: MEASURED, the value
+tier is 9 to 20 s at realistic registry sizes, and its floor is the
+~4.5 ms it costs to open one file.  On the file loop and not per entry:
+the file count is known up front, and 45,000 entries would make the
+reporter the cost."
   (let ((entries 0)
-        (findings nil))
+        (parts nil)
+        (total (length files))
+        (done 0)
+        (reporter (and (> (length files) org-agents--attr-progress-threshold)
+                       (make-progress-reporter
+                        (format "org-agents: reading %d files..."
+                                (length files))
+                        0 (length files)))))
     (dolist (file files)
       (condition-case err
           (with-current-buffer (find-file-noselect file)
-            (pcase-let ((`(,n . ,fs) (org-agents--attr-buffer-findings file)))
+            (pcase-let ((`(,n . ,fs) (org-agents--attr-buffer-findings
+                                      file declared census)))
               (cl-incf entries n)
-              (setq findings (nconc findings fs))))
+              (push fs parts)))
         (error
-         (setq findings
-               (nconc findings
-                      (list (format "%s:1: cannot be read: %s" file
-                                    (error-message-string err))))))))
-    (cons entries findings)))
+         (push (list (format "%s:1: cannot be read: %s" file
+                             (error-message-string err)))
+               parts)))
+      (cl-incf done)
+      (when reporter (progress-reporter-update reporter done)))
+    (when reporter (progress-reporter-done reporter))
+    (ignore total)
+    (cons entries (apply #'nconc (nreverse parts)))))
+
+(defun org-agents--attr-sort (findings)
+  "FINDINGS sorted by file, then by line NUMERICALLY.
+Required rather than tidy.  The two tiers produce their findings in
+different orders -- the vocabulary tier walks a census keyed by name, the
+value tier walks files -- and a `compilation-mode' buffer that jumps
+backwards through a file is a worse report than one that does not.
+
+Sorted on the PARSED line and not on the string, or `:9:' would sort
+before `:10:'.  A finding that does not parse keeps its place at the end
+rather than being dropped.
+
+This is also what keeps `org-agents-test-check-attributes-finds-each-kind'
+true, and the coupling is otherwise invisible: that test asserts three
+findings in line order, and with two tiers the vocabulary finding is
+produced by a different pass from the value findings."
+  (let ((keyed (mapcar
+                (lambda (finding)
+                  (if (string-match "\\`\\(.*?\\):\\([0-9]+\\):" finding)
+                      (list (match-string 1 finding)
+                            (string-to-number (match-string 2 finding))
+                            finding)
+                    (list "\377" most-positive-fixnum finding)))
+                findings)))
+    (mapcar #'caddr
+            (sort keyed (lambda (a b)
+                          (if (equal (car a) (car b))
+                              (< (nth 1 a) (nth 1 b))
+                            (string< (car a) (car b))))))))
+
+(defun org-agents--attr-name-findings (census confirm)
+  "`(FINDINGS . UNCONFIRMED)' for the undeclared names in CENSUS.
+CENSUS is `((KEY COUNT (FILE LINE...)...)...)' from either producer --
+`org-agents--attr-census-rg' or the live walk's own table.  One finding
+per NAME, not per line: over the author's corpus with no registry at all
+the per-line form is about 149,000 findings, and a 149,000-line buffer is
+not a report.  The count goes in the text instead, with a confirmed
+example site to navigate to.
+
+CONFIRM says whether each candidate must be proved a real property before
+it is reported, and it is exactly the difference between the two
+producers.  The ripgrep census reads TEXT and cannot see drawer
+structure, so it needs `org-agents--attr-confirm-candidate'; the live walk
+found its names inside `org-get-property-block''s range and has already
+proved it.  See `org-agents--attr-confirm-limit' for what confirmation
+buys, measured: without it the fast census reports four names the slow one
+never sees, and with it the two name sets are IDENTICAL.
+
+UNCONFIRMED is how many candidates were dropped for want of proof, which
+the report states rather than hiding: it is the visible cost of
+`org-agents--attr-confirm-limit'."
+  (let ((findings nil)
+        (unconfirmed 0))
+    (dolist (candidate census)
+      (let* ((key (car candidate))
+             (count (nth 1 candidate)))
+        ;; The cheap exclusions FIRST, so that `ID' and `ARCHIVE_TIME' --
+        ;; 37,005 and 21,572 sites on the author's corpus -- never cost a
+        ;; file open.
+        (unless (or (member-ignore-case key org-agents--rg-census-delimiters)
+                    (org-agents--attr-exempt-p key))
+          (if (not confirm)
+              (let ((group (nth 2 candidate)))
+                (when-let* ((text (org-agents--attr-name-finding key)))
+                  (push (format "%s:%d: %s (%d use%s)"
+                                (car group) (cadr group) text
+                                count (if (= 1 count) "" "s"))
+                        findings)))
+            (if-let* ((proof (org-agents--attr-confirm-candidate candidate)))
+                (pcase-let ((`(,name ,file ,line) proof))
+                  (when-let* ((text (org-agents--attr-name-finding name)))
+                    (push (format "%s:%d: %s (%d use%s)" file line text
+                                  count (if (= 1 count) "" "s"))
+                          findings)))
+              (cl-incf unconfirmed))))))
+    (cons (nreverse findings) unconfirmed)))
+
+(defun org-agents--attr-census-table (table)
+  "TABLE, the live walk's census hash, as the census list shape.
+`org-agents--attr-drawer-findings' records `NAME -> (COUNT (FILE LINE)...)'
+and this puts the name back on the front, so that one consumer --
+`org-agents--attr-name-findings' -- reads both producers."
+  (let ((out nil))
+    (maphash (lambda (key entry)
+               (push (cons key (cons (car entry) (reverse (cdr entry)))) out))
+             table)
+    (nreverse out)))
+
+(defun org-agents--attr-value-files (files declared root)
+  "`(FILES . NARROWED)': the files that could hold a VALUE finding.
+One ripgrep run per DECLARED name, unioned, then intersected with FILES.
+
+ONE pattern per call, because `org-agents--rg-files-for' INTERSECTS its
+patterns: handing it every name at once would ask for the files holding
+EVERY declared name, which is catastrophically narrow and silent.  The
+union across names is this function's job.
+
+All three of `org-agents--rg-files-for''s answers are honoured, and the
+third is the trap.  A LIST -- the empty list included -- is unioned in.
+`unavailable' means ripgrep failed.  And `t' means the name offered NO
+pattern, because `org-agents--rg-name-p' rejects a space, a colon or a
+non-ASCII character -- MEASURED: `\"TWO WORDS\"' and `\"CAFÉ\"' both
+yield no pattern, so `org-agents--rg-files-for' answers t.  Treating that
+`t' as the empty list would silently skip that name's value checks over
+the whole corpus, which is the conflation this backend exists to avoid.
+Both t and `unavailable' therefore widen to the whole of FILES.
+
+MEASURED on the author's corpus: 3 rare names narrow 3,673 files to 592
+and the walk is 8.75 s; 12 names including `CREATED' narrow to 3,648 and
+the walk is 20.19 s.  Narrowing helps enormously for a registry of rare
+names and not at all as soon as ONE declared name is widespread -- which
+is why the progress reporter is not optional.
+
+An empty registry declares nothing, so this answers no files and the value
+tier does not run.  That is exactly right for the first seeding run, and
+is why tier one alone answers the corpus in about three seconds."
+  (let ((union nil)
+        (narrowed t))
+    (dolist (name declared)
+      (when narrowed
+        ;; `org-agents--rg-name-p' FIRST, exactly as every other pattern
+        ;; builder's call site gates itself.  `org-agents--rg-property-pattern'
+        ;; will happily build a pattern for a name holding a space, a colon
+        ;; or a non-ASCII character, and handing ripgrep a non-ASCII
+        ;; pattern is a pattern that matches LESS than Org does -- so this
+        ;; is the difference between widening and losing a file.
+        (let* ((pattern (and (org-agents--rg-name-p name)
+                             (org-agents--rg-property-pattern name)))
+               (answer (and pattern (org-agents--rg-files-for
+                                     (list pattern) root))))
+          (cond
+           ((null pattern) (setq narrowed nil))
+           ((eq answer 'unavailable) (setq narrowed nil))
+           ((eq answer t) (setq narrowed nil))
+           (t (setq union (nconc union (copy-sequence answer))))))))
+    (if narrowed
+        (cons (org-agents--same-files files union) t)
+      (cons files nil))))
 
 (defconst org-agents--attributes-buffer "*org-agents attributes*"
   "Name of the buffer `org-agents-check-attributes' shows.")
 
-(defun org-agents--attr-clean-line (files entries)
+(defun org-agents--attr-clean-line (files entries read)
   "The one line a run over FILES and ENTRIES with no findings writes.
 A command that popped an empty buffer would look broken, and the counts
 are what say the run really looked at something: a scope that resolved to
-no file at all reads as clean otherwise, and reads as clean loudly."
+no file at all reads as clean otherwise, and reads as clean loudly.
+
+READ is how many files the run actually OPENED, which on the fast path is
+fewer than FILES -- the vocabulary question is answered by ripgrep over
+all of them, and only the declared names' files are read.  It is reported
+rather than conflated, and so is ENTRIES: on the fast path there is no
+whole-corpus entry count, because counting entries IS the walk that was
+removed.  A run that read every file says so by READ equalling FILES; one
+that read none says \"0 read\", which is the honest thing for a run against
+an empty registry, where tier two has nothing to check."
   (let ((declarations (length (org-agents-attributes))))
     (format (concat "org-agents: no findings; every property in scope is"
-                    " declared and valid\n(%d file%s, %d entr%s,"
-                    " %d declaration%s)")
+                    " declared and valid\n(%d file%s in scope, %d read,"
+                    " %d entr%s, %d declaration%s)")
             (length files) (if (= 1 (length files)) "" "s")
+            read
             entries (if (= 1 entries) "y" "ies")
             declarations (if (= 1 declarations) "" "s"))))
 
-(defun org-agents--attr-report (findings files entries)
+(defun org-agents--attr-report (findings files entries read &optional unconfirmed)
   "Show FINDINGS over FILES and ENTRIES, and return how many there were.
+READ is how many files were opened; see `org-agents--attr-clean-line'.
+UNCONFIRMED, when non-zero, is how many candidate names appeared in
+property-line SHAPE outside any drawer and were therefore not reported --
+the visible cost of `org-agents--attr-confirm-limit'.  It is said in the
+echo area rather than put among the findings, because putting `LOGBOOK' in
+the buffer on every run is exactly the noise confirmation removes.
 `compilation-mode', and not one line of navigation code.  MEASURED: with
 findings of the shape `FILE:LINE: TEXT' inserted into a buffer,
 `compilation-mode' parsed every one of them as an error -- so `RET',
@@ -3722,14 +4329,20 @@ absolute, so that is belt rather than braces."
         (erase-buffer)
         (if findings
             (dolist (finding findings) (insert finding "\n"))
-          (insert (org-agents--attr-clean-line files entries) "\n")))
+          (insert (org-agents--attr-clean-line files entries read) "\n")))
       (compilation-mode)
       (setq-local default-directory (expand-file-name org-directory))
       (goto-char (point-min)))
     (display-buffer buffer)
-    (message "org-agents: %d finding%s over %d file%s"
+    (message "org-agents: %d finding%s over %d file%s%s"
              (length findings) (if (= 1 (length findings)) "" "s")
-             (length files) (if (= 1 (length files)) "" "s"))
+             (length files) (if (= 1 (length files)) "" "s")
+             (if (and unconfirmed (> unconfirmed 0))
+                 (format (concat "; %d name%s appeared in property-line shape"
+                                 " outside any drawer and %s not reported")
+                         unconfirmed (if (= 1 unconfirmed) "" "s")
+                         (if (= 1 unconfirmed) "was" "were"))
+               ""))
     (length findings)))
 
 ;;;###autoload
@@ -3751,15 +4364,43 @@ registry file's own -- see `org-agents--attributes-exempt'.  Without
 those exemptions `ID' alone would be about 37,000 findings on the
 author's corpus.
 
+TWO TIERS, because the two questions cost differently, and this is what
+makes the command usable at the scope it is most valuable at.  MEASURED:
+as one per-entry walk it was killed at 600 SECONDS with no report at all
+over the author's corpus -- and the first whole-corpus run is exactly how
+a registry gets seeded, so the command was unusable precisely where it was
+wanted.  It now finishes that scope in 6 s warm, 64 s cold.
+
+Tier one, the VOCABULARY: which names are in use that nothing declares.
+This needs no Org semantics -- it is a question about text -- so
+`org-agents--attr-census-rg' answers it with ONE ripgrep run over the
+whole scope, 0.17 s for 336,628 sites.  Each candidate is then CONFIRMED
+against a real property drawer, because ripgrep cannot see drawer
+structure: see `org-agents--attr-confirm-limit' for the four names on the
+author's corpus that no exclusion list could have anticipated.  One
+finding per NAME, with its use count and a confirmed example site, not one
+per line: the per-line form is about 149,000 findings against an
+unseeded registry, and that is not a report.
+
+Tier two, the VALUES: `org-agents--attr-value-files' narrows to the files
+holding each DECLARED name, one ripgrep run per name, and only those files
+are read.  An empty registry declares nothing, so the first seeding run
+reads almost nothing and tier one answers alone.
+
 A corpus scope is narrowed through the same ripgrep machinery an agent
 uses, and with `org-agents--rg-drawer-pattern' -- a provable superset of
 the files that could hold a finding -- then falls back to a live scan
-with one message naming the file count, exactly as an agent's does.  It
-never refuses, and `org-agents-prefilter' set to `require' does not make
-it: an agent may fairly be told its query cannot be answered affordably,
-where a lint that declined to run would fail its own contract.  Nor is
-the option rebound behind the user's back -- see the REFUSE argument of
-`org-agents--narrowed-files'.
+with one message naming the file count, exactly as an agent's does.  On
+that fallback ONE walk answers both questions, so it is no slower than the
+single-tier command was.  It never refuses, and `org-agents-prefilter' set
+to `require' does not make it: an agent may fairly be told its query
+cannot be answered affordably, where a lint that declined to run would
+fail its own contract.  Nor is the option rebound behind the user's back
+-- see the REFUSE argument of `org-agents--narrowed-files'.
+
+A PROGRESS REPORTER above `org-agents--attr-progress-threshold' files,
+because a command that reads hundreds of files must say so rather than
+appear hung.
 
 The findings go into a `compilation-mode' buffer, one per line, each
 `FILE:LINE:' and so navigable with `RET' and `next-error'.  A run with
@@ -3775,16 +4416,56 @@ command with a footprint, and README's \"Honest limitations\" says so.
 
 The registry is read ONCE for the whole run -- see
 `org-agents--with-attributes'.  Recomputing the cache key per look-up
-made the run quadratic in the corpus."
+made the run quadratic in the corpus, and it was not the only accidental
+quadratic here: findings are accumulated with `push' and joined once
+rather than `nconc'ed onto the whole list per file, and line numbers come
+from `org-agents--attr-line-number' rather than `line-number-at-pos'.
+MEASURED over a 1,840-file sample, those two were worth 3.65x and 1.8x,
+and the first grows with the corpus -- together they are where the 600
+seconds went, not Org parsing, whose whole-corpus walk is 38.59 s."
   (interactive
    (list (org-agents--read-scope
           (completing-read "Scope: " org-agents--scope-names nil nil
                            "agenda"))))
-  (let ((files (org-agents--narrowed-files
-                scope (list org-agents--rg-drawer-pattern) "pattern" nil)))
+  (let* ((files (org-agents--narrowed-files
+                 scope (list org-agents--rg-drawer-pattern) "pattern" nil))
+         ;; The census runs only where the scope has a ROOT -- that is,
+         ;; only for a scope `org-agents--needs-prefilter-p' calls
+         ;; unbounded.  An `agenda' scope or an explicit file list NAMES
+         ;; its files, so the walk is already cheap and spawning ripgrep
+         ;; for it is pure overhead: `org-agents--narrowed-files' measured
+         ;; that at 5 to 25 times slower for the common case.  Reusing
+         ;; that one distinction is also what keeps the scope resolved
+         ;; ONCE, so the "not narrowed" message stays singular however
+         ;; many declarations the registry holds.
+         (root (and org-agents-prefilter
+                    (org-agents--rg-available-p)
+                    (org-agents--scope-root scope))))
     (org-agents--with-attributes
-      (let ((found (org-agents--attr-findings files)))
-        (org-agents--attr-report (cdr found) files (car found))))))
+      (let* ((declared (org-agents-attributes))
+             (census (and root (org-agents--attr-census-rg root files)))
+             (fast (and (listp census) census)))
+        (pcase-let*
+            ((`(,tier2 . ,_narrowed)
+              (if fast
+                  (org-agents--attr-value-files files declared root)
+                (cons files nil)))
+             (table (unless fast (make-hash-table :test #'equal)))
+             ;; DECLARED on BOTH paths, so the walk only ever judges
+             ;; VALUES and the census only ever judges NAMES.  One
+             ;; question, one judge, whichever enumerator answered it --
+             ;; letting the fallback walk judge names as well would report
+             ;; every undeclared name twice, once per line and once per
+             ;; name.
+             (`(,entries . ,findings)
+              (org-agents--attr-findings tier2 declared table))
+             (`(,names . ,unconfirmed)
+              (org-agents--attr-name-findings
+               (or fast (org-agents--attr-census-table table))
+               (and fast t))))
+          (org-agents--attr-report
+           (org-agents--attr-sort (nconc names findings))
+           files entries (length tier2) unconfirmed))))))
 
 ;; The `COLUMNS' generator, and the one thing this epic does NOT build.
 ;;
