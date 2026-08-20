@@ -663,6 +663,24 @@ Where nothing declares a face the mode answers before resolving anything at
 all, so a corpus with no registry pays a regexp scan of the displayed region
 and nothing else. That is what makes arming every Org buffer affordable.
 
+### It follows an edit, with one gap
+
+Change `:STATUS:` in an entry's drawer and the face on the headline above it
+moves with it. That takes a hook of its own, because a change refontifies
+its own line and the face and the value are on different lines: without it,
+measured, the headline kept the old value's colour until something unrelated
+forced a refontification — a display asserting a value the drawer no longer
+held.
+
+The gap is edits **elsewhere**. A change to the registry's `ATTR_FACES` or
+`ATTR_DEFAULT`, to a prototype master, or to a `:PROTOTYPE:` line in another
+buffer moves a resolved value in every follower at once, and nothing here
+refontifies a buffer other than the one being edited. An armed buffer left
+open across such an edit keeps its old colour until it is refontified — by
+`M-x font-lock-flush`, or simply by being scrolled away and back. Watching
+the registry from a change hook in an unrelated buffer is a great deal more
+machinery than the case is worth, and nothing is wrong in the file.
+
 ### Precedence
 
 Two collisions, one rule each.

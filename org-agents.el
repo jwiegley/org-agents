@@ -5455,6 +5455,13 @@ for a user who asked for it by name."
 ;; one missing master produce twenty messages unbound and one bound, and
 ;; unbound those would be twenty messages PER REDISPLAY.
 ;;
+;; And the face FOLLOWS an edit to the value it is drawn from, which needs a
+;; second hook of the same kind and for the same reason -- the face is on the
+;; headline and the value is in the drawer below it, and a change refontifies
+;; its own line.  `org-agents--faces-extend-region' says what
+;; `jit-lock-after-change' does not reach, and what this mode does not reach
+;; either: an edit to the registry, or to a master in another buffer.
+;;
 ;; Two refusals, and they are refusals rather than omissions.
 ;;
 ;; NO GEOMETRY.  Tinderbox's `$Width', `$Xpos' and `$Height' describe a
@@ -5536,6 +5543,18 @@ MEASURED, an Org buffer does not localize that variable -- only
 `kill-local-variable'.  But another mode may have localized it first, and
 MEASURED, an unconditional `kill-local-variable' loses that mode's value
 for good.  Which of the two restores is right is what this records.")
+
+(defvar-local org-agents--faces-outer-extend nil
+  "What `font-lock-extend-after-change-region-function' was before the wrap.
+Meaningful only where `org-agents--faces-outer-extend-local' is non-nil.
+An Org buffer HAS localized this one -- `org-mode' sets it to
+`org-fontify-extend-region' -- so unlike the region function this record
+is the ordinary case rather than the unusual one.")
+
+(defvar-local org-agents--faces-outer-extend-local nil
+  "Non-nil when `font-lock-extend-after-change-region-function' was local.
+The same record `org-agents--faces-outer-local' keeps for the region
+function, for the same reason, and it is t in every Org buffer.")
 
 (defun org-agents--faces-warned-table ()
   "This buffer's diagnostic table, fresh where the registry has changed.
@@ -5679,6 +5698,57 @@ underneath."
                  #'font-lock-default-fontify-region)
                beg end loudly))))
 
+(defun org-agents--faces-extend-region (beg end old-len)
+  "Extend a post-change refontification back to the enclosing HEADLINE.
+For `font-lock-extend-after-change-region-function', and it is what makes
+the face follow an EDIT to the value it is drawn from.
+
+The face is on the headline and the value is in the drawer under it, so
+the two are on different lines -- and a change refontifies its own line.
+MEASURED under real jit-lock, without this: changing `:STATUS: blocked'
+to `:STATUS: done' in a drawer left the headline reading
+`(org-warning org-level-1)' after a whole-buffer `jit-lock-fontify-now',
+and only an explicit `font-lock-flush' moved it to `(org-done
+org-level-1)'.  The display was asserting a value the drawer no longer
+held, in a mode whose whole pitch is that the face sees what grep cannot.
+`jit-lock-after-change' clears the `fontified' property over the changed
+line only, and Org's own `org-fontify-extend-region' extends for `\\[',
+`#+begin_' and `\\begin{' blocks and never back to a heading.
+
+So the extension is ours to make, and it is the cheapest one that
+answers: one regexp search backwards for the enclosing headline, which
+costs an entry's worth of buffer and adds that entry's ONE resolution to
+the region font-lock was going to fontify anyway.
+
+The outer function is called FIRST and its answer widened rather than
+replaced, so Org's block extension still happens underneath -- the same
+shape `org-agents--faces-fontify-region' has, for the same reason.  BEG,
+END and OLD-LEN are `after-change-functions''s three, and OLD-LEN is
+passed on rather than read here.
+
+What this does NOT reach, and no hook in this mode does: a change to the
+REGISTRY, to a prototype MASTER out in the corpus, or to a `:PROTOTYPE:'
+line in another buffer.  Any of those moves a resolved value in every
+follower buffer at once, and nothing here refontifies a buffer other than
+the one being edited -- so a corpus buffer left open across such an edit
+keeps its old colour until it is refontified, by `M-x font-lock-flush' or
+by scrolling away and back.  Documented rather than fixed: flushing every
+armed buffer on a registry edit means watching the registry's cache key
+from a change hook in an unrelated buffer, which is a great deal more
+machinery than the case is worth, and the value it draws is right again
+the moment the buffer is refontified."
+  (let* ((outer (and org-agents--faces-outer-extend-local
+                     org-agents--faces-outer-extend))
+         (region (and outer (funcall outer beg end old-len)))
+         (from (if region (min beg (car region)) beg))
+         (to (if region (max end (cdr region)) end)))
+    (cons (save-excursion
+            (save-match-data
+              (goto-char from)
+              (forward-line 1)
+              (if (re-search-backward "^\\*+ " nil t) (point) from)))
+          to)))
+
 ;;;###autoload
 (define-minor-mode org-agents-faces-mode
   "Face this buffer's headlines from declared attribute values.
@@ -5707,6 +5777,17 @@ Costs what is displayed.  jit-lock calls the matcher over the region it
 is about to draw, the matcher reads only the entry at its match, and the
 registry is read once for that region rather than once per headline.
 
+Follows an EDIT to the value it draws from: changing `:STATUS:' in an
+entry's drawer moves the face on the headline above it, which takes a hook
+of its own because a change refontifies its own line and the two are on
+different lines -- see `org-agents--faces-extend-region', which also says
+what is NOT followed.  An edit to the registry, or to a prototype master
+in another buffer, moves a resolved value in every follower at once, and
+nothing here refontifies a buffer other than the one being edited: an
+armed buffer left open across such an edit keeps its old colour until it
+is refontified, by `M-x font-lock-flush' or by being scrolled away and
+back.
+
 Nothing here writes, and nothing here is geometry.  See the `Appearance'
 section of org-agents.el for both refusals and for why they are
 refusals."
@@ -5723,8 +5804,16 @@ refusals."
           (setq-local font-lock-fontify-region-function
                       org-agents--faces-outer-fontify)
         (kill-local-variable 'font-lock-fontify-region-function)))
+    (when (eq font-lock-extend-after-change-region-function
+              #'org-agents--faces-extend-region)
+      (if org-agents--faces-outer-extend-local
+          (setq-local font-lock-extend-after-change-region-function
+                      org-agents--faces-outer-extend)
+        (kill-local-variable 'font-lock-extend-after-change-region-function)))
     (kill-local-variable 'org-agents--faces-outer-fontify)
     (kill-local-variable 'org-agents--faces-outer-local)
+    (kill-local-variable 'org-agents--faces-outer-extend)
+    (kill-local-variable 'org-agents--faces-outer-extend-local)
     (kill-local-variable 'org-agents--faces-warned)
     (font-lock-flush))
    ;; Turned off again before the refusal is signaled, as `org-agents-mode'
@@ -5735,12 +5824,44 @@ refusals."
     (setq org-agents-faces-mode nil)
     (user-error "org-agents: `org-agents-faces-mode' needs an Org buffer"))
    (t
-    (setq org-agents--faces-outer-local
-          (local-variable-p 'font-lock-fontify-region-function))
-    (setq org-agents--faces-outer-fontify
-          (and org-agents--faces-outer-local font-lock-fontify-region-function))
-    (setq-local font-lock-fontify-region-function
+    ;; IDEMPOTENT, and it has to be.  `define-minor-mode' runs this body on
+    ;; every `(mode 1)' however often the mode is already on, and two
+    ;; enables reach one buffer through the two configurations
+    ;; docs/init-snippet.org recommends side by side: the globalized mode
+    ;; arms the buffer from `after-change-major-mode-hook', and
+    ;; `hack-local-variables' then honours a file-local
+    ;; `mode: org-agents-faces' and asks for it again.  Recorded
+    ;; unconditionally, the second pass would find the variable local
+    ;; BECAUSE WE MADE IT LOCAL and record OUR OWN function as the outer
+    ;; one, and `org-agents--faces-fontify-region' would funcall itself:
+    ;; MEASURED, `excessive-lisp-nesting' out of the first jit-lock pass,
+    ;; every headline left with no face at all -- Org's `org-level-N'
+    ;; included, because ours is the region function that never ran -- and
+    ;; jit-lock's `fontified' property already stamped, so nothing retries.
+    ;; Disabling did not repair it either: the `eq' guard above passed and
+    ;; handed our own function back as the restore.
+    ;;
+    ;; The guard is on the region function alone and covers both records,
+    ;; because both are made in this one block and are therefore consistent
+    ;; whenever ours is not yet installed.  The keyword needs no guard:
+    ;; MEASURED, `font-lock-add-keywords' with a nil MODE removes an
+    ;; `equal' keyword before adding it, so a second add is a no-op.
+    (unless (eq font-lock-fontify-region-function
                 #'org-agents--faces-fontify-region)
+      (setq org-agents--faces-outer-local
+            (local-variable-p 'font-lock-fontify-region-function))
+      (setq org-agents--faces-outer-fontify
+            (and org-agents--faces-outer-local
+                 font-lock-fontify-region-function))
+      (setq org-agents--faces-outer-extend-local
+            (local-variable-p 'font-lock-extend-after-change-region-function))
+      (setq org-agents--faces-outer-extend
+            (and org-agents--faces-outer-extend-local
+                 font-lock-extend-after-change-region-function))
+      (setq-local font-lock-fontify-region-function
+                  #'org-agents--faces-fontify-region)
+      (setq-local font-lock-extend-after-change-region-function
+                  #'org-agents--faces-extend-region))
     ;; `append', and `org-agents--faces-keywords' says at length why.
     (font-lock-add-keywords nil org-agents--faces-keywords 'append)
     (font-lock-flush))))

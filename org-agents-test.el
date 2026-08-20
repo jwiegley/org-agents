@@ -7090,8 +7090,13 @@ tested for what it does interactively."
         (org-agents-faces-mode -1)
         (should (equal keywords font-lock-keywords))
         (should-not (local-variable-p 'font-lock-fontify-region-function))
+        ;; Org's own extension is handed back, and it was local before us.
+        (should (eq font-lock-extend-after-change-region-function
+                    #'org-fontify-extend-region))
         (should-not (local-variable-p 'org-agents--faces-outer-fontify))
         (should-not (local-variable-p 'org-agents--faces-outer-local))
+        (should-not (local-variable-p 'org-agents--faces-outer-extend))
+        (should-not (local-variable-p 'org-agents--faces-outer-extend-local))
         (should-not (local-variable-p 'org-agents--faces-warned))
         (should-not font-lock-removed-keywords-alist)
         (font-lock-ensure)
@@ -7132,6 +7137,72 @@ did not check whose function is installed would overwrite the outer one."
 It fontifies, so that the test can assert the wrap CALLS what it wrapped
 rather than merely recording it."
   (font-lock-default-fontify-region beg end loudly))
+
+(ert-deftest org-agents-test-faces-a-second-enable-changes-nothing ()
+  "Enabling the mode twice leaves one wrap, and fontification still works.
+`define-minor-mode' runs the enable body on every `(mode 1)', and two
+enables reach one buffer through the two configurations
+docs/init-snippet.org recommends side by side: `global-org-agents-faces-mode'
+arms the buffer, and a file-local `mode: org-agents-faces' then asks for
+it again.  MEASURED before the guard: the second pass found
+`font-lock-fontify-region-function' local BECAUSE THE FIRST MADE IT LOCAL
+and recorded OUR function as the outer one, so
+`org-agents--faces-fontify-region' funcalled itself --
+`excessive-lisp-nesting' out of the first fontification, and under real
+jit-lock every headline left with NO face at all, Org's `org-level-N'
+included, with jit-lock's `fontified' property already stamped so nothing
+retried.
+
+Three assertions, and the first is the one that failed: no signal and the
+right face; nothing recorded as an outer function; and a single disable
+puts the buffer back, where before it left our own function installed
+buffer-locally with the mode off."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (with-current-buffer (find-file-noselect (car files))
+      (org-agents-faces-mode 1)
+      (org-agents-faces-mode 1)
+      ;; The signal first, because it is the symptom: MEASURED,
+      ;; `(excessive-lisp-nesting 1601)' out of this call.
+      (font-lock-ensure)
+      (should (equal '(org-warning org-level-1)
+                     (org-agents-test--title-face "Local")))
+      (should-not org-agents--faces-outer-fontify)
+      (should-not org-agents--faces-outer-local)
+      (should-not (eq org-agents--faces-outer-extend
+                      #'org-agents--faces-extend-region))
+      (org-agents-faces-mode -1)
+      (should-not (local-variable-p 'font-lock-fontify-region-function))
+      (should (eq font-lock-extend-after-change-region-function
+                  #'org-fontify-extend-region))
+      ;; And a third cycle after that is still clean.
+      (org-agents-faces-mode 1)
+      (font-lock-ensure)
+      (should (equal '(org-warning org-level-1)
+                     (org-agents-test--title-face "Local"))))))
+
+(ert-deftest org-agents-test-faces-a-second-enable-keeps-a-wrapped-function ()
+  "Two enables over another mode's region function still give it back.
+The other half of `org-agents-test-faces-a-second-enable-changes-nothing',
+and the half a reader is likelier to get wrong: MEASURED before the
+guard, the second enable overwrote the sentinel record with our own
+function, so the disable handed back `org-agents--faces-fontify-region'
+and the sentinel was lost for good."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (with-current-buffer (find-file-noselect (car files))
+      (setq-local font-lock-fontify-region-function
+                  #'org-agents-test--faces-sentinel-region)
+      (org-agents-faces-mode 1)
+      (org-agents-faces-mode 1)
+      (should (eq org-agents--faces-outer-fontify
+                  #'org-agents-test--faces-sentinel-region))
+      (font-lock-ensure)
+      (should (equal '(org-warning org-level-1)
+                     (org-agents-test--title-face "Local")))
+      (org-agents-faces-mode -1)
+      (should (eq font-lock-fontify-region-function
+                  #'org-agents-test--faces-sentinel-region)))))
 
 (ert-deftest org-agents-test-faces-mode-refuses-a-non-org-buffer ()
   "There are no attributes outside Org, and the mode says so rather than arm.
@@ -7215,6 +7286,46 @@ the screen after being turned off."
       (org-agents-faces-mode -1)
       (font-lock-ensure)
       (should (eq 'org-level-1 (org-agents-test--title-face "Local"))))))
+
+(ert-deftest org-agents-test-faces-an-edit-to-the-value-redraws-the-headline ()
+  "Changing the value in the drawer moves the face on the headline above it.
+The interaction the mode exists to support, and it needs a hook of its
+own: the face is on the headline, the value is in the drawer under it, and
+`jit-lock-after-change' clears the `fontified' property over the CHANGED
+line only.  MEASURED without
+`org-agents--faces-extend-region': after replacing `:STATUS: stalled' with
+`:STATUS: active' the headline still read `(org-warning org-level-1)'
+after a whole-buffer `jit-lock-fontify-now', and only an explicit
+`font-lock-flush' moved it -- a display asserting a value the drawer no
+longer held.
+
+The real jit-lock path, as `org-agents-test-faces-flush-reaches-jit-lock'
+reaches it and for the same reason: `after-change-functions' has nothing
+of font-lock's in it until `font-lock-mode' is really on, so a
+`font-lock-ensure' test here would pass without the hook and assert
+nothing."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (with-current-buffer (find-file-noselect (car files))
+      (let ((noninteractive nil))
+        (font-lock-mode 1))
+      (should font-lock-mode)
+      (should jit-lock-mode)
+      (org-agents-faces-mode 1)
+      (jit-lock-fontify-now (point-min) (point-max))
+      (should (equal '(org-warning org-level-1)
+                     (org-agents-test--title-face "Local")))
+      ;; `stalled' becomes `active', whose face is `org-todo'.
+      (goto-char (point-min))
+      (should (search-forward ":STATUS: stalled" nil t))
+      (replace-match ":STATUS: active" t t)
+      (jit-lock-fontify-now (point-min) (point-max))
+      (should (equal '(org-todo org-level-1)
+                     (org-agents-test--title-face "Local")))
+      ;; And Org's own fontification of the changed region survives the wrap.
+      (should (eq 'org-level-1
+                  (org-agents-test--title-face "Unmapped")))
+      (set-buffer-modified-p nil))))
 
 ;;;; Prefilter (ripgrep)
 
