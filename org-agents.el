@@ -409,8 +409,11 @@ Structurally the form is a predicate call like any other, so the safe
 list admits it without a prompt and the subprocess runs.
 
 This is where such a head goes.  Matching is by literal symbol, so an
-alias of an IO-bearing predicate has to be listed too."
-  :type '(repeat symbol) :group 'org-agents)
+alias of an IO-bearing predicate has to be listed too.
+
+Risky: a file that could empty this list would remove the protection for
+every file read afterwards in the session."
+  :type '(repeat symbol) :risky t :group 'org-agents)
 
 (defconst org-agents--approval-type
   '(repeat (choice (string :tag "Hash only (legacy)")
@@ -430,8 +433,11 @@ outlives the session that made it, exactly as an approval does.
 Entries have the same shape as `org-agents-safe-queries', so one listing
 can show an approval and a refusal side by side, each with the text its
 hash covers.  Manage this through `org-agents-list-approvals' rather than
-by hand."
-  :type org-agents--approval-type :group 'org-agents)
+by hand.
+
+Risky: this is the refusal record itself, and a file that could set it
+could delete a refusal the user made deliberately."
+  :type org-agents--approval-type :risky t :group 'org-agents)
 
 (defcustom org-agents-safe-queries nil
   "Records of forms approved to run without prompting.
@@ -451,8 +457,11 @@ file `(custom-file t)' names -- and answers nil, writing nothing, unless
 `user-init-file' is set.  Where the real init is an Org file that is
 tangled, `user-init-file' is the tangled output, and a saved approval
 will be overwritten the next time it is generated.  Set `custom-file' to
-a file of its own to keep approvals."
-  :type org-agents--approval-type :group 'org-agents)
+a file of its own to keep approvals.
+
+Risky: this is the approval record itself, and a file that could set it
+could pre-approve its own query and never be asked about it."
+  :type org-agents--approval-type :risky t :group 'org-agents)
 
 (defvar org-agents--session-approved (make-hash-table :test 'equal)
   "Query hashes approved for this session only.")
@@ -1107,11 +1116,14 @@ over the corpus costs 0.10 to 0.45.
              scanning it live.  For someone who would rather be told
              that an agent cannot be answered affordably than wait for a
              live walk of the whole corpus.
-  nil        Never run ripgrep; read every scope live."
+  nil        Never run ripgrep; read every scope live.
+
+Risky: this chooses whether a subprocess is spawned at all."
   :type '(choice (const :tag "Use ripgrep when it is available" auto)
                  (const :tag "Require ripgrep; refuse a scope without it"
                         require)
                  (const :tag "Never prefilter" nil))
+  :risky t
   :group 'org-agents)
 
 (defcustom org-agents-rg-executable "rg"
@@ -1120,8 +1132,11 @@ Looked up with `executable-find', so a bare name is resolved against
 `exec-path'.  ripgrep 13 or later is wanted: the prefilter passes
 `--crlf', without which a value pattern cannot match in a file with CRLF
 line endings.  Every flag was verified against 15.2.0 and against no
-other version; 13 is named as a round, safely old floor."
+other version; 13 is named as a round, safely old floor.
+
+Risky: this names a program that will be `call-process'ed."
   :type 'string
+  :risky t
   :group 'org-agents)
 
 (defconst org-agents--rg-meta-characters "\\.+*?()|[]{}^$#&-~"
@@ -1499,8 +1514,10 @@ in the prefilter.  Set to nil to match aliases like any other entry.
 This value is conjoined into the form the gate approves, so Lisp here is
 gated exactly like Lisp in a query, and changing it invalidates every
 remembered approval: an approval names a form, and this is part of the
-form."
-  :type 'sexp :group 'org-agents)
+form.
+
+Risky: it is Lisp conjoined into every agent query and every preview."
+  :type 'sexp :risky t :group 'org-agents)
 
 (defun org-agents--effective-query (query)
   "Return the form org-ql will be handed for QUERY.
@@ -1519,8 +1536,11 @@ query silently approved an exclusion nobody had been shown."
 
 (defcustom org-agents-files '("~/org/agents.org")
   "Where `org-agents-update-all' looks for agents.
-A list of files and directories, or the symbol `agenda'."
-  :type '(choice (const agenda) (repeat file)) :group 'org-agents)
+A list of files and directories, or the symbol `agenda'.
+
+Risky: it says which files `org-agents-update-all' opens and WRITES --
+an update rewrites each agent's aliases."
+  :type '(choice (const agenda) (repeat file)) :risky t :group 'org-agents)
 
 (defconst org-agents--corpus-scopes '(active all)
   "Scope names that stand for the corpus rather than for named files.")
@@ -3141,6 +3161,9 @@ for a user who asked for it by name."
 ;;;###autoload
 (define-globalized-minor-mode global-org-agents-mode
   org-agents-mode org-agents--turn-on
+  ;; `:risky t' reaches the `defcustom' this generates: turning the mode
+  ;; on is what makes every save of an Org file run its agents' queries.
+  :risky t
   :group 'org-agents)
 
 (provide 'org-agents)

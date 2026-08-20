@@ -185,6 +185,18 @@ refused by name rather than rendered wrongly.
 | `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |
 
+Every option in that table is `:risky t`, and so is `global-org-agents-mode`.
+Emacs will not apply a file-local setting of a risky variable without asking,
+and will not offer to trust one permanently or directory-wide. The reason is
+that each of them names either Lisp to evaluate (`org-agents-exclude`), a
+program to run (`org-agents-rg-executable`), whether a subprocess is spawned
+at all (`org-agents-prefilter`), which files get opened and *written*
+(`org-agents-files` — an update rewrites aliases), or the record of what has
+already been approved or refused (`org-agents-safe-queries`,
+`org-agents-refused-queries`, `org-agents-refused-heads`). A file that could
+set any of them from its own local-variables block could pre-approve its own
+query, delete a refusal, or name the binary to execute.
+
 An approval is recorded as `(HASH . QUERY-TEXT)` — the hash and the very
 text it was taken of, so `org-agents-list-approvals` can show what each
 remembered decision covers instead of a bare forty characters of SHA-1.

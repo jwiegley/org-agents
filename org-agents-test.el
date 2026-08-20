@@ -615,6 +615,48 @@ pushed pattern would return NO files for a query that matches thousands."
                   '(property-ts "NEXT_REVIEW" :to today))
                  '((property "NEXT_REVIEW")))))
 
+;;;; Options
+
+(defconst org-agents-test--defcustoms
+  '(org-agents-safe-queries
+    org-agents-refused-queries
+    org-agents-refused-heads
+    org-agents-prefilter
+    org-agents-rg-executable
+    org-agents-exclude
+    org-agents-files
+    ;; `define-globalized-minor-mode' generates a `defcustom' too, and it
+    ;; lands in this group like any other.
+    global-org-agents-mode)
+  "Every `org-agents' user option, written out here on purpose.
+This test owns the list.  A `defcustom' added to the package and not to
+this list fails the completeness half of
+`org-agents-test-every-defcustom-is-risky', which is what keeps a new
+option from arriving unmarked.")
+
+(ert-deftest org-agents-test-every-defcustom-is-risky ()
+  "Every option is `:risky t', and every option is on the owned list.
+Each of these names either Lisp to evaluate, a program to run, which
+files get opened and written, or the record of what has already been
+approved -- so a file-local setting of any of them must not be applied
+without a decision, and must never be offered permanent or
+directory-wide trust.  Two halves, because either alone is passable: the
+first says the listed options are marked, the second says the list is the
+whole set."
+  (dolist (var org-agents-test--defcustoms)
+    (should (get var 'risky-local-variable)))
+  ;; Every defcustom passes `:group 'org-agents', so the group's members
+  ;; are the whole set as soon as the file is loaded.  An option added
+  ;; under some other group would go missing here, which is itself worth
+  ;; failing on.
+  (let ((declared (cl-loop for (symbol type) in (get 'org-agents 'custom-group)
+                           when (eq type 'custom-variable) collect symbol)))
+    (should declared)
+    (should (equal (sort (mapcar #'symbol-name declared) #'string<)
+                   (sort (mapcar #'symbol-name
+                                 (copy-sequence org-agents-test--defcustoms))
+                         #'string<)))))
+
 ;;;; Approvals
 
 (defconst org-agents-test--approval-vars
