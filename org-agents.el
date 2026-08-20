@@ -3765,6 +3765,22 @@ walked at all."
         :file file
         :line (line-number-at-pos)))
 
+(defun org-agents--prototypes-section-p ()
+  "Non-nil when point is on the top-level `Prototypes' heading.
+`org-get-heading' with every argument, as the readers around it use it,
+so the heading is its text: MEASURED, `* Prototypes :noexport:' and
+`* TODO Prototypes' are both this section, because tags and a keyword are
+not part of a heading's name.
+
+Case-SENSITIVE, unlike the prototype names below it.  A mis-cased
+`* prototypes' is therefore not this section -- and is not silently
+dropped either: it falls through to the attribute reader, which reports
+it as a declaration missing `:ATTR_TYPE:'.  MEASURED, and it is the
+reason this is left alone: the user is told, and
+`org-agents--attributes-reserved' skips one spelling only."
+  (and (= 1 (org-current-level))
+       (equal (org-get-heading t t t t) org-agents--prototypes-section)))
+
 (defun org-agents--prototypes-scan (file)
   "Read every prototype in the current buffer, which holds FILE's text.
 The subtree of the FIRST top-level heading whose text is
@@ -3777,14 +3793,23 @@ A duplicate name is diagnosed and the first declaration stands, which is
 the registry's own rule for a duplicate.  Names are matched
 case-insensitively, as `org-agents-attribute' matches a declaration --
 and a heading is not a property key, so here that is a convention rather
-than a consequence.  The diagnosis is what makes it a safe one."
+than a consequence.  The diagnosis is what makes it a safe one.
+
+A duplicate SECTION is diagnosed for the same reason, and it was not
+before: only the FIRST such heading is read, so a registry grown a second
+`Prototypes' heading further down -- the natural thing to do when
+grouping masters by area -- had every master under it silently name
+nothing.  MEASURED, `* Prototypes/** A' followed by `* Prototypes/** B'
+answered `(\"A\")' and said nothing at all: `B' was unreachable, and
+because the heading is reserved it was not reported as a declaration
+missing `:ATTR_TYPE:' either.  So each follower naming `B' got a dangling
+diagnostic blaming its own drawer, which is the one place the mistake was
+not."
   (let ((prototypes nil))
     (goto-char (point-min))
     (unless (org-at-heading-p) (outline-next-heading))
     (while (and (org-at-heading-p)
-                (not (and (= 1 (org-current-level))
-                          (equal (org-get-heading t t t t)
-                                 org-agents--prototypes-section))))
+                (not (org-agents--prototypes-section-p)))
       (outline-next-heading))
     (when (org-at-heading-p)
       (let ((end (save-excursion (org-end-of-subtree t t) (point))))
@@ -3796,7 +3821,19 @@ than a consequence.  The diagnosis is what makes it a safe one."
               (org-agents--prototype-warn
                name file "declared twice; the first declaration stands"))
              (t (push (cons name (org-agents--prototype-at-point file))
-                      prototypes)))))))
+                      prototypes)))))
+        ;; Past the subtree, so a heading INSIDE it cannot be mistaken
+        ;; for a second section however it is spelled.
+        (goto-char end)
+        (unless (org-at-heading-p) (outline-next-heading))
+        (catch 'second
+          (while (org-at-heading-p)
+            (when (org-agents--prototypes-section-p)
+              (org-agents--prototype-warn
+               org-agents--prototypes-section file
+               "a second section is ignored; the first one stands")
+              (throw 'second t))
+            (outline-next-heading)))))
     (nreverse prototypes)))
 
 (defun org-agents--prototypes-read (file)

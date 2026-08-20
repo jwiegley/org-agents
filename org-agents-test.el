@@ -3445,7 +3445,18 @@ safe."
 (ert-deftest org-agents-test-prototype-section-is-found-anywhere-in-the-file ()
   "The `Prototypes' section is a top-level heading, wherever it sits.
 And only entries BELOW it are prototypes: a declaration after the
-section is a declaration, not a master."
+section is a declaration, not a master.
+
+The last claim needs an assertion that can tell the two readings apart,
+and the three below it cannot: the follower spells no `STATUS' and its
+chain does not either, so the declared default answers whether or not
+`STATUS' is ALSO registered as a master; `NOSUCH' dangles either way; and
+the attribute reader is a separate scan.  MEASURED, replacing the scan's
+subtree bound with `point-max' left the whole suite green while
+`STATUS' became a master and handed `ATTR_TYPE' and `ATTR_DEFAULT' to the
+follower as ordinary inherited values -- registry metadata leaking into
+the corpus.  So the section's contents are asserted directly, and one
+follower names the declaration to prove it is not reachable."
   (org-agents-test--with-attr-corpus "\
 * OWNER
 :PROPERTIES:
@@ -3474,7 +3485,15 @@ section is a declaration, not a master."
 :PROPERTIES:
 :PROTOTYPE: Nested Task
 :END:
+* TODO Names the declaration after the section
+:PROPERTIES:
+:PROTOTYPE: STATUS
+:END:
 "))
+    ;; The section holds exactly the two entries below it, and nothing
+    ;; that follows it.  This is the assertion the subtree bound needs.
+    (should (equal '("Task" "Nested Task")
+                   (mapcar #'car (org-agents--prototypes-alist))))
     (org-agents-test--at-entry (funcall F "f.org") "Follows a nested master"
       ;; A prototype at any depth below the section is a prototype.
       (should (equal "3" (org-agents-resolve-property "REVIEWS")))
@@ -3483,7 +3502,87 @@ section is a declaration, not a master."
       (should (equal "open" (org-agents-resolve-property "STATUS")))
       ;; `STATUS' is no prototype, so naming it as one dangles.
       (should-not (org-agents-resolve-property "NOSUCH")))
+    ;; Naming the declaration as a master reaches NOTHING -- not its
+    ;; `:ATTR_TYPE:', not its `:ATTR_DEFAULT:'.  A scan that ran past the
+    ;; subtree would hand both over as inherited values.
+    (org-agents-test--at-entry (funcall F "f.org") "Names the declaration"
+      (should-not (org-agents-resolve-property-quietly "ATTR_TYPE"))
+      (should-not (org-agents-resolve-property-quietly "ATTR_DEFAULT")))
     (should (equal (org-agents-attributes) '("OWNER" "STATUS")))))
+
+(ert-deftest org-agents-test-prototype-a-second-section-is-diagnosed ()
+  "A second `* Prototypes' heading is ignored, and now says so.
+Only the first such section is read, which is the rule -- but it was kept
+SILENTLY: MEASURED, `* Prototypes/** A' followed by `* Prototypes/** B'
+answered `(\"A\")' with no message at all.  `B' was unreachable, and
+because the heading is reserved it was not reported as a declaration
+missing `:ATTR_TYPE:' either, so the only signal a user got was a
+dangling diagnostic naming the FOLLOWER's drawer -- the one place the
+mistake was not.  A duplicate name was diagnosed; a duplicate section was
+the gap."
+  (org-agents-test--with-attr-corpus "\
+* Prototypes
+** A
+:PROPERTIES:
+:OWNER: from-a
+:END:
+
+* Prototypes
+** B
+:PROPERTIES:
+:OWNER: from-b
+:END:
+"
+      '(("f.org" . "\
+* TODO Names the unreachable master
+:PROPERTIES:
+:PROTOTYPE: B
+:END:
+"))
+    (let ((texts (org-agents-test--messages
+                   (should (equal '("A")
+                                  (mapcar #'car
+                                          (org-agents--prototypes-alist)))))))
+      (should (= 1 (length texts)))
+      (should (string-match-p "second section" (car texts))))
+    ;; And the first section still stands, rather than the read failing.
+    (org-agents-test--at-entry (funcall F "f.org") "Names the unreachable"
+      (should-not (org-agents-resolve-property-quietly "OWNER")))))
+
+(ert-deftest org-agents-test-prototype-one-section-is-not-diagnosed ()
+  "One `Prototypes' section says nothing, however many masters it holds.
+The other half of the duplicate-section diagnostic: a heading INSIDE the
+section, at any depth, and a heading after it that is not a second
+section, are both ordinary and quiet.  A check that scanned from the
+section's start rather than from its end would report a nested master as a
+second section."
+  (org-agents-test--with-attr-corpus "\
+* OWNER
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+
+* Prototypes
+** Task
+:PROPERTIES:
+:OWNER: johnw
+:END:
+*** Prototypes
+:PROPERTIES:
+:OWNER: nested
+:END:
+
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE: string
+:END:
+"
+      '(("f.org" . "* TODO Nothing to see\n"))
+    (let ((texts (org-agents-test--messages
+                   (should (equal '("Task" "Prototypes")
+                                  (mapcar #'car
+                                          (org-agents--prototypes-alist)))))))
+      (should-not texts))))
 
 (ert-deftest org-agents-test-prototype-shipped-example-reads-cleanly ()
   "The registry the package SHIPS reads with no diagnostic at all.
