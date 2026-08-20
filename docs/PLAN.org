@@ -2,15 +2,17 @@
 #+SEQ_TODO: TODO DOING DRAFT WAIT DEFER NOTE | DONE CANCELED
 #+ISSUE_PREFIX: orga-action-code
 
-* TODO [#C] Action code: declarative verbs behind one explicit command
+* DONE [#C] Action code: declarative verbs behind one explicit command
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-action-code-wrk
 :LABELS:   []
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:28]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:28]
+:CLOSE_REASON: All children completed
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -338,15 +340,17 @@ Action documentation.
 ]
 #+end_src
 
-* TODO [#D] Appearance from attribute values, zero bytes changed
+* DONE [#D] Appearance from attribute values, zero bytes changed
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-appearance-06j
 :LABELS:   []
 :ISSUE_TYPE: epic
 :CREATED:  [2026-08-19 Wed 18:19]
-:MODIFIED: [2026-08-19 Wed 18:19]
+:MODIFIED: [2026-08-20 Thu 10:28]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:28]
+:CLOSE_REASON: All children completed
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1489,15 +1493,16 @@ objects in function position) and held, so there is a boundary to reuse.
 ]
 #+end_src
 
-* TODO [#E] A transclusion view    :feature:view:
+* DEFER [#E] A transclusion view    :feature:view:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.10
 :LABELS:   ["feature","view"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1557,15 +1562,30 @@ version checked at the time.
 ]
 #+end_src
 
-* TODO [#E] Aggregates: a total under a table    :feature:tinderbox:view:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 9,
+    "issue_id": "orga-deferred-features-fbk.10",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#E] Aggregates: a total under a table    :feature:tinderbox:view:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.11
 :LABELS:   ["feature","tinderbox","view"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1627,15 +1647,30 @@ resisted until a real agent needs it.
 ]
 #+end_src
 
-* TODO [#E] Update agents on save or on a timer    :commands:feature:tinderbox:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 10,
+    "issue_id": "orga-deferred-features-fbk.11",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#E] Update agents on save or on a timer    :commands:feature:tinderbox:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.12
 :LABELS:   ["commands","feature","tinderbox"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:53]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1715,15 +1750,30 @@ buys less freshness than it appears to.
 ]
 #+end_src
 
-* TODO [#D] Expose the prefilter to every org-ql consumer    :bridge:feature:prefilter:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 11,
+    "issue_id": "orga-deferred-features-fbk.12",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#D] Expose the prefilter to every org-ql consumer    :bridge:feature:prefilter:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.13
 :LABELS:   ["bridge","feature","prefilter"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:53]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -1790,6 +1840,20 @@ the file list they hand to `org-ql-select`.  Deciding which is most of the work.
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
+  }
+]
+#+end_src
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 12,
+    "issue_id": "orga-deferred-features-fbk.13",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
   }
 ]
 #+end_src
@@ -2033,15 +2097,16 @@ on one entry, so a multi-block agent records whichever block was updated last.
 ]
 #+end_src
 
-* TODO [#E] Update the enclosing agent from inside one of its aliases    :commands:feature:
+* DEFER [#E] Update the enclosing agent from inside one of its aliases    :commands:feature:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.17
 :LABELS:   ["commands","feature"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2107,15 +2172,30 @@ so climbing needs a rule, not just a loop.
 ]
 #+end_src
 
-* TODO [#E] update-all visits every named file, agent or not    :commands:feature:perf:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 13,
+    "issue_id": "orga-deferred-features-fbk.17",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#E] update-all visits every named file, agent or not    :commands:feature:perf:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.18
 :LABELS:   ["commands","feature","perf"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2180,15 +2260,30 @@ them.
 ]
 #+end_src
 
-* TODO [#D] AGENT_COPY: copy a match's keyword, tags and priority onto its alias    :feature:tinderbox:view:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 14,
+    "issue_id": "orga-deferred-features-fbk.18",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#D] AGENT_COPY: copy a match's keyword, tags and priority onto its alias    :feature:tinderbox:view:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.2
 :LABELS:   ["feature","tinderbox","view"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2250,15 +2345,30 @@ user with fifty aliases would find fifty duplicate agenda lines.
 ]
 #+end_src
 
-* TODO [#E] Elisp formats, computed columns and sort expressions    :feature:view:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 2,
+    "issue_id": "orga-deferred-features-fbk.2",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#E] Elisp formats, computed columns and sort expressions    :feature:view:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.3
 :LABELS:   ["feature","view"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2322,15 +2432,30 @@ Lisp already reaches org-ql through it after approval.
 ]
 #+end_src
 
-* TODO [#E] AGENT_ADD_IDS: give matches stable link targets    :feature:view:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 3,
+    "issue_id": "orga-deferred-features-fbk.3",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#E] AGENT_ADD_IDS: give matches stable link targets    :feature:view:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.4
 :LABELS:   ["feature","view"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2394,6 +2519,20 @@ which nothing in v1 does; that is a decision, not an oversight.
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
+  }
+]
+#+end_src
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 4,
+    "issue_id": "orga-deferred-features-fbk.4",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
   }
 ]
 #+end_src
@@ -2472,15 +2611,16 @@ an `:AGENT_QUERY+:` continuation.
 ]
 #+end_src
 
-* TODO [#D] Push down todo/done and tags    :feature:prefilter:soundness:
+* DEFER [#D] Push down todo/done and tags    :feature:prefilter:soundness:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.6
 :LABELS:   ["feature","prefilter","soundness"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:53]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2583,15 +2723,30 @@ for growing the table.
 ]
 #+end_src
 
-* TODO [#D] Traverse or/not and classify nested queries    :feature:prefilter:soundness:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 5,
+    "issue_id": "orga-deferred-features-fbk.6",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#D] Traverse or/not and classify nested queries    :feature:prefilter:soundness:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.7
 :LABELS:   ["feature","prefilter","soundness"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:53]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2680,15 +2835,30 @@ differential suite running first.
 ]
 #+end_src
 
-* TODO [#E] Push a property form carrying :inherit nil    :feature:prefilter:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 6,
+    "issue_id": "orga-deferred-features-fbk.7",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#E] Push a property form carrying :inherit nil    :feature:prefilter:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.8
 :LABELS:   ["feature","prefilter"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:53]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2770,15 +2940,30 @@ had to be retracted twice.  Whatever lands here must not restate it.
 ]
 #+end_src
 
-* TODO [#D] A file-count ceiling for walking a directory scope live    :commands:feature:
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 7,
+    "issue_id": "orga-deferred-features-fbk.8",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
+  }
+]
+#+end_src
+
+* DEFER [#D] A file-count ceiling for walking a directory scope live    :commands:feature:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-deferred-features-fbk.9
 :LABELS:   ["commands","feature"]
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:53]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -2854,6 +3039,20 @@ it turns out to name fewer than N files.
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
+  }
+]
+#+end_src
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 8,
+    "issue_id": "orga-deferred-features-fbk.9",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
   }
 ]
 #+end_src
@@ -3996,15 +4195,17 @@ and nothing else is watching them.
 - [ ] dot-emacs's relationship to this repository is explicit rather than a
       `.git/info/exclude` entry nobody remembers
 
-* TODO [#E] dot-emacs lisp/CLAUDE.md claims .elc files are tracked    :docs:
+* DONE [#E] dot-emacs lisp/CLAUDE.md claims .elc files are tracked    :docs:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-parent-repo-housekeeping-ta4.1
 :LABELS:   ["docs","dot-emacs"]
 :ISSUE_TYPE: docs
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:34]
+:CLOSE_REASON: Fixed by the coordinator in dot-emacs commit 2e421e7c3. The claim was verified false before changing it: git ls-files '*.elc' returns nothing and *.elc is the FIRST line of .gitignore. The correction also says why the distinction matters -- it is the difference between a worktree having byte-compiled dependencies already and compiling everything from source, which is exactly what an earlier byte-compile investigation got wrong by trusting this line over the measurement.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4067,15 +4268,16 @@ creates.
 ]
 #+end_src
 
-* TODO [#D] Drop the dead cl require from org-ql-ext.el and org-ext.el    :hygiene:
+* DEFER [#D] Drop the dead cl require from org-ql-ext.el and org-ext.el    :hygiene:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-parent-repo-housekeeping-ta4.2
 :LABELS:   ["dot-emacs","hygiene"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 16:54]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4150,15 +4352,31 @@ not edited during the org-agents work.
 ]
 #+end_src
 
-* TODO [#D] Register org-agents with dot-emacs as a submodule
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 15,
+    "issue_id": "orga-parent-repo-housekeeping-ta4.2",
+    "author": "johnw",
+    "text": "Deferred, not fixed, and deliberately. ta4.2 (the dead (require 'cl) in org-ql-ext.el and org-ext.el) is in the user's LIVE configuration outside this repository; it was surfaced as optional earlier in the session and editing their config files uninvited is not this sweep's business -- the one visible symptom, a 'Package cl is deprecated' warning when a fresh worktree compiles them, is already handled by the gate building dependencies in a temp dir and gating only this package's files. ta4.4 (an imported commit describing a rejected design) would require rewriting published history, which is destructive and the user's call alone.",
+    "created_at": "2026-08-20T17:34:12Z"
+  }
+]
+#+end_src
+
+* DONE [#D] Register org-agents with dot-emacs as a submodule
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-parent-repo-housekeeping-ta4.3
 :LABELS:   ["dot-emacs"]
 :ISSUE_TYPE: task
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:33]
 :CREATED_BY: johnw
+:FINISHED: [2026-08-20 Thu 10:33]
+:CLOSE_REASON: Already done by the user. .gitmodules in dot-emacs registers submodule.lisp/org-agents.url = https://github.com/jwiegley/org-agents, matching the llm-setup precedent, and lisp/org-agents is a mode-160000 gitlink. What remains is only the routine pointer bump (the parent records 643080a while org-agents has advanced), which belongs with the user's own next parent-repo commit and is not a defect.
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4225,15 +4443,16 @@ and reproducible.
 ]
 #+end_src
 
-* TODO [#E] One imported commit describes a design that was rejected    :docs:
+* DEFER [#E] One imported commit describes a design that was rejected    :docs:
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-parent-repo-housekeeping-ta4.4
 :LABELS:   ["docs","dot-emacs"]
 :ISSUE_TYPE: chore
 :CREATED:  [2026-08-19 Wed 10:30]
-:MODIFIED: [2026-08-19 Wed 10:30]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4294,6 +4513,20 @@ Pick one, and it is a matter of taste:
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
+  }
+]
+#+end_src
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 16,
+    "issue_id": "orga-parent-repo-housekeeping-ta4.4",
+    "author": "johnw",
+    "text": "Deferred, not fixed, and deliberately. ta4.2 (the dead (require 'cl) in org-ql-ext.el and org-ext.el) is in the user's LIVE configuration outside this repository; it was surfaced as optional earlier in the session and editing their config files uninvited is not this sweep's business -- the one visible symptom, a 'Package cl is deprecated' warning when a fresh worktree compiles them, is already handled by the gate building dependencies in a temp dir and gating only this package's files. ta4.4 (an imported commit describing a rejected design) would require rewriting published history, which is destructive and the user's call alone.",
+    "created_at": "2026-08-20T17:34:12Z"
   }
 ]
 #+end_src
@@ -4604,15 +4837,16 @@ Prototype documentation and the worked example.
 ]
 #+end_src
 
-* TODO [#D] Narrow a resolved property by the prototypes that could supply it
+* DEFER [#D] Narrow a resolved property by the prototypes that could supply it
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
 :ID:       orga-prototypes-opa.6
 :LABELS:   []
 :ISSUE_TYPE: feature
 :CREATED:  [2026-08-20 Thu 04:40]
-:MODIFIED: [2026-08-20 Thu 04:40]
+:MODIFIED: [2026-08-20 Thu 10:34]
 :CREATED_BY: johnw
+:DEFERRED: [2027-01-01 Fri 09:00]
 :SOURCE_REPO: org-agents
 :SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
 :ORIGINAL_SIZE: 0
@@ -4699,6 +4933,20 @@ the whole risk and belongs in a test.
     "created_by": "johnw",
     "metadata": "{}",
     "thread_id": ""
+  }
+]
+#+end_src
+
+** Comments
+
+#+begin_src json
+[
+  {
+    "id": 1,
+    "issue_id": "orga-prototypes-opa.6",
+    "author": "johnw",
+    "text": "Deferred on the user's directive of 2026-08-20: resolve bugs and flaws, and defer future or optional features until a real need appears. Each of these is a capability nobody has asked for in use yet. opa.6 in particular is measured to cost nothing today -- no file in the corpus carries :PROTOTYPE:, so a resolved query narrows exactly as a plain one does; it becomes worth doing only once prototypes are actually adopted, and the issue carries the adoption curve that says when.",
+    "created_at": "2026-08-20T17:34:00Z"
   }
 ]
 #+end_src
