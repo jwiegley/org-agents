@@ -7121,7 +7121,8 @@ message about a file that is not there."
 The epic's headline claim, and the guard against action code arriving
 through the appearance door: an appearance declaration that could set a
 tag or a TODO state would be inheritable behaviour, which is what
-`docs/action-code-safety.md' part 3 says makes per-file trust meaningless.
+`docs/research/action-code-safety.md' part 3 says makes per-file trust
+meaningless.
 So the writers are watched by name, and every other way of noticing a
 write is asserted beside them -- the modification flag, the character
 tick, the text itself, the file's bytes, and the absence of any overlay,

@@ -5473,9 +5473,13 @@ for a user who asked for it by name."
 ;;
 ;; The cost is what is DISPLAYED.  The matcher reads only the entry at its
 ;; match and honours its LIMIT, so jit-lock pays per screenful and not per
-;; corpus: MEASURED over a 400-entry buffer of which one entry is drawn, a
-;; twelve-line window costs 5 resolutions where the whole buffer costs 799,
-;; and a headline outside the region carries no `face' property at all.
+;; corpus: MEASURED over a 400-entry buffer of which one entry is drawn,
+;; under the suite's registry of TWO face-declaring attributes -- each
+;; unmapped headline is resolved once per declaration, so the figures scale
+;; with how many attributes name faces -- a twelve-line window costs 5
+;; resolutions where the whole buffer costs 799, and a headline outside the
+;; region carries no `face' property at all.  The same measurement under a
+;; registry declaring one faced attribute is 3 against 400.
 ;;
 ;; `org-agents--faces-fontify-region' is the one piece of machinery beyond
 ;; the keyword, and it exists for two things a keyword cannot do, because

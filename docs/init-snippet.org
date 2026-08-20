@@ -220,12 +220,23 @@ take effect, which loads =org-agents= at startup rather than on first use.
 (global-org-agents-faces-mode 1)
 #+end_src
 
+Both together are fine: enabling the mode twice in one buffer is a no-op, so
+the file-local entry and the blanket mode can be in force at once.
+
 Measured, that is affordable: where nothing declares a face the mode answers
 before resolving anything at all, so a corpus with no registry pays a regexp
 scan of the displayed region and nothing else. With a registry the cost is
-what is on SCREEN — over a 400-entry buffer, a twelve-line window costs 5
-resolutions where the whole buffer costs 799 — and the registry is read once
-per fontified region rather than once per headline.
+what is on SCREEN — over a 400-entry buffer, a twelve-line window costs 3
+resolutions where the whole buffer costs 400 under the one-attribute registry
+above, and 5 against 799 under a registry declaring two faced attributes,
+since each unmapped headline is resolved once per declaration — and the
+registry is read once per fontified region rather than once per headline.
+
+Editing =:STATUS:= in a drawer moves the face on the headline above it. An
+edit to the REGISTRY, or to a prototype master in another buffer, does not
+refontify the followers: an armed buffer left open across such an edit keeps
+its old colour until it is refontified, by =M-x font-lock-flush= or by being
+scrolled away and back.
 
 * Key bindings, and what each was checked against
 

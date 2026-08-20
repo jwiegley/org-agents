@@ -644,9 +644,14 @@ So it is safe to leave on in files under version control.
 jit-lock-driven, per displayed headline. The matcher reads only the entry at
 its match and honours the region's limit, so cost scales with what is *on
 screen* and not with the buffer or the corpus. Measured over a 400-entry
-buffer of which one entry is drawn: a twelve-line window costs **5**
-resolutions where the whole buffer costs **799**, and a headline outside the
+buffer of which one entry is drawn: a twelve-line window costs **3**
+resolutions where the whole buffer costs **400**, and a headline outside the
 region carries no `face` property at all.
+
+Those two figures are for the single-`STATUS` registry above. Each unmapped
+headline is resolved once *per face-declaring attribute*, so they scale with
+how many attributes name faces: the same measurement under the test suite's
+registry, which declares `STATUS` and `OWNER`, is **5** and **799**.
 
 The registry is read **once per fontified region** rather than once per
 headline, and that matters more than it sounds. Reaching the registry costs
