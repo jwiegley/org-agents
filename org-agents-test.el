@@ -3017,6 +3017,103 @@ resolver demotes the signal to a report, deduplicated by
         (should (= 1 (length texts)))
         (should (string-match-p "A -> B -> A" (car texts)))))))
 
+(ert-deftest org-agents-test-prototype-cycle-mixing-name-and-id-names-two-hops ()
+  "A cycle spelled once by name and once by `id:' is TWO hops, not four.
+The visited set has to be one key space for the diagnostic to be true.
+Keyed per spelling -- a downcased name for a named master, `FILE:POSITION'
+for an id-named one -- the same entry gets two keys, the walk goes one hop
+past the cycle before a key repeats, and the message MEASURED before the
+fix was `Alpha -> Beta -> Alpha -> Beta': four masters named where there
+are two, and no way to see where the cycle closed.
+
+The design explicitly permits mixing the spellings, so this is a corpus a
+user can write.  No test in the suite built one before."
+  (let ((uuid "1f2e3d4c-5b6a-7890-abcd-ef0123456789"))
+    (org-agents-test--with-attr-corpus (concat "\
+* Prototypes
+** Alpha
+:PROPERTIES:
+:ID: " uuid "
+:PROTOTYPE: Beta
+:END:
+** Beta
+:PROPERTIES:
+:PROTOTYPE: id:" uuid "
+:END:
+")
+        '(("mixed.org" . "\
+* TODO Round and round, two ways
+:PROPERTIES:
+:PROTOTYPE: Alpha
+:END:
+"))
+      ;; The id half needs org-id to know where the master lives; the
+      ;; fixture starts with an empty table on purpose.
+      (puthash uuid registry org-id-locations)
+      (org-agents-test--at-entry (funcall F "mixed.org") "Round and round"
+        (let* ((err (should-error (org-agents-resolve-property "OWNER")
+                                 :type 'user-error))
+               (text (error-message-string err)))
+          (should (string-match-p "cycle" text))
+          ;; Closed at Alpha, and named once per hop.
+          (should (string-match-p "Alpha -> Beta -> Alpha" text))
+          ;; And NOT walked past it.
+          (should-not (string-match-p "Alpha -> Beta -> Alpha -> Beta" text)))))))
+
+(ert-deftest org-agents-test-prototype-chain-is-bounded-independently ()
+  "The walk is bounded by a hop count as well as by the visited set.
+The visited set alone is sound, and this is not about soundness: it is
+about which failure a regression produces.  MEASURED, neutering the cycle
+branch of `org-agents--prototype-chain' did not fail
+`org-agents-test-prototype-cycle-names-the-cycle' -- it hung the suite
+until the runner's timeout, printing no `Ran N tests' line at all, which
+in CI reads as an infrastructure flake rather than as the cycle
+regression it is.  The counter makes that a signal instead.
+
+Exercised by lowering the bound over a legitimate chain, since the
+mutation that would otherwise reach it is the one this exists to catch.
+The message says `cycle' too, so a walk that reaches the bound satisfies
+the assertions the cycle tests already make."
+  (org-agents-test--with-attr-corpus "\
+* Prototypes
+** P0
+:PROPERTIES:
+:PROTOTYPE: P1
+:END:
+** P1
+:PROPERTIES:
+:PROTOTYPE: P2
+:END:
+** P2
+:PROPERTIES:
+:PROTOTYPE: P3
+:END:
+** P3
+:PROPERTIES:
+:OWNER: deep
+:END:
+"
+      '(("deep.org" . "\
+* TODO Four hops down
+:PROPERTIES:
+:PROTOTYPE: P0
+:END:
+"))
+    (org-agents-test--at-entry (funcall F "deep.org") "Four hops down"
+      ;; At the shipped bound the chain is ordinary and resolves.
+      (should (equal "deep" (org-agents-resolve-property "OWNER")))
+      ;; Below it the walk refuses, and says so the way a cycle does.
+      (let* ((org-agents--prototype-chain-limit 2)
+             (err (should-error (org-agents-resolve-property "OWNER")
+                               :type 'user-error))
+             (text (error-message-string err)))
+        (should (string-match-p "cycle" text))
+        (should (string-match-p "P0 -> P1" text)))
+      ;; A bound of one hop still names the hop it stopped at.
+      (let ((org-agents--prototype-chain-limit 1))
+        (should-error (org-agents-resolve-property "OWNER")
+                      :type 'user-error)))))
+
 (ert-deftest org-agents-test-prototype-dangling-is-one-diagnostic ()
   "A `:PROTOTYPE:' naming nothing is ONE message, and resolution answers nil.
 Twenty entries naming the same missing prototype say it once and name an

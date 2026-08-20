@@ -3729,11 +3729,28 @@ by its buffer name, which is what a read in a temporary copy has."
               (if file (abbreviate-file-name file) (buffer-name))
               (line-number-at-pos)))))
 
-(defun org-agents--prototype-at-point (key file)
-  "The prototype entry at point as a plist, read out of FILE at KEY.
-KEY is what a cycle is detected by: a downcased name for a prototype the
-registry names, and `FILE:POSITION' for one found by its `:ID:', so that
-two spellings of one entry cannot walk past each other.
+(defun org-agents--prototype-at-point (file)
+  "The prototype entry at point as a plist, read out of FILE.
+`:key' is what a cycle is detected by, and it is `FILE:POSITION' for
+every hop however the hop was reached -- by name out of the registry's
+`Prototypes' section, or by its `:ID:' out in the corpus.  ONE key space,
+so that two spellings of one entry cannot walk past each other.
+
+That is a correctness requirement of the diagnostic rather than of the
+walk.  Keyed per spelling -- a downcased name for a named master and
+`FILE:POSITION' for an id-named one -- both key spaces are finite and the
+walk still terminates, but a chain mixing the two spellings is walked one
+hop further than its length and the cycle is MISNAMED: measured, a
+two-entry cycle whose master named its partner by name and was named back
+by `id:' printed `Alpha -> Beta -> Alpha -> Beta', which says four
+masters where there are two and does not say where the cycle closed.
+
+A position is a safe key because `org-agents--in-org-copy' guarantees it:
+the copy is character-for-character the file's text, `#+SETUPFILE:'
+neutralization included, so a position found by one reader is the same
+position for the other.  Both caches are keyed on
+`org-agents--file-cache-key' of that file, so an edit that would move an
+entry invalidates them together.
 
 `:properties' is `(org-entry-properties nil \\='standard)', which is
 exact rather than convenient: MEASURED, it joins `:T:' with `:T+:'
@@ -3742,7 +3759,7 @@ the entry carries at once.  Its synthesized `CATEGORY' is never reached,
 because a special property is answered locally before the chain is
 walked at all."
   (list :name (org-get-heading t t t t)
-        :key key
+        :key (format "%s:%d" file (point))
         :properties (org-entry-properties nil 'standard)
         :prototype (org-entry-get nil org-agents--prototype-property)
         :file file
@@ -3778,8 +3795,7 @@ than a consequence.  The diagnosis is what makes it a safe one."
              ((assoc-string name prototypes t)
               (org-agents--prototype-warn
                name file "declared twice; the first declaration stands"))
-             (t (push (cons name (org-agents--prototype-at-point
-                                  (downcase name) file))
+             (t (push (cons name (org-agents--prototype-at-point file))
                       prototypes)))))))
     (nreverse prototypes)))
 
@@ -3849,9 +3865,7 @@ makes."
          (unless (org-at-heading-p) (outline-next-heading))
          (while (org-at-heading-p)
            (when (equal id (org-entry-get nil "ID"))
-             (throw 'found
-                    (org-agents--prototype-at-point
-                     (format "%s:%d" file (point)) file)))
+             (throw 'found (org-agents--prototype-at-point file)))
            (outline-next-heading))
          nil)))))
 
@@ -3890,6 +3904,34 @@ first of them."
        "org-agents: no prototype `%s' named by %s"
        ref (org-agents--prototype-where pom))))
 
+(defconst org-agents--prototype-chain-limit 1000
+  "How many hops `org-agents--prototype-chain' walks before it refuses.
+A SECOND bound, and deliberately not a tight one.  The visited set is
+what detects a cycle and names it; this only guarantees that the loop
+returns at all, so that a refactor which drops or mis-keys that set fails
+a test instead of hanging the suite.
+
+Not derived from the number of registry prototypes, which would be the
+obvious cap and is the wrong one: an `id:' chain walks entries out in the
+corpus that the registry never names, so a cap counted from the registry
+would refuse a legitimate chain.  A thousand distinct masters in one
+chain is not a corpus anyone has -- Tinderbox chains are two to four deep
+-- and every hop past the first is a cache hit, so the bound costs
+nothing where it is not reached.
+
+A `defconst' and not a `defcustom': it is a bound on a broken corpus, not
+a preference, and nothing a user wants to raise.")
+
+(defun org-agents--prototype-path (names)
+  "NAMES joined as a chain for a diagnostic to print.
+Truncated, because the second bound admits a path a thousand hops long
+and a diagnostic that prints one says less than a diagnostic that prints
+its beginning: where a cycle closes is visible in the first few hops, and
+that is what the reader is looking for."
+  (let ((shown (take 12 names)))
+    (concat (string-join shown " -> ")
+            (when (> (length names) (length shown)) " -> ..."))))
+
 (defun org-agents--prototype-chain (name ref pom)
   "Look NAME up along the prototype chain starting at REF, or answer nil.
 Nearest hop first, and the walk stops at the first hop that carries NAME.
@@ -3899,24 +3941,36 @@ A hop already visited is a CYCLE, and a cycle is a `user-error' naming
 the hops in order: it is a broken corpus rather than a missing value, and
 the caller that must not signal calls
 `org-agents-resolve-property-quietly' instead.  The visited set is keyed
-on each hop's own `:key', so a master reached once by name and once by id
-is one hop and not two.
+on each hop's own `:key', which `org-agents--prototype-at-point' makes
+one key space, so a master reached once by name and once by id is one hop
+and not two.
+
+`org-agents--prototype-chain-limit' bounds the walk a SECOND time, and
+independently.  The visited set alone is sound -- the key space is
+finite, so the walk terminates -- but it was also the only thing bounding
+this loop, and that made the loudest failure mode the least legible one:
+MEASURED, neutering the cycle branch did not fail
+`org-agents-test-prototype-cycle-names-the-cycle', it hung the suite
+until the runner's timeout, which in CI reads as an infrastructure flake
+rather than as the cycle regression it is.  The counter turns that back
+into the signal the cycle tests already assert.
 
 A dangling reference ends the walk with the value nil, having already
 been diagnosed by `org-agents--prototype-entry'."
   (let ((visited (make-hash-table :test #'equal))
+        (hops 0)
         (path nil)
         (value nil))
     (while (and ref (null value))
       (let ((entry (org-agents--prototype-entry ref pom)))
         (cond
          ((null entry) (setq ref nil))
-         ((gethash (plist-get entry :key) visited)
+         ((or (gethash (plist-get entry :key) visited)
+              (> (cl-incf hops) org-agents--prototype-chain-limit))
           (user-error "org-agents: prototype cycle at %s: %s"
                       (org-agents--prototype-where pom)
-                      (string-join (nreverse (cons (plist-get entry :name)
-                                                   path))
-                                   " -> ")))
+                      (org-agents--prototype-path
+                       (nreverse (cons (plist-get entry :name) path)))))
          (t
           (puthash (plist-get entry :key) t visited)
           (push (plist-get entry :name) path)
