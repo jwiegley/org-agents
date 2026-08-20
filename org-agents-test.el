@@ -7508,25 +7508,32 @@ A list even where the answer is empty, so a caller may assert absence."
 text anywhere, so the ordinary `^[ \\t]*:STATUS\\+?:' pattern does not
 return it and org-ql matches in it.  That is the lost match the
 `:PROTOTYPE:' arm exists to prevent, and `org-agents-test--should-cover'
-is what names the file if it goes missing."
+is what names the file if it goes missing.
+
+Narrowed inside `org-agents--with-attributes', as `org-agents--collect'
+narrows: `org-agents--resolved-default' refuses to answer outside a
+registry batch, because a narrowing decided against one snapshot of
+`:ATTR_DEFAULT:' and evaluated against another loses files silently."
   (org-agents-test--with-rg-corpus
     (with-temp-file registry
       (insert org-agents-test--rg-registry-no-default))
-    (let ((cands (org-agents-test--should-cover
-                  '(and (todo) (property-resolved "STATUS" "active"))
-                  paths dir)))
-      ;; Both sides of the disjunction are exercised: the master by the
-      ;; NAME arm, the follower by the PROTOTYPE arm.
-      (should (member (file-truename (funcall F "proto-master.org")) cands))
-      (should (member (file-truename (funcall F "proto-follower.org")) cands))
-      ;; And it still narrows.
-      (should-not (member (file-truename (funcall F "filler.org")) cands))
-      (should-not (member (file-truename (funcall F "plan.org")) cands)))
-    ;; The existence form too, and over the whole corpus.
-    (let ((cands (org-agents-test--should-cover
-                  '(property-resolved "STATUS") paths dir)))
-      (should (member (file-truename (funcall F "proto-follower.org")) cands))
-      (should-not (member (file-truename (funcall F "filler.org")) cands)))))
+    (org-agents--with-attributes
+      (let ((cands (org-agents-test--should-cover
+                    '(and (todo) (property-resolved "STATUS" "active"))
+                    paths dir)))
+        ;; Both sides of the disjunction are exercised: the master by the
+        ;; NAME arm, the follower by the PROTOTYPE arm.
+        (should (member (file-truename (funcall F "proto-master.org")) cands))
+        (should (member (file-truename (funcall F "proto-follower.org")) cands))
+        ;; And it still narrows.
+        (should-not (member (file-truename (funcall F "filler.org")) cands))
+        (should-not (member (file-truename (funcall F "plan.org")) cands)))
+      ;; The existence form too, and over the whole corpus.
+      (let ((cands (org-agents-test--should-cover
+                    '(property-resolved "STATUS") paths dir)))
+        (should (member (file-truename (funcall F "proto-follower.org")) cands))
+        (should-not (member (file-truename (funcall F "filler.org"))
+                            cands))))))
 
 (ert-deftest org-agents-test-rg-property-resolved-stays-residual-at-the-declared-default ()
   "At the declared default the conjunct pushes NOTHING, and it must not.
@@ -7541,21 +7548,22 @@ names the file a pushed alternation demonstrably loses."
   (org-agents-test--with-rg-corpus
     (with-temp-file registry
       (insert org-agents-test--rg-registry-default-active))
-    ;; The splitter half.
-    (should-not (org-agents--prefilter-conjuncts
-                 '(property-resolved "STATUS" "active")))
-    (should-not (org-agents--prefilter-conjuncts
-                 '(and (todo) (property-resolved "STATUS" "active"))))
-    ;; The outcome half: org-ql matches in a file holding neither line,
-    ;; and the alternation the splitter declined to push does not return
-    ;; it.
-    (let ((live (org-agents-test--live-files
-                 '(property-resolved "STATUS" "active") paths))
-          (narrowed (org-agents-test--rg-truenames
-                     '((property-resolved "STATUS" "active")) dir))
-          (filler (file-truename (funcall F "filler.org"))))
-      (should (member filler live))
-      (should-not (member filler narrowed)))))
+    (org-agents--with-attributes
+      ;; The splitter half.
+      (should-not (org-agents--prefilter-conjuncts
+                   '(property-resolved "STATUS" "active")))
+      (should-not (org-agents--prefilter-conjuncts
+                   '(and (todo) (property-resolved "STATUS" "active"))))
+      ;; The outcome half: org-ql matches in a file holding neither line,
+      ;; and the alternation the splitter declined to push does not return
+      ;; it.
+      (let ((live (org-agents-test--live-files
+                   '(property-resolved "STATUS" "active") paths))
+            (narrowed (org-agents-test--rg-truenames
+                       '((property-resolved "STATUS" "active")) dir))
+            (filler (file-truename (funcall F "filler.org"))))
+        (should (member filler live))
+        (should-not (member filler narrowed))))))
 
 (ert-deftest org-agents-test-rg-property-resolved-bare-existence-with-a-default-is-residual ()
   "The exception is not for the value form only: bare existence needs it too.
@@ -7564,14 +7572,16 @@ A declared default makes EVERY entry in the corpus resolve the name, so
   (org-agents-test--with-rg-corpus
     (with-temp-file registry
       (insert org-agents-test--rg-registry-default-active))
-    (should-not (org-agents--prefilter-conjuncts '(property-resolved "STATUS")))
-    (let ((live (org-agents-test--live-files '(property-resolved "STATUS")
-                                             paths))
-          (narrowed (org-agents-test--rg-truenames
-                     '((property-resolved "STATUS")) dir))
-          (filler (file-truename (funcall F "filler.org"))))
-      (should (member filler live))
-      (should-not (member filler narrowed)))))
+    (org-agents--with-attributes
+      (should-not (org-agents--prefilter-conjuncts
+                   '(property-resolved "STATUS")))
+      (let ((live (org-agents-test--live-files '(property-resolved "STATUS")
+                                               paths))
+            (narrowed (org-agents-test--rg-truenames
+                       '((property-resolved "STATUS")) dir))
+            (filler (file-truename (funcall F "filler.org"))))
+        (should (member filler live))
+        (should-not (member filler narrowed))))))
 
 (ert-deftest org-agents-test-rg-property-resolved-pushes-when-the-default-differs ()
   "A default that is not the tested value narrows as usual.
@@ -7585,20 +7595,21 @@ while every `$NAME^' agent walked its scope's entire file set."
       (insert "* STATUS\n:PROPERTIES:\n:ATTR_TYPE: string\n"
               ":ATTR_DEFAULT: blocked\n:END:\n\n"
               "* Prototypes\n** Task\n:PROPERTIES:\n:STATUS: active\n:END:\n"))
-    (should (equal (org-agents--prefilter-conjuncts
-                    '(property-resolved "STATUS" "active"))
-                   '((property-resolved "STATUS" "active"))))
-    ;; And the narrowing is real: the whole corpus is 33 files and the
-    ;; answer is not.
-    (let ((cands (org-agents-test--should-cover
-                  '(property-resolved "STATUS" "active") paths dir)))
-      (should (member (file-truename (funcall F "proto-follower.org")) cands))
-      (should-not (member (file-truename (funcall F "filler.org")) cands))
-      (should (< (length cands) (length paths))))
-    ;; The value the default DOES equal is the exception, in the same
-    ;; registry -- so the rule is about the pair and not about the name.
-    (should-not (org-agents--prefilter-conjuncts
-                 '(property-resolved "STATUS" "blocked")))))
+    (org-agents--with-attributes
+      (should (equal (org-agents--prefilter-conjuncts
+                      '(property-resolved "STATUS" "active"))
+                     '((property-resolved "STATUS" "active"))))
+      ;; And the narrowing is real: the whole corpus is 33 files and the
+      ;; answer is not.
+      (let ((cands (org-agents-test--should-cover
+                    '(property-resolved "STATUS" "active") paths dir)))
+        (should (member (file-truename (funcall F "proto-follower.org")) cands))
+        (should-not (member (file-truename (funcall F "filler.org")) cands))
+        (should (< (length cands) (length paths))))
+      ;; The value the default DOES equal is the exception, in the same
+      ;; registry -- so the rule is about the pair and not about the name.
+      (should-not (org-agents--prefilter-conjuncts
+                   '(property-resolved "STATUS" "blocked"))))))
 
 (ert-deftest org-agents-test-rg-property-resolved-default-comparison-matches-the-predicate ()
   "The exception's comparison and the predicate's are ONE decision.
@@ -7613,19 +7624,20 @@ and this fails."
       (insert "* STATUS\n:PROPERTIES:\n:ATTR_TYPE: string\n"
               ":ATTR_DEFAULT: Active\n:END:\n\n"
               "* Prototypes\n** Task\n:PROPERTIES:\n:STATUS: active\n:END:\n"))
-    ;; The splitter pushes.
-    (should (equal (org-agents--prefilter-conjuncts
-                    '(property-resolved "STATUS" "active"))
-                   '((property-resolved "STATUS" "active"))))
-    ;; And the predicate does not match where nothing is spelled, so
-    ;; pushing loses nothing.
-    (let ((live (org-agents-test--live-files
-                 '(property-resolved "STATUS" "active") paths)))
-      (should-not (member (file-truename (funcall F "filler.org")) live))
-      (should (member (file-truename (funcall F "proto-follower.org")) live)))
-    ;; The whole superset relation, over the whole corpus.
-    (org-agents-test--should-cover '(property-resolved "STATUS" "active")
-                                  paths dir)))
+    (org-agents--with-attributes
+      ;; The splitter pushes.
+      (should (equal (org-agents--prefilter-conjuncts
+                      '(property-resolved "STATUS" "active"))
+                     '((property-resolved "STATUS" "active"))))
+      ;; And the predicate does not match where nothing is spelled, so
+      ;; pushing loses nothing.
+      (let ((live (org-agents-test--live-files
+                   '(property-resolved "STATUS" "active") paths)))
+        (should-not (member (file-truename (funcall F "filler.org")) live))
+        (should (member (file-truename (funcall F "proto-follower.org")) live)))
+      ;; The whole superset relation, over the whole corpus.
+      (org-agents-test--should-cover '(property-resolved "STATUS" "active")
+                                    paths dir))))
 
 (ert-deftest org-agents-test-rg-property-resolved-with-no-registry-pushes-the-alternation ()
   "No registry declares no default, so the alternation is sound and pushed.
@@ -7639,20 +7651,22 @@ Silently, too: a missing registry is optional and says nothing about
 itself."
   (org-agents-test--with-rg-corpus
     (should-not (file-exists-p registry))
-    (let ((texts (org-agents-test--messages
-                   (should (equal (org-agents--prefilter-conjuncts
-                                   '(property-resolved "STATUS" "active"))
-                                  '((property-resolved "STATUS" "active"))))
-                   (should (equal (org-agents--prefilter-conjuncts
-                                   '(property-resolved "STATUS"))
-                                  '((property-resolved "STATUS")))))))
-      (should-not texts))
-    ;; And with no registry the follower resolves nothing, so the answer
-    ;; is the master's file alone -- narrowed, and still a superset.
-    (let ((cands (org-agents-test--should-cover
-                  '(property-resolved "STATUS" "active") paths dir)))
-      (should (member (file-truename (funcall F "proto-master.org")) cands))
-      (should-not (member (file-truename (funcall F "filler.org")) cands)))))
+    (org-agents--with-attributes
+      (let ((texts (org-agents-test--messages
+                     (should (equal (org-agents--prefilter-conjuncts
+                                     '(property-resolved "STATUS" "active"))
+                                    '((property-resolved "STATUS" "active"))))
+                     (should (equal (org-agents--prefilter-conjuncts
+                                     '(property-resolved "STATUS"))
+                                    '((property-resolved "STATUS")))))))
+        (should-not texts))
+      ;; And with no registry the follower resolves nothing, so the answer
+      ;; is the master's file alone -- narrowed, and still a superset.
+      (let ((cands (org-agents-test--should-cover
+                    '(property-resolved "STATUS" "active") paths dir)))
+        (should (member (file-truename (funcall F "proto-master.org")) cands))
+        (should-not (member (file-truename (funcall F "filler.org"))
+                            cands))))))
 
 (ert-deftest org-agents-test-rg-property-resolved-ignores-org-use-property-inheritance ()
   "A broad `org-use-property-inheritance' costs `property' its narrowing, not this.
@@ -7664,23 +7678,24 @@ half, and an outcome half that loses no file."
   (org-agents-test--with-rg-corpus
     (with-temp-file registry
       (insert org-agents-test--rg-registry-no-default))
-    (let ((org-use-property-inheritance t))
-      ;; Plain `property' pushes nothing, by its own conservative guard.
-      (should-not (org-agents--prefilter-conjuncts '(property "STATUS")))
-      ;; And `property-resolved' pushes the alternation anyway.
-      (should (equal (org-agents--prefilter-conjuncts
-                      '(property-resolved "STATUS" "active"))
-                     '((property-resolved "STATUS" "active"))))
-      ;; Losing nothing: the superset holds at this setting too.
-      (let ((cands (org-agents-test--should-cover
-                    '(property-resolved "STATUS" "active") paths dir)))
-        (should (member (file-truename (funcall F "proto-follower.org"))
-                        cands))))
-    ;; The same at a list setting, which is the shape a real init uses.
-    (let ((org-use-property-inheritance '("STATUS")))
-      (should (equal (org-agents--prefilter-conjuncts
-                      '(property-resolved "STATUS"))
-                     '((property-resolved "STATUS")))))))
+    (org-agents--with-attributes
+      (let ((org-use-property-inheritance t))
+        ;; Plain `property' pushes nothing, by its own conservative guard.
+        (should-not (org-agents--prefilter-conjuncts '(property "STATUS")))
+        ;; And `property-resolved' pushes the alternation anyway.
+        (should (equal (org-agents--prefilter-conjuncts
+                        '(property-resolved "STATUS" "active"))
+                       '((property-resolved "STATUS" "active"))))
+        ;; Losing nothing: the superset holds at this setting too.
+        (let ((cands (org-agents-test--should-cover
+                      '(property-resolved "STATUS" "active") paths dir)))
+          (should (member (file-truename (funcall F "proto-follower.org"))
+                          cands))))
+      ;; The same at a list setting, which is the shape a real init uses.
+      (let ((org-use-property-inheritance '("STATUS")))
+        (should (equal (org-agents--prefilter-conjuncts
+                        '(property-resolved "STATUS"))
+                       '((property-resolved "STATUS"))))))))
 
 (ert-deftest org-agents-test-rg-property-resolved-special-property-is-residual ()
   "A special property pushes NOTHING, and here that is soundness.
@@ -7756,6 +7771,57 @@ splitter asks for a default once per conjunct."
                          (property-resolved "REVIEWS" "3")
                          (todo)))))
         (should (= 1 keys))))))
+
+(ert-deftest org-agents-test-resolved-default-refuses-to-answer-outside-a-batch ()
+  "Narrowing a resolved conjunct outside one registry snapshot SIGNALS.
+`org-agents-test-collect-reads-one-registry-for-splitter-and-predicate'
+pins the invariant for the one caller that exists; this pins it for the
+one that does not exist yet.  The straddle is real and was MEASURED
+before the guard: compute patterns against a registry declaring
+`:ATTR_DEFAULT: dflt', rewrite the registry to declare `other', then run
+org-ql -- the whole-corpus answer holds two entries that spell neither a
+`:STATUS:' line nor a `:PROTOTYPE:' line, and the narrowed answer holds
+neither of them.  Two matches lost, no error, no message.
+
+The guard cannot be satisfied by remembering to wrap: it refuses, so a
+later narrowing caller written outside `org-agents--in-attributes-batch'
+fails on its first test run instead of shipping a silent under-match.
+Both `property-resolved' rows of `org-agents--pushdown-fns' reach it, so
+both are asserted -- and a name the rows reject before they ask for a
+default is unaffected, which is why `CATEGORY' answers nil quietly."
+  (org-agents-test--with-rg-corpus
+    (with-temp-file registry
+      (insert org-agents-test--rg-registry-default-active))
+    ;; Outside a batch: both rows refuse.
+    (should-error (org-agents--prefilter-conjuncts
+                   '(property-resolved "STATUS" "active"))
+                  :type 'error)
+    (should-error (org-agents--prefilter-conjuncts
+                   '(property-resolved "STATUS"))
+                  :type 'error)
+    ;; Nested under a combinator is the same conjunct, and refuses too.
+    (should-error (org-agents--prefilter-conjuncts
+                   '(and (todo) (property-resolved "STATUS" "active")))
+                  :type 'error)
+    ;; A name the row rejects never asks for a default, so it is quiet:
+    ;; a special pushes nothing, and an `AGENT_' name is rewritten to the
+    ;; ordinary pattern -- see
+    ;; `org-agents-test-rg-property-resolved-agent-name-pushes-the-ordinary-pattern'.
+    (should-not (org-agents--prefilter-conjuncts
+                 '(property-resolved "CATEGORY" "x")))
+    (should (equal (org-agents--prefilter-conjuncts
+                    '(property-resolved "AGENT_QUERY"))
+                   '((property "AGENT_QUERY"))))
+    ;; And every shape that does not read the registry is unaffected.
+    (should (org-agents--prefilter-conjuncts '(property "STATUS" "active")))
+    (should (org-agents--prefilter-conjuncts '(heading "Review")))
+    ;; Inside the batch the same forms answer.
+    (org-agents--with-attributes
+      (should-not (org-agents--prefilter-conjuncts
+                   '(property-resolved "STATUS" "active")))
+      (should (equal (org-agents--prefilter-conjuncts
+                      '(property-resolved "OWNER" "alice"))
+                     '((property-resolved "OWNER" "alice")))))))
 
 (ert-deftest org-agents-test-collect-reads-one-registry-for-splitter-and-predicate ()
   "One `org-agents--collect' reads the registry once, for both of its readers.

@@ -342,6 +342,13 @@
 ;; this file's.
 (declare-function org-ql--normalize-query "org-ql")
 
+;; Declared here and defined with the Registry, far below.  The prefilter
+;; reads it long before that: `org-agents--resolved-default' refuses to
+;; answer outside a registry batch, and the batch is what binds this.  A
+;; forward declaration rather than a moved `defvar', so that the variable
+;; stays documented beside the caches it describes.
+(defvar org-agents--attributes-fresh)
+
 (defgroup org-agents nil
   "Tinderbox-style persistent queries for Org-mode."
   :group 'org
@@ -1325,7 +1332,30 @@ An absent or unreadable registry declares no default, `org-agents-attribute'
 answers nil, and `(plist-get nil :default)' is nil -- which is exactly the
 branch in which the widened alternation is sound, so nothing has to be
 written for it.  It still has a test, because it is the branch a later
-refactor is most likely to invert."
+refactor is most likely to invert.
+
+SIGNALS outside a registry batch, and that is the point of the function
+existing at all.  The exception this answer decides is sound only while
+the splitter and `property-resolved' read ONE snapshot: narrow against a
+default of `dflt', have the registry change to declare `other' before
+org-ql runs, and every entry spelling neither a `:NAME:' line nor a
+`:PROTOTYPE:' line is dropped from the answer with no error -- MEASURED,
+two entries of a twelve-file corpus lost silently, and nothing lost when
+the identical experiment ran inside the batch.
+
+Today no caller can straddle it: `org-agents--scope-files' is reached
+only from `org-agents--collect', which wraps
+`org-agents--in-attributes-batch'; `org-agents-preview' is inside the
+batch and never narrows; and `org-agents-check-attributes' narrows with
+`org-agents--rg-drawer-pattern', which reads no registry.  That is an
+audit of today's tree, though, and an audit is not an invariant.  The
+signal is what makes it one: a later narrowing caller written outside the
+batch fails loudly here instead of quietly returning fewer files than it
+should.  `org-agents-test-resolved-default-refuses-to-answer-outside-a-batch'
+pins it."
+  (unless org-agents--attributes-fresh
+    (error "org-agents: `%s' narrowed outside `org-agents--in-attributes-batch'"
+           name))
   (plist-get (org-agents-attribute name) :default))
 
 (defun org-agents--property-value-pushable-p (name value)
