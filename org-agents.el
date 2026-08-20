@@ -475,13 +475,30 @@ otherwise reach org-ql as a void variable at match time."
   (when-let* ((ref (org-agents--leftover-ref form)))
     (user-error "org-agents: no expansion for `%s' in `%S'" ref form)))
 
+(defun org-agents--query-text (query)
+  "Return QUERY printed whole, as one string.
+This is the package's only printer of a query, and that is the point of
+it: the text that is hashed, the text the user is shown, and the text
+recorded beside an approval are all this one string, so none of the
+three can come to say less than another.  Two display sites once
+printed with `%S' under whatever `print-length' the user had, which
+showed a prefix of a query the hash covered entire.
+
+`print-level' and `print-length' are bound to nil so nothing is elided,
+and `print-circle' to nil so a shared substructure is printed out rather
+than abbreviated to `#1#' -- an abbreviation is exactly the failure this
+function exists to prevent, whichever variable produces it."
+  (let ((print-level nil)
+        (print-length nil)
+        (print-circle nil))
+    (prin1-to-string query)))
+
 (defun org-agents--query-hash (query)
   "Return the hash under which QUERY is approved.
-Printing is unabbreviated: a truncated query would hash as its own
-prefix, so one approval would answer for every query sharing it."
-  (let ((print-level nil)
-        (print-length nil))
-    (sha1 (prin1-to-string query))))
+Printing goes through `org-agents--query-text' and is therefore
+unabbreviated: a truncated query would hash as its own prefix, so one
+approval would answer for every query sharing it."
+  (sha1 (org-agents--query-text query)))
 
 (defun org-agents--gate (query &optional context)
   "Return non-nil when QUERY may be evaluated.
@@ -497,11 +514,17 @@ skipped instead of prompting."
             (member hash org-agents-safe-queries)
             (if (or noninteractive (eq context 'batch))
                 (progn
-                  (message "org-agents: skipping unapproved query %S" query)
+                  (message "org-agents: skipping unapproved query %s"
+                           (org-agents--query-text query))
                   nil)
+              ;; `%s' on an already-printed string, not `%S' on the form:
+              ;; a second printing step would take whatever `print-length'
+              ;; is ambient and show less than the hash covers.  The line
+              ;; can be very long, which is correct -- a query being put to
+              ;; the user must be shown whole, and the minibuffer wraps.
               (when (yes-or-no-p
-                     (format "Query contains arbitrary Lisp: %S — run it? "
-                             query))
+                     (format "Query contains arbitrary Lisp: %s — run it? "
+                             (org-agents--query-text query)))
                 (puthash hash t org-agents--session-approved)
                 ;; Only offer to persist where customize has a file to
                 ;; write; without one `customize-save-variable' errors.

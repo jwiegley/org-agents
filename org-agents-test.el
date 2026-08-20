@@ -134,6 +134,81 @@ leftover-reference check names them."
                        (org-agents--query-hash
                         '(and (todo) (tags "a") (shell-command "pwned")))))))
 
+(defconst org-agents-test--deep-query
+  '(and (todo) (tags "a") (or (ignore) (progn (progn (progn (shell-command "pwned"))))))
+  "A query whose refusable leaf sits deeper than a small print limit.
+Both `print-level' 2 and `print-length' 2 elide it, so a display site
+that prints with `%S' shows the user `(and (todo) ...)' while the hash
+covers the whole form.")
+
+(ert-deftest org-agents-test-gate-prompt-shows-what-the-hash-covers ()
+  "The approval prompt must show every part of what it hashes.
+`org-agents--query-hash' prints with `print-level' and `print-length'
+bound to nil; a prompt that does not is asking about less than it
+remembers."
+  (let ((print-length 2)
+        (print-level 2)
+        (noninteractive nil)
+        (org-agents--session-approved (make-hash-table :test 'equal))
+        (org-agents-safe-queries nil)
+        (query org-agents-test--deep-query)
+        (prompt nil))
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (p &rest _) (setq prompt p) nil)))
+      (should-not (org-agents--gate query)))
+    (should prompt)
+    (should (string-match-p "pwned" prompt))
+    (should-not (string-match-p "\\.\\.\\." prompt))
+    ;; And the text shown is the very text that is hashed, not merely
+    ;; another unabbreviated printing of the same form.
+    (should (string-match-p (regexp-quote (org-agents--query-text query))
+                            prompt))))
+
+(ert-deftest org-agents-test-gate-batch-skip-message-is-unabbreviated ()
+  "The batch skip says which query it skipped, all of it.
+In batch there is no prompt, so this message is the only account of what
+was refused; truncated, it names a prefix several queries share."
+  (let* ((print-length 2)
+         (print-level 2)
+         (noninteractive t)
+         (org-agents--session-approved (make-hash-table :test 'equal))
+         (org-agents-safe-queries nil)
+         (query org-agents-test--deep-query)
+         (texts (org-agents-test--messages
+                  (should-not (org-agents--gate query))))
+         (text (car (last texts))))
+    (should text)
+    (should (string-match-p "pwned" text))
+    (should-not (string-match-p "\\.\\.\\." text))))
+
+(ert-deftest org-agents-test-query-hash-unchanged-by-the-printer-refactor ()
+  "The hash of a query is a fixed value, pinned against a printer change.
+Routing hash, prompt and stored text through one printer must not change
+what any of them hashes.  Both literals were computed with the shipped
+code, as `(sha1 (prin1-to-string FORM))' under nil print bindings.
+
+The second form carries string literals on purpose.  `format' with `%s'
+prints a query almost the way `prin1-to-string' does -- the two agree
+exactly on `(and (todo) (ignore))' -- and differ only where a datum
+needs its reader syntax.  A pin over a string-free form would therefore
+hold under a printer that has stopped being a *reader* printer, and
+`(tags \"a\")' and `(tags a)' are not the same query."
+  (should (equal (org-agents--query-hash '(and (todo) (ignore)))
+                 "d11e5a6f8f3f90c5ffe017ed7c17245dda308083"))
+  (should (equal (org-agents--query-hash
+                  '(and (todo) (tags "a")
+                        (string-match "x" (or (org-entry-get nil "URL") ""))))
+                 "97ab403ea3f907c58ad09d4c20fe95103e1083a5"))
+  ;; `print-circle' abbreviates a shared substructure to `#1#', which is
+  ;; the same failure as a truncation by another variable: the user would
+  ;; be shown a reference where the hash covers the referent.  A query
+  ;; read out of a property drawer cannot share structure, but one built
+  ;; by a caller can, so the printer binds this too.
+  (let* ((sub '(todo))
+         (print-circle t))
+    (should (equal (org-agents--query-hash (list 'and sub sub))
+                   (org-agents--query-hash '(and (todo) (todo)))))))
+
 (ert-deftest org-agents-test-gate-master-switch-off ()
   (let ((org-ql-ask-unsafe-queries nil)
         (org-agents--session-approved (make-hash-table :test 'equal)))
