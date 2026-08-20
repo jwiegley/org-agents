@@ -169,7 +169,7 @@ refused by name rather than rendered wrongly.
 | `org-agents-update` | update the agent at point, or the block point is inside |
 | `org-agents-update-buffer` | update every agent in the current buffer |
 | `org-agents-update-all` | update every agent in the files `org-agents-files` names |
-| `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded and gated exactly as an agent's is, with `org-agents-exclude` appended, over `org-agenda-files` |
+| `org-agents-preview` | `org-ql-search` over a query read from the minibuffer, expanded, appended to `org-agents-exclude` and gated exactly as an agent's is, over `org-agenda-files` |
 | `org-agents-insert-dblock` | insert an empty `org-agents` block at point |
 | `org-agents-list-approvals` | list every remembered approval and refusal, each with the query its hash covers; `d` forgets an approval, `r` turns it into a refusal, `u` lifts a refusal |
 | `org-agents-mode` | update this buffer's agents before each save |
@@ -565,6 +565,12 @@ package's own flags do not override `--max-depth`, `--max-filesize`,
   it would be an approval of something the user never saw. Anyone upgrading
   from a version that gated the query alone will see the same one-time
   re-prompt, because the stored hashes are of the old shape.
+* Because the gate now reads `org-agents-exclude`, the spelling checks read
+  it too. A `$PROP` reference there is refused by name — the exclusion is
+  not put through the `$PROP` expander, so a reference in it would have
+  reached org-ql as a void variable at match time — and so is a
+  misspelled head like `headline`. Both used to pass unremarked and fail
+  later, or quietly not at all.
 * On this platform `directory-files-recursively` can intermittently drop a
   symlink to a FILE from an `active` or `all` scope's base file set:
   `file-name-all-completions` sometimes reports such a link with a trailing

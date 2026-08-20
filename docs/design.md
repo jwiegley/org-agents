@@ -202,6 +202,28 @@ Scheduling is not built in: `org-update-all-dblocks` is hook-callable and a one-
 
 ## Safety
 
+> **Superseded in part, 2026-08-19 (Epic 1 of the dynamic-properties work).**
+> Four statements below no longer describe the code, and the changes are in
+> README.md §"The query language" and §"Commands and options":
+>
+> 1. "The gate walks the expanded query" — it walks the **form that runs**,
+>    `org-agents-exclude` conjoined in, produced by
+>    `org-agents--effective-query`. Every stored hash from before that change
+>    stops matching, by design.
+> 2. The whole second paragraph's claim that `org-agents-exclude` "does reach
+>    org-ql ungated" is no longer true, and neither is its justification: the
+>    `sexp` type never made the variable ineligible as a file-local, which is
+>    why every `org-agents` option now carries `:risky t`.
+> 3. "the gate runs before normalization, on the raw expanded sexp" is still
+>    true and is no longer the whole answer: running first does not stop a
+>    normalizer that runs afterwards. `org-agents-refused-heads` refuses such
+>    a head outright, ahead of the safe list and of
+>    `org-ql-ask-unsafe-queries`, and ships holding `semantic`.
+> 4. The "persistent safelist" records `(HASH . TEXT)` rather than a bare
+>    hash, so an approval can be read and revoked;
+>    `org-agents-list-approvals` does both, and
+>    `org-agents-refused-queries` is the negative list.
+
 The unit of trust is the **whole query** (plus inline dblock params), because org-ql splices the query sexp into a byte-compiled lambda and passes unknown forms through unchanged — `(and (todo) (shell-command "x"))` contains no `$ref` yet would execute. The gate walks the expanded query. A predicate head vouches for its own name only, never for its arguments: org-ql evaluates a predicate's arguments as Lisp too, so `(tags (shell-command "x"))` must not pass on the strength of `tags`, and every argument answers for itself recursively. A form is *structurally safe* when it is a literal; a quoted form, which is returned and never evaluated; one of the seven closed-set `$SPECIAL` accessors; or a proper list whose head is a known predicate (`org-ql-predicates` and its aliases), a boolean combinator, or a nested-query predicate, and whose every argument is itself structurally safe. A proper list whose head is not a symbol is the data it looks like — which is how org-ql's own `(src :lang "elisp" :regexps ("defun"))` is written — and is safe when its elements are, unless that head is itself callable: a byte-code object reads in from a property like any other text and Emacs calls whatever it finds in function position. Anything else fails closed, an improper list included. Everything unsafe — including all `$ref`-generated residual bodies — runs only after confirmation, honoring `org-ql-ask-unsafe-queries` as the master switch, with a `sha1`-keyed session memo and an optional persistent safelist defcustom (the `safe-local-variable-values` pattern); the hash is taken with `print-level` and `print-length` bound to nil, so that a truncated query cannot hash as its own prefix and one approval answer for every query sharing it. Non-interactive contexts skip unapproved agents with a message. A known additional exposure, documented: org-ql *normalizers* run before any body executes (`semantic`'s normalizer spawns the CLI), so the gate runs before normalization, on the raw expanded sexp.
 
 With actions, Elisp formats, computed columns, and Elisp sort keys all out of v1, residual query bodies are the *only* user-supplied code the gate ever evaluates. One conjunct does reach org-ql ungated: `org-agents-exclude` is spliced in *after* the gate has passed the query, which is safe only because it is a defcustom whose `sexp` type leaves it ineligible as a `safe-local-variable`, so a file cannot set it without Emacs's own file-local prompt — the one route by which anything but the user could put code there.
