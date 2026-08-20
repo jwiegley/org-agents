@@ -381,6 +381,34 @@ With NUMERIC non-nil, coerce a property's string value to a number."
 ;; evaluation cannot come to mean different things.  Forms built only
 ;; from org-ql predicates and combinators run unremarked; anything else
 ;; needs the user's word for it, once, remembered by hash.
+;;
+;; Refusal is checked first, and outranks `org-ql-ask-unsafe-queries':
+;; the switch governs whether the user is ASKED, and a head on
+;; `org-agents-refused-heads' is not a question.  What a predicate head
+;; vouches for is its own name; what its org-ql normalizer runs when the
+;; query is compiled is code from wherever that predicate was defined,
+;; and it runs past this gate no matter what the user answers.
+
+(defcustom org-agents-refused-heads '(semantic)
+  "Predicate heads this package refuses to hand org-ql, whatever else says.
+Refusal is checked before the safe list and before any remembered
+approval, and `org-ql-ask-unsafe-queries' does not override it: the
+switch governs whether the user is asked, and a head on this list is not
+a question.
+
+A head with no dangerous argument of its own can still be dangerous.
+org-ql runs each predicate's *normalizer* when it compiles a query --
+after this gate has admitted the head, and before any entry is examined
+-- and a normalizer is arbitrary code from wherever the predicate was
+defined.  `(semantic \"x\")' is the shipped example: `org-ql-semantic.el'
+defines `semantic' with a normalizer that calls
+`org-ql-semantic--ensure-cache', which `call-process'es `org db search'.
+Structurally the form is a predicate call like any other, so the safe
+list admits it without a prompt and the subprocess runs.
+
+This is where such a head goes.  Matching is by literal symbol, so an
+alias of an IO-bearing predicate has to be listed too."
+  :type '(repeat symbol) :group 'org-agents)
 
 (defcustom org-agents-safe-queries nil
   "List of sha1 hashes of queries approved to run without prompting.
@@ -452,6 +480,23 @@ case that needs saying, since org-ql would reach it as a void variable."
         ((consp form) (or (org-agents--leftover-ref (car form))
                           (org-agents--leftover-ref (cdr form))))))
 
+(defun org-agents--refused-head (form)
+  "Return the first `org-agents-refused-heads' symbol in FORM, or nil.
+Every cons cell is descended, and a refused symbol is reported wherever
+it appears in a car -- in argument position and under a nested query, not
+only as the head of FORM itself.
+
+Deliberately more conservative than `org-agents--structurally-safe-p',
+which exempts quoted data because quoted data is returned rather than
+evaluated: `(quote (semantic \"x\"))' is refused here.  This fails
+closed, and the shape it costs is one nobody writes on purpose, while
+what failing open costs is a subprocess."
+  (cond ((and (consp form) (symbolp (car form)) (car form)
+              (memq (car form) org-agents-refused-heads))
+         (car form))
+        ((consp form) (or (org-agents--refused-head (car form))
+                          (org-agents--refused-head (cdr form))))))
+
 (defun org-agents--check-head-spelling (form)
   "Signal `user-error' if FORM uses a spelling org-ql has no reading for.
 Only query positions are examined -- combinators, nested queries, and
@@ -509,8 +554,15 @@ approval would answer for every query sharing it."
 Structurally safe queries always pass.  Unsafe queries pass when
 `org-ql-ask-unsafe-queries' is nil, when previously approved, or when
 the user confirms; in `noninteractive' (or CONTEXT `batch') they are
-skipped instead of prompting."
+skipped instead of prompting.
+
+A head in `org-agents-refused-heads' signals rather than returning nil.
+The callers turn nil into one generic \"query not approved\", which would
+say nothing about which head was refused or why no approval can help."
   (org-agents--check-spelling query)
+  (when-let* ((head (org-agents--refused-head query)))
+    (user-error "org-agents: `%s' is refused by `org-agents-refused-heads'"
+                head))
   (or (org-agents--structurally-safe-p query)
       (not org-ql-ask-unsafe-queries)
       (let ((hash (org-agents--query-hash query)))

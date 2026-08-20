@@ -96,6 +96,19 @@ answer by SHA-1 hash in `org-agents-safe-queries`. An approval therefore
 names a form: change `org-agents-exclude` and every remembered approval
 stops matching, and each agent asks again once.
 
+A predicate head vouches for its own name and nothing more. org-ql runs
+each predicate's *normalizer* when it compiles a query — after the gate
+has admitted the head, and before any entry is examined — and a normalizer
+is arbitrary code from wherever the predicate was defined. So a form the
+gate calls structurally safe can still reach out. `org-agents-refused-heads`
+names the heads that are refused outright: refusal is checked first, names
+the head, and is beaten by nothing — not a remembered approval, and not
+`org-ql-ask-unsafe-queries`, which governs whether the user is *asked*.
+`semantic` ships in the list because `org-ql-semantic.el` defines it with a
+normalizer that runs `org db search` in a subprocess. Matching is by
+literal symbol, so an alias of an IO-bearing predicate has to be listed
+too.
+
 An Org property value is one line. Keep the query on one line, or name a
 shorter one and let a residual predicate do the rest. A `:AGENT_QUERY+:`
 continuation *is* read — `org-entry-get` joins the pieces with
@@ -165,6 +178,7 @@ refused by name rather than rendered wrongly.
 | --- | --- | --- |
 | `org-agents-files` | `'("~/org/agents.org")` | where `org-agents-update-all` looks: files, directories, or the symbol `agenda` |
 | `org-agents-exclude` | `(not (property "AGENT_MATCH"))` | conjunct appended to every agent query and every preview, so agents do not consume each other's aliases. Part of the form the gate approves: Lisp here is gated like Lisp in a query, and changing it invalidates every remembered approval |
+| `org-agents-refused-heads` | `(semantic)` | predicate heads refused outright, before the safe list and before any approval, because org-ql runs their normalizers past the gate |
 | `org-agents-safe-queries` | `nil` | SHA-1 hashes of queries approved to run without prompting |
 | `org-agents-prefilter` | `auto` | whether to narrow an unbounded scope with ripgrep: `auto`, `require` (refuse a scope that cannot be narrowed rather than scan it live), or `nil` (never spawn anything) |
 | `org-agents-rg-executable` | `"rg"` | the ripgrep binary, resolved against `exec-path`. Set it where ripgrep is installed under another name, or in a directory Emacs's `exec-path` does not hold — routine on macOS, where a GUI Emacs does not inherit a login shell's PATH |

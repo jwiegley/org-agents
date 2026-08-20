@@ -283,6 +283,91 @@ The hash comparison stated as the user sees it: the gate asks again."
           (should (string-match-p "must not re-prompt"
                                   (error-message-string err))))))))
 
+(ert-deftest org-agents-test-refused-heads-ships-the-io-bearing-head ()
+  "`semantic' ships refused, because its normalizer spawns a subprocess.
+org-ql runs a predicate's normalizer when it compiles a query, after the
+gate has admitted the head and before any entry is examined.
+`org-ql-semantic.el' defines `semantic' with a normalizer that calls
+`org-ql-semantic--ensure-cache', which `call-process'es `org db search'.
+Nothing in the query says so, and structurally it is a predicate call
+like `(tags \"a\")', so the safe list admits it without a prompt.
+Emptying this default is a decision, and has to argue with this test."
+  (should (memq 'semantic (default-value 'org-agents-refused-heads))))
+
+(ert-deftest org-agents-test-refused-head-search-descends-everywhere ()
+  "A refused head is found wherever it sits in the form.
+The walk is where a bug in this would hide: a head is refusable in
+argument position and under a nested query, not only in the car of the
+form as a whole."
+  (let ((org-agents-refused-heads '(semantic)))
+    (should (eq 'semantic (org-agents--refused-head '(semantic "x"))))
+    (should (eq 'semantic (org-agents--refused-head '(and (todo) (semantic "x")))))
+    (should (eq 'semantic
+                (org-agents--refused-head '(parent (and (todo) (semantic "x"))))))
+    (should (eq 'semantic
+                (org-agents--refused-head '(property "K" (semantic "x")))))
+    ;; Conservative on purpose: quoted data is exempt from the structural
+    ;; check, and is not exempt here.  Failing closed costs a shape
+    ;; nobody writes; failing open costs a subprocess.
+    (should (eq 'semantic (org-agents--refused-head '(quote (semantic "x")))))
+    ;; A string is not a head, and neither is a property name.
+    (should-not (org-agents--refused-head '(and (todo) (tags "semantic"))))
+    (should-not (org-agents--refused-head '(and (todo) (property "SEMANTIC"))))
+    ;; A dotted form is walked without signaling.
+    (should-not (org-agents--refused-head '(and (todo) . foo)))))
+
+(ert-deftest org-agents-test-gate-refuses-a-refused-head ()
+  "A refused head is refused, and says which head it was.
+`tags' stands in for `semantic' here so the test does not depend on
+`org-ql-semantic' being loaded: it is a real org-ql predicate, so the
+form is genuinely structurally safe and refusal is the only thing that
+can stop it."
+  (let ((org-agents-refused-heads '(tags))
+        (org-agents-safe-queries nil)
+        (org-agents--session-approved (make-hash-table :test 'equal))
+        (noninteractive t))
+    (should (org-agents--structurally-safe-p '(and (todo) (tags "a"))))
+    (let ((err (should-error (org-agents--gate '(and (todo) (tags "a")))
+                             :type 'user-error)))
+      (should (string-match-p "tags" (error-message-string err)))
+      (should (string-match-p "refused" (error-message-string err))))
+    ;; An ordinary head is unaffected, and still does not prompt.
+    (cl-letf (((symbol-function 'yes-or-no-p)
+               (lambda (&rest _) (error "must not prompt"))))
+      (should (org-agents--gate '(and (todo) (property "K")))))))
+
+(ert-deftest org-agents-test-gate-refused-head-beats-a-remembered-approval ()
+  "Nothing buys a refused head a pass -- no approval, and not the switch.
+The head is refused because its normalizer runs code, which an approval
+of the query's text was never a judgment about."
+  (let* ((form '(and (todo) (tags "a")))
+         (hash (org-agents--query-hash form))
+         (org-agents-refused-heads '(tags))
+         (org-agents-safe-queries (list hash))
+         (org-agents--session-approved (make-hash-table :test 'equal))
+         (noninteractive t))
+    (puthash hash t org-agents--session-approved)
+    (should-error (org-agents--gate form) :type 'user-error)
+    ;; `org-ql-ask-unsafe-queries' governs asking, and a refused head is
+    ;; not a question.
+    (let ((org-ql-ask-unsafe-queries nil))
+      (should-error (org-agents--gate form) :type 'user-error))))
+
+(ert-deftest org-agents-test-gate-refused-head-covers-the-exclude ()
+  "A refused head in the exclusion is refused too.
+The gate sees the appended form, so the exclusion is scanned with the
+query -- which is why the refusal check had to land after the gate began
+receiving that form."
+  (let ((org-agents-refused-heads '(tags))
+        (org-agents-exclude '(not (tags "generated")))
+        (org-agents-safe-queries nil)
+        (org-agents--session-approved (make-hash-table :test 'equal))
+        (noninteractive t))
+    (let ((err (should-error
+                (org-agents--gate (org-agents--effective-query '(todo)))
+                :type 'user-error)))
+      (should (string-match-p "tags" (error-message-string err))))))
+
 (ert-deftest org-agents-test-gate-refuses-call-in-predicate-argument ()
   "A known predicate must not vouch for arbitrary Lisp in its arguments."
   (let ((org-agents--session-approved (make-hash-table :test 'equal))
