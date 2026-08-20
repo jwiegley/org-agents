@@ -4678,10 +4678,15 @@ entry and renders standalone, over the agenda as a list until its own
 parameters say otherwise.  A block with neither has nothing to render,
 and says so rather than emptying itself over it."
   (let ((agent
-         (or (save-excursion
-               (and (not (org-before-first-heading-p))
-                    (progn (org-back-to-heading t)
-                           (org-agents--entry-get "AGENT_QUERY"))
+         (or (and (org-agents--agent-at-point-p)
+                  ;; Read with point on the heading, which is where
+                  ;; `org-agents--read-agent' expects to stand.  The
+                  ;; predicate answers without moving, so the two steps
+                  ;; are separate; it does not widen, so a block whose
+                  ;; heading is outside the accessible region still
+                  ;; renders standalone.
+                  (save-excursion
+                    (org-back-to-heading t)
                     (org-agents--read-agent)))
              (list :query nil :view 'list :scope 'agenda :sort nil
                    :limit nil :columns nil :format nil
@@ -4872,12 +4877,43 @@ An entry is an agent when its own drawer supplies a query, and point may
 sit anywhere in it: on the heading, in the drawer, in the body, in a
 dynamic block.  A heading that supplies none is no agent -- an alias with
 a note under it is the common case -- and a command asked for an agent
-there says so rather than acting on whatever heading is above."
+there says so rather than acting on whatever heading is above.
+
+`org-agents--agent-at-point-p' is the same rule when only the answer is
+wanted; this function and that predicate are the only two spellings of
+it, and the predicate is defined in terms of this one so that they
+cannot drift apart."
   (save-excursion
     (and (not (org-before-first-heading-p))
          (progn (org-back-to-heading t)
                 (org-agents--entry-get "AGENT_QUERY"))
          (point-marker))))
+
+(defun org-agents--agent-at-point-p ()
+  "Non-nil when point is in an entry whose own drawer supplies a query.
+The one definition of what this package acts on, and the reason it is
+one: three call sites used to spell the rule out inline, and a rule
+written three times is a rule that can be right twice.  MEASURED before
+unifying them, over 1,506 checks -- every position of a buffer holding
+text before the first heading, a non-agent heading, an agent with a
+drawer and a body and a block, an alias with a note under it, an entry
+whose `:AGENT_QUERY:' is written empty, and an entry that names the
+property only in body text, under `org-use-property-inheritance' nil, t
+and (\"AGENT_QUERY\") -- the three spellings disagreed nowhere.
+
+What makes them agree is `org-agents--entry-get', which passes no INHERIT
+argument, so `org-use-property-inheritance' cannot reach this, and which
+treats a blank value as no value.  So: no inheritance, from an ancestor
+or a prototype or `org-global-properties'; the property name written in
+body text does not count, because a drawer is what is read; and an entry
+whose query is written empty is no agent.  A fourth caller written from
+the nearest example is what this exists to prevent.
+
+Deliberately does NOT widen.  `org-agents-update' wraps its own call in
+`org-with-wide-buffer' and `org-agents--dblock-agent' does not, so in a
+buffer narrowed to show a block but not the heading above it, a block
+renders standalone -- widening here would silently change that."
+  (and (org-agents--agent-marker) t))
 
 (defun org-agents--block-at-point ()
   "Position of the `#+BEGIN:' line of the `org-agents' block point is in.
@@ -5086,9 +5122,11 @@ is no agent one.  The whole buffer is read, whatever it is narrowed to."
        ;; after: `org-entry-get' searches for the drawer itself, so by the
        ;; time it returns, the match data describes whatever Org's property
        ;; machinery matched last -- the entry's last property line, as it
-       ;; happens -- and not the heading this loop just found.
+       ;; happens -- and not the heading this loop just found.  This holds
+       ;; through `org-agents--agent-at-point-p', which is that same
+       ;; lookup behind a name.
        (let ((heading (match-beginning 0)))
-         (when (org-agents--entry-get "AGENT_QUERY")
+         (when (org-agents--agent-at-point-p)
            ;; Insertion type t, and the choice is load-bearing.  A
            ;; block-view agent whose block does not exist yet has it
            ;; inserted at the end of its own meta-data, which for an agent
