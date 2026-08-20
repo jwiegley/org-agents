@@ -305,6 +305,19 @@
   :group 'org
   :prefix "org-agents-")
 
+;;;; The prototype property
+
+;; One name, spelled above every section that reads it, because three of
+;; them must agree about it: the resolver walks the chain by it, the
+;; ripgrep prefilter builds the `:PROTOTYPE:' arm of its widened pattern
+;; out of it, and the registry reader reserves the heading of the section
+;; the masters live in.  See the `Prototypes' section below for what a
+;; prototype is and how one is resolved.
+
+(defconst org-agents--prototype-property "PROTOTYPE"
+  "The property naming an entry's prototype.
+The only non-`AGENT_' property this package reads by name.")
+
 ;;;; Expander
 
 ;; The expander rewrites the `$PROP' layer into a plain org-ql query.
@@ -1235,6 +1248,44 @@ row of `org-agents--pushdown-fns' records why."
        (not (member-ignore-case name (cons "CATEGORY" org-special-properties)))
        (not (org-agents--property-inherits-p name))))
 
+(defun org-agents--resolved-pushable-p (name)
+  "Non-nil when NAME is a name a `property-resolved' conjunct may narrow on.
+Two clauses, and only ONE of `org-agents--property-pushable-p''s two.
+
+The special-property clause is kept, and for a STRONGER reason than the
+`property' row has.  `org-entry-get' answers CATEGORY, TODO, DEADLINE and
+the rest out of entry structure, and no drawer holds a line for one.  For
+plain `property' the consequence of pushing is an empty candidate set --
+visibly wrong.  Here it is worse: the widened alternation's `:PROTOTYPE:'
+arm still matches SOME files, so the answer is non-empty and wrong, and
+every structurally matching file with no `:PROTOTYPE:' line in it is
+dropped with no error at all.
+
+The inheritance clause is dropped, and that is a correctness statement
+rather than a liberty.  `org-agents-resolve-property' never reads
+`org-use-property-inheritance' and never passes an INHERIT argument, so
+that variable cannot change this predicate's answer -- keeping the guard
+would push nothing for any user whose inheritance setting is broad, which
+is a pure loss of narrowing, and one INVISIBLE to every soundness test in
+the suite, since those assert supersets only.
+`org-agents-test-rg-property-resolved-ignores-org-use-property-inheritance'
+is the narrowing test that says so."
+  (and (stringp name) (not (org-agents--attr-special-p name))))
+
+(defun org-agents--resolved-default (name)
+  "The registry's declared `:ATTR_DEFAULT:' for NAME, as text, or nil.
+The one reader of it on the prefilter's side, so that the splitter's
+exception and `property-resolved''s own comparison are asking the same
+question of the same string: `:default' \"stays the trimmed STRING the
+file holds\", and the predicate compares it with `string-equal'.
+
+An absent or unreadable registry declares no default, `org-agents-attribute'
+answers nil, and `(plist-get nil :default)' is nil -- which is exactly the
+branch in which the widened alternation is sound, so nothing has to be
+written for it.  It still has a test, because it is the branch a later
+refactor is most likely to invert."
+  (plist-get (org-agents-attribute name) :default))
+
 (defun org-agents--property-value-pushable-p (name value)
   "Non-nil when VALUE for property NAME is spelled by ONE drawer line.
 `org-entry-get' builds a value by joining the `:NAME:' line with every
@@ -1313,6 +1364,95 @@ test would push it and lose the file."
                 ;; The value spans two lines, or cannot be argued not
                 ;; to.  Existence is wider, and wider is sound.
                 `(property ,name)))
+             (_ nil))))
+   ;; The widened row, and the argument for it in full, because this is
+   ;; the one row where the ORDINARY property pattern would be UNSOUND.
+   ;;
+   ;; An entry that resolves NAME through a prototype never spells the
+   ;; value: it spells `:PROTOTYPE:' and the value is in another file
+   ;; entirely.  So `^[ \t]*:NAME\+?:' under-matches, and an under-match
+   ;; here is a lost match with no error -- the one failure mode this
+   ;; package must not have.  The widening is a disjunction: a file
+   ;; holding an entry that resolves NAME either spells a local `:NAME:'
+   ;; line or carries a `:PROTOTYPE:' line.
+   ;;
+   ;; THE SUPERSET ARGUMENT.  Let E be an entry that satisfies the
+   ;; conjunct, in file F, with NAME neither opaque nor special.
+   ;; `org-agents-resolve-property' has four steps and E's answer came
+   ;; from one of them:
+   ;;
+   ;;   local   `(org-entry-get E NAME)' with INHERIT nil is non-nil only
+   ;;           if F holds a line matching `org-property-re' whose key
+   ;;           upcases to NAME or NAME+ -- exactly the set
+   ;;           `org-agents--rg-property-pattern' matches, which is the
+   ;;           `property' row's own argument unchanged.  The INHERIT
+   ;;           argument being nil is what makes this step a statement
+   ;;           about F at all: MEASURED, an inheriting read also answers
+   ;;           from a `#+PROPERTY:' keyword and from
+   ;;           `org-global-properties', the first spelled by a line no
+   ;;           drawer pattern matches and the second spelled in no file
+   ;;           at all.  So F matches the NAME arm.
+   ;;   chain   reached only when the local step answered nil, and it
+   ;;           begins at `(org-entry-get E "PROTOTYPE")' with INHERIT
+   ;;           nil, which is non-nil only if F holds a `:PROTOTYPE:' or
+   ;;           `:PROTOTYPE+:' line.  So F matches the PROTOTYPE arm.
+   ;;           Note what is NOT claimed: the file the VALUE lives in
+   ;;           need not be a candidate.  org-ql matches E, which is in
+   ;;           F, and the resolver reads the master directly rather than
+   ;;           through org-ql.
+   ;;   default reached only when both steps above answered nil, and this
+   ;;           is the EXCEPTION below: such an entry may be in a file
+   ;;           holding neither line, so nothing can narrow and the
+   ;;           conjunct must stay residual.
+   ;;   nil     not a match.
+   ;;
+   ;; So outside the exception every matching file matches one arm, and
+   ;; the candidate set is a superset.  Two details are load-bearing.
+   ;; The alternation must reach ripgrep as ONE pattern:
+   ;; `org-agents--rg-files' INTERSECTS the patterns of a conjunct, so two
+   ;; patterns would mean "spells `:NAME:' AND carries `:PROTOTYPE:'",
+   ;; catastrophically narrow and silent.  And the exception's comparison
+   ;; and the predicate's comparison are one decision -- `equal' on the
+   ;; raw strings here, `string-equal' there, which agree on two strings;
+   ;; a case-INSENSITIVE predicate against a case-sensitive exception
+   ;; would lose exactly the files whose default differs only in case.
+   (cons 'property-resolved
+         (lambda (form)
+           (pcase form
+             ;; An opaque name resolves LOCAL-ONLY -- no chain, no default
+             ;; -- so a drawer line is exactly its condition and the
+             ;; ORDINARY conjunct is sound and narrower.  Emitting the
+             ;; alternation here would be over-wide rather than unsound,
+             ;; and slower for no reason.  No inheritance guard, for
+             ;; `org-agents--resolved-pushable-p''s reason.
+             (`(property-resolved
+                ,(and name (pred org-agents--prototype-opaque-p)))
+              `(property ,name))
+             (`(property-resolved
+                ,(and name (pred org-agents--prototype-opaque-p))
+                ,(and val (pred stringp)))
+              (if (org-agents--property-value-pushable-p name val)
+                  `(property ,name ,val)
+                `(property ,name)))
+             ;; Existence, and a declared default makes it residual: with
+             ;; one declared, EVERY entry resolves NAME, including entries
+             ;; in files holding neither line.
+             (`(property-resolved
+                ,(and name (pred org-agents--resolved-pushable-p)))
+              (unless (org-agents--resolved-default name)
+                `(property-resolved ,name)))
+             ;; Equality, and the exception is narrower: only a value
+             ;; EQUAL to the declared default can be answered by an entry
+             ;; that spells neither line.
+             (`(property-resolved
+                ,(and name (pred org-agents--resolved-pushable-p))
+                ,(and val (pred stringp)))
+              (unless (equal val (org-agents--resolved-default name))
+                (if (org-agents--property-value-pushable-p name val)
+                    `(property-resolved ,name ,val)
+                  ;; The value spans two lines, or cannot be argued not
+                  ;; to.  Existence is wider, and wider is sound.
+                  `(property-resolved ,name))))
              (_ nil))))
    (cons 'property-ts
          (lambda (form)
@@ -1605,6 +1745,42 @@ Pure: nothing here spawns anything."
                ;; A value ripgrep cannot carry: fall back to existence,
                ;; which is wider and always sound.
                (org-agents--rg-property-pattern name)))))
+    ;; The widened arms.  ONE pattern each, holding an alternation, and
+    ;; the count is asserted by a test: `org-agents--rg-files' INTERSECTS
+    ;; the patterns of a conjunct, so returning two would turn this
+    ;; disjunction into a conjunction -- "spells `:NAME:' AND carries
+    ;; `:PROTOTYPE:'" -- which is catastrophically narrow and silent.
+    ;; `org-agents--pushdown-fns' carries the superset argument; this only
+    ;; renders it.
+    ;;
+    ;; Built by `concat' from `org-agents--rg-property-pattern', so
+    ;; `^[ \t]*' and `\+?' stay stated once -- and NEVER passed through
+    ;; `org-agents--rg-quote' afterwards, which escapes `|', `(' and `)'
+    ;; and would turn the alternation into a literal.
+    (`(property-resolved ,name)
+     (when (org-agents--rg-name-p name)
+       (list (concat "(?:" (org-agents--rg-property-pattern name)
+                     "|" (org-agents--rg-property-pattern
+                          org-agents--prototype-property)
+                     ")"))))
+    ;; The value arm is deliberately NARROWER than the design document's
+    ;; widening, which puts existence on both sides.  It is sound by the
+    ;; same argument -- a matching entry either spells the value on one
+    ;; line of its own file or carries a `:PROTOTYPE:' line in it -- and
+    ;; MEASURED over the fixture corpus it drops a file the doc's spelling
+    ;; keeps, which is what stops `$NAME^' from being markedly slower than
+    ;; `$NAME' for no reason.  A value ripgrep cannot carry degrades to
+    ;; the existence arm, which is wider and always sound.
+    (`(property-resolved ,name ,value)
+     (when (org-agents--rg-name-p name)
+       (list (concat "(?:" (org-agents--rg-property-pattern name)
+                     (if (org-agents--rg-literal-p value)
+                         (concat "[ \\t]+" (org-agents--rg-quote value)
+                                 "[ \\t]*$")
+                       "")
+                     "|" (org-agents--rg-property-pattern
+                          org-agents--prototype-property)
+                     ")"))))
     (`(,(and head (or 'scheduled 'deadline 'closed)))
      (list (alist-get head org-agents--rg-planning-patterns)))
     (`(heading . ,literals)
@@ -2259,22 +2435,27 @@ marker rather than let this comparison quietly stop being made."
     (let ((marker (plist-get agent :marker)))
       (unless (and (markerp marker) (marker-buffer marker))
         (user-error "org-agents: agent has no live marker")))
-    (let* ((self (plist-get agent :marker))
-           (sort (plist-get agent :sort))
-           (limit (plist-get agent :limit))
-           (files (org-agents--scope-files agent))
-           (matches
-            ;; Handed no files, `org-ql-select' searches the current
-            ;; buffer, which for an agent is the file it lives in: a
-            ;; scope that resolved to nothing must select nothing.
-            (and files
-                 (org-ql-select files form
-                   :action 'element-with-markers
-                   :sort (org-agents--element-sort sort))))
-           (matches (cl-remove-if (lambda (element)
-                                    (org-agents--self-match-p element self))
-                                  matches)))
-      (if limit (take limit matches) matches))))
+    ;; `org-agents--in-attributes-batch', and it is a SOUNDNESS
+    ;; requirement rather than a saving: the splitter and the predicate
+    ;; must read one registry.  See that function for the argument.
+    (org-agents--in-attributes-batch
+     (lambda ()
+       (let* ((self (plist-get agent :marker))
+              (sort (plist-get agent :sort))
+              (limit (plist-get agent :limit))
+              (files (org-agents--scope-files agent))
+              (matches
+               ;; Handed no files, `org-ql-select' searches the current
+               ;; buffer, which for an agent is the file it lives in: a
+               ;; scope that resolved to nothing must select nothing.
+               (and files
+                    (org-ql-select files form
+                      :action 'element-with-markers
+                      :sort (org-agents--element-sort sort))))
+              (matches (cl-remove-if (lambda (element)
+                                       (org-agents--self-match-p element self))
+                                     matches)))
+         (if limit (take limit matches) matches))))))
 
 ;;;; Registry
 
@@ -2383,7 +2564,8 @@ same way, and brought up to date together -- see
 `org-agents--prototype-id-cache', whose entries are keyed on files of
 their own.
 
-Bound by `org-agents--with-attributes' and by nothing else, around a
+Bound by `org-agents--with-attributes' and by
+`org-agents--in-attributes-batch', and by nothing else, around a
 BATCH of look-ups that all want the same answer.
 
 The cache hit itself is one `equal', but computing the key it is compared
@@ -2411,7 +2593,11 @@ answers from them with no further look at the file system -- see
 
 For a batch of look-ups over a corpus.  A single completion needs nothing
 of this: it wants the freshest answer there is, which is what the cache
-gives it unwrapped."
+gives it unwrapped.
+
+An UPDATE wants `org-agents--in-attributes-batch' instead, which adds the
+once-per-update diagnostic table and may be called from above its own
+definition.  This macro is what a reader in this section reaches for."
   (declare (indent 0) (debug t))
   `(progn
      (org-agents--warm-attributes)
@@ -2781,7 +2967,8 @@ The declarations and the prototypes come out of the same file, so one
 call rather than two, because that key is the expensive half: see
 `org-agents--attributes-fresh' for the measurement.
 
-Called by `org-agents--with-attributes' and by nothing else."
+Called by `org-agents--with-attributes' and by
+`org-agents--in-attributes-batch', and by nothing else."
   (let* ((file (expand-file-name org-agents-attributes-file))
          (key (org-agents--file-cache-key file)))
     (org-agents--attributes-alist-1 file key)
@@ -3333,13 +3520,6 @@ implements is this function's own, and
 ;;
 ;; Below the Registry because every step of the order above ends in it.
 
-(defconst org-agents--prototype-property "PROTOTYPE"
-  "The property naming an entry's prototype.
-The only non-`AGENT_' property this package reads by name.  Spelled once,
-here: the resolver reads it, the diagnostics name it, and the ripgrep
-prefilter's widened pattern is built out of it, and those three must
-agree.")
-
 (defconst org-agents--prototype-opaque-re "\\`AGENT_\\|\\`PROTOTYPE\\'"
   "Property names that resolve LOCALLY and by nothing else.
 No chain and no registry default -- the two members are refused for two
@@ -3401,6 +3581,33 @@ cycle is a fact about the corpus, and an update should say it once.  When
 it is nil the reporter still messages, because silence is worse; a caller
 that runs the resolver over many entries of its own -- a fontifier, say
 -- inherits the obligation to bind it.")
+
+(defun org-agents--in-attributes-batch (fn)
+  "Call FN as ONE registry batch, and answer what it answers.
+The registry read at most once however often it is asked, and every
+prototype diagnostic said at most once.  What `org-agents--collect' and
+`org-agents-preview' wrap a whole update in.
+
+A function and not the `org-agents--with-attributes' macro, for two
+reasons.  It bundles the two bindings an update wants -- one read, one
+table -- so that an update's registry batch is one named thing rather
+than two nested forms remembered separately.  And a function may be
+called from above its own definition, which the macro may not: the
+collector sits above the Registry in this file, because it reads drawers
+through the machinery the Registry is built on.
+
+The one read is a SOUNDNESS requirement rather than a saving.  The
+prefilter's splitter decides whether to narrow a `property-resolved'
+conjunct by reading `:ATTR_DEFAULT:', and `property-resolved' decides
+whether an entry matches by reading the same `:ATTR_DEFAULT:'.  Two
+separate reads could in principle straddle an edit, and a narrowing
+decided against a default that had since gone away would drop files with
+no error.  Inside one batch they are provably the same read -- the
+argument `org-agents--attributes-fresh' already rests on."
+  (org-agents--warm-attributes)
+  (let ((org-agents--attributes-fresh t)
+        (org-agents--prototype-warned (make-hash-table :test #'equal)))
+    (funcall fn)))
 
 (defun org-agents--prototype-report (key format &rest args)
   "Say FORMAT with ARGS once per KEY, and answer nil.
@@ -4739,7 +4946,12 @@ buffer, which is what `org-ql-search' does when it is handed none."
     (unless files
       (user-error
        "org-agents: `org-agenda-files' is empty, so there is nothing to preview"))
-    (org-ql-search files form)))
+    ;; The registry read once and the prototype diagnostics said once over
+    ;; the whole preview.  A REFRESH of the resulting `org-ql-search'
+    ;; buffer runs outside this extent, and that is sound: a preview is
+    ;; handed `org-agenda-files' and is never narrowed, so there is no
+    ;; narrowing decision for a later read to disagree with.
+    (org-agents--in-attributes-batch (lambda () (org-ql-search files form)))))
 
 ;;;###autoload
 (defun org-agents-insert-dblock ()
