@@ -356,7 +356,15 @@ with no navigation code written for them. A run with nothing to report says
 so, with its counts, rather than popping an empty buffer.
 
 An **undeclared name** gets one finding, not one per line — `WIDGET is not
-declared in ~/org/attributes.org (763 uses)`, at a confirmed example site.
+declared in ~/org/attributes.org (763 property-line sites)`, at a confirmed
+example site. The number says *sites*, not *uses*, on the ripgrep path, and
+that is a real distinction rather than pedantry: a text enumerator counts
+lines that have the shape of a property line, and knowing which of them Org
+would actually read is the per-entry walk this command stopped doing.
+Measured on a file with one real `:NOTE:` drawer line and three `:NOTE:`
+lines in body text, the two paths counted 4 and 1. Neither number is wrong;
+one word for both was, so the walk — an `agenda` scope or an explicit file
+list — says `(1 use)` and means uses.
 A **bad value** keeps one finding per line, because those are per-line facts
 about specific values and there is no summarising them. Over a corpus with
 no registry yet, the per-line form is about 149,000 findings, and a
@@ -417,17 +425,36 @@ names the live walk never sees and no list could have anticipated:
 other packages' drawer openers and a stray body line, and the next corpus
 will have different ones. So every candidate is **confirmed** by reading a
 real property drawer before it is reported, at most 20 files per name.
-Measured: the pass drops precisely those four and nothing else, and after
-it the two enumerators' name sets are identical. The confirmation also
-supplies the name as *Emacs* decoded it, which is how a latin-1 `:CAFÉ:`
-reaches the report spelled right rather than as mojibake.
+Measured: the pass drops precisely those four and nothing else. The
+confirmation also supplies the name as *Emacs* decoded it, which is how a
+latin-1 `:CAFÉ:` reaches the report spelled right rather than as mojibake.
 
-The bound has a cost and the report states it rather than hiding it: a name
-whose only genuine property line sits in its twenty-first file would be
-missed, so the echo area says how many candidates went unconfirmed — "4
-names appeared in property-line shape outside any drawer and were not
-reported". Without ripgrep the whole thing falls back to the live walk with
-one message, exactly as the prefilter does, and never refuses.
+Confirmation is one of **two** things that make the fast path's name set the
+walk's set rather than a subset of it, and the other is easy to miss.
+Ripgrep's line model splits on LF, and the census cannot pass `--crlf` (with
+it, every extracted name comes back with a trailing CR; with a `\r` in the
+pattern, ripgrep refuses to run at all). So a file written with **bare CR**
+line endings — classic Mac, and what some old imports still hold — is *one
+line* to ripgrep, while Emacs reads it as `undecided-mac` and Org reads its
+drawers perfectly. Measured: the drawer prefilter admitted such a file, the
+census reported nothing about it, and every name unique to it was missing
+from the report with no count and no diagnostic. A file the census reports
+**nothing** about — not even the `:PROPERTIES:` line it matches in every
+file with a drawer — is therefore read live, names and values both. Normally
+that list is empty and the check costs a hash table.
+
+The bound has a cost and the report states it rather than hiding it, in two
+sentences rather than one, because there are two different things to say.
+Names that were looked at in every file holding them and turned out not to
+be properties: "4 names appeared in property-line shape outside any drawer
+and were not reported" — nothing is being withheld, they are not properties.
+And names the 20-file bound ran out of opens on, which *may* be real: those
+are **named**, with a suggestion to re-run over a narrower scope. Measured,
+and the reason the two are now separate: with 25 decoy files and one genuine
+drawer in the alphabetically last, the lint dropped a real property and told
+the reader it had dropped something that was never a property. Without
+ripgrep the whole thing falls back to the live walk with one message,
+exactly as the prefilter does, and never refuses.
 
 One more thing the equivalence test caught, which no amount of reading
 would have: **ripgrep's output order is nondeterministic** — it walks the

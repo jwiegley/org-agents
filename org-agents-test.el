@@ -3067,9 +3067,10 @@ the same reverse order."
                            (list a z))))
               (should (equal (list a z)
                              (mapcar #'car (cddr (assoc "WIDGET" census)))))
-              (pcase-let ((`(,findings . ,unconfirmed)
+              (pcase-let ((`(,findings ,unconfirmed ,limited)
                            (org-agents--attr-name-findings census t)))
                 (should (= 0 unconfirmed))
+                (should-not limited)
                 (should (= 1 (length findings)))
                 (should (string-prefix-p (format "%s:3: widget " a)
                                          (car findings)))))
@@ -3086,9 +3087,10 @@ the same reverse order."
               (let ((census (org-agents--attr-census-table table)))
                 (should (equal (list a z)
                                (mapcar #'car (cddr (assoc "WIDGET" census)))))
-                (pcase-let ((`(,findings . ,unconfirmed)
+                (pcase-let ((`(,findings ,unconfirmed ,limited)
                              (org-agents--attr-name-findings census nil)))
                   (should (= 0 unconfirmed))
+                  (should-not limited)
                   (should (= 1 (length findings)))
                   (should (string-prefix-p (format "%s:3: widget " a)
                                            (car findings))))))))
@@ -3226,12 +3228,109 @@ CLOCK: [2020-01-01 Wed 10:00]
       (should-not (org-agents--attr-confirm-candidate (assoc "LOGBOOK" census)))
       (should-not (org-agents--attr-confirm-candidate (assoc "BODYKEY" census)))
       ;; The count of unconfirmed candidates is reported, not swallowed.
-      (pcase-let ((`(,_findings . ,unconfirmed)
+      (pcase-let ((`(,_findings ,unconfirmed ,limited)
                    (org-agents--with-attributes
                      (org-agents--attr-name-findings census t))))
-        (should (= 2 unconfirmed))))
+        ;; Looked at in full and shown not to be properties, which is a
+        ;; different answer from "the bound ran out" -- see LIMITED.
+        (should (= 2 unconfirmed))
+        (should-not limited)))
     (org-agents-check-attributes 'all)
     (should (equal '("REALONE") (org-agents-test--attr-undeclared-names)))))
+
+(ert-deftest org-agents-test-attr-census-names-what-the-bound-cut-short ()
+  "A candidate the file bound cut short is NAMED, not called a non-property.
+The two ways confirmation can answer \"no\" are not the same answer, and
+the report used to give both the same sentence -- the one that says the
+name \"appeared in property-line shape outside any drawer\", which is
+exactly what is NOT established when `org-agents--attr-confirm-limit' ran
+out of opens.  MEASURED: 25 decoy files each holding a `:LIMITED:' line in
+body text plus one genuine `:LIMITED:' drawer in the alphabetically LAST
+file.  The lint dropped a real property and told the reader it had
+dropped something that was never a property -- a specific and reassuring
+reason not to investigate.
+
+The decoys carry a real drawer of their own, because a file with no
+drawer is not admitted by the prefilter and so never presses on the
+bound.  And the walk over the same corpus reports `LIMITED', which is
+what says the name really is a property and the bound really did cut this
+short."
+  (skip-unless (executable-find "rg"))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      (append
+       (cl-loop for i from 1 to 25
+                collect (cons (format "d%02d.org" i)
+                              (concat "* Decoy\n:PROPERTIES:\n:ANCHOR: v\n"
+                                      ":END:\n:LIMITED: not-a-property\n")))
+       '(("zzz-real.org" . "\
+* Real
+:PROPERTIES:
+:LIMITED: genuinely-a-property
+:END:
+")))
+    (let* ((root (org-agents--scope-root 'all))
+           (scope (org-agents--narrowed-files
+                   'all (list org-agents--rg-drawer-pattern) "pattern" nil))
+           (census (org-agents--attr-census-rg root scope)))
+      (should (assoc "LIMITED" census))
+      ;; The bound answers `limited', not nil: nothing was established
+      ;; either way about this name.
+      (should (eq 'limited (org-agents--attr-confirm-candidate
+                            (assoc "LIMITED" census))))
+      (pcase-let ((`(,_findings ,unconfirmed ,limited)
+                   (org-agents--with-attributes
+                     (org-agents--attr-name-findings census t))))
+        (should (= 0 unconfirmed))
+        (should (member "LIMITED" limited))))
+    ;; The report says so, in those words, and names it.
+    (let ((msgs (org-agents-test--messages
+                  (org-agents-check-attributes 'all))))
+      (should (cl-find-if (lambda (m)
+                            (and (string-match-p "may be real" m)
+                                 (string-match-p "LIMITED" m)))
+                          msgs))
+      (should-not (cl-find-if
+                   (lambda (m)
+                     (and (string-match-p "outside any drawer" m)
+                          (string-match-p "LIMITED" m)))
+                   msgs)))
+    ;; And it really is a property: the walk over the same corpus finds it.
+    (org-agents-check-attributes files)
+    (should (member "LIMITED" (org-agents-test--attr-undeclared-names)))))
+
+(ert-deftest org-agents-test-attr-census-counts-sites-not-uses ()
+  "The two enumerators count different things, and each says which.
+The census counts property-line SHAPES, because that is all a text
+enumerator can count -- knowing which of them Org would read is the walk
+that S1 removed.  MEASURED on a one-file corpus with one real `:NOTE:'
+drawer line and three `:NOTE:' lines in body text: the fast path said
+`(4 uses)' and the walk over the same file said `(1 use)'.  Same corpus,
+same command, two numbers under one word, and the bigger one came from
+the path that reads as authoritative.
+
+Neither number is wrong; the word was.  So the fast path says
+`property-line sites' and the walk says `uses', and a reader comparing
+two runs is told why they differ."
+  (skip-unless (executable-find "rg"))
+  (org-agents-test--with-attr-corpus org-agents-test--registry-example
+      '(("a.org" . "\
+* E
+:PROPERTIES:
+:NOTE: real
+:END:
+Body text below, so these are not property lines at all.
+:NOTE: decoy one
+:NOTE: decoy two
+:NOTE: decoy three
+"))
+    (org-agents-check-attributes 'all)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 1 (length lines)))
+      (should (string-match-p "(4 property-line sites)" (car lines))))
+    (org-agents-check-attributes files)
+    (let ((lines (org-agents-test--attr-finding-lines)))
+      (should (= 1 (length lines)))
+      (should (string-match-p "(1 use)" (car lines))))))
 
 (ert-deftest org-agents-test-attr-lint-asks-no-question ()
   "The lint opens files the user never named, so it must not ask about one.

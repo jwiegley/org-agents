@@ -3808,13 +3808,33 @@ buffer they open, which is a worse trade than a prompt they can answer."
 
 (defun org-agents--attr-confirm-candidate (candidate)
   "Confirm CANDIDATE is a property really in use, as `(NAME FILE LINE)'.
-CANDIDATE is `(KEY COUNT (FILE LINE...)...)' as `org-agents--attr-census-rg'
-builds it.  Answers nil when no site in the first
-`org-agents--attr-confirm-limit' files is a property line Org would read.
+CANDIDATE is `(KEY COUNT (FILE NAME LINE...)...)' as
+`org-agents--attr-census-parse' builds it -- NAME nil from ripgrep, which
+cannot decode it, and set from a live walk, which can.
+
+Three answers, and the last two are DIFFERENT answers rather than two
+spellings of \"no\":
+
+  `(NAME FILE LINE)'  a property line Org would read, proved.
+  nil                 every site in every one of this candidate's files
+                      was looked at, and none of them was a property.
+  `limited'           `org-agents--attr-confirm-limit' ran out with files
+                      still to look in, so nothing is known either way.
+
+The distinction is the report's, not this function's convenience: told
+only \"not confirmed\", the report said these names \"appeared in
+property-line shape outside any drawer\", which is precisely what is NOT
+established about a `limited' one.  MEASURED, with 25 decoy files and one
+genuine drawer in the alphabetically last file: the name was dropped and
+the reader was given a specific, reassuring and wrong reason for it.
 
 The first site that passes yields three things at once: the proof that the
 name is in use as a property, the example `FILE:LINE' the finding points
 at, and the name as Emacs decoded it.
+
+A group carrying a NAME is proof already given -- see the comment at that
+branch -- so a census merged from both producers confirms the walk's half
+for free and never spends a file open on it.
 
 A file that cannot be read is skipped rather than reported: the census
 already knows the name is in that file, and a file the OS refuses would
@@ -3850,7 +3870,11 @@ function for the prompt this used to reach."
                    (forward-line (1- line))
                    (when-let* ((name (org-agents--attr-property-at-point)))
                      (setq answer (list name file line)))))))))))
-    answer))
+    ;; GROUPS left over means the loop stopped on the bound rather than on
+    ;; the evidence, and the caller must not report the two the same way:
+    ;; a candidate this stopped short of may be a real property that
+    ;; simply lives in the twenty-first file.
+    (or answer (and groups 'limited))))
 
 (defun org-agents--attr-census-parse (raw files)
   "Parse RAW, `org-agents--rg-census-args' output, restricted to FILES.
@@ -4454,7 +4478,8 @@ UNCONFIRMED is how many candidates were dropped for want of proof, which
 the report states rather than hiding: it is the visible cost of
 `org-agents--attr-confirm-limit'."
   (let ((findings nil)
-        (unconfirmed 0))
+        (unconfirmed 0)
+        (limited nil))
     (dolist (candidate census)
       (let* ((key (car candidate))
              (count (nth 1 candidate)))
@@ -4474,14 +4499,21 @@ the report states rather than hiding: it is the visible cost of
                                 (nth 0 group) (nth 2 group) text
                                 count (if (= 1 count) "" "s"))
                         findings)))
-            (if-let* ((proof (org-agents--attr-confirm-candidate candidate)))
-                (pcase-let ((`(,name ,file ,line) proof))
-                  (when-let* ((text (org-agents--attr-name-finding name)))
-                    (push (format "%s:%d: %s (%d use%s)" file line text
-                                  count (if (= 1 count) "" "s"))
-                          findings)))
-              (cl-incf unconfirmed))))))
-    (cons (nreverse findings) unconfirmed)))
+            (pcase (org-agents--attr-confirm-candidate candidate)
+              (`(,name ,file ,line)
+               (when-let* ((text (org-agents--attr-name-finding name)))
+                 (push (format "%s:%d: %s (%d property-line site%s)"
+                               file line text
+                               count (if (= 1 count) "" "s"))
+                       findings)))
+              ;; The bound ran out with files left to look in, which is
+              ;; NOT the same answer as "every site I saw was not a
+              ;; property" -- and the report used to say the second about
+              ;; both.  Named rather than counted: they are few, and a
+              ;; name is what makes the claim checkable.
+              ('limited (push key limited))
+              (_ (cl-incf unconfirmed)))))))
+    (list (nreverse findings) unconfirmed (nreverse limited))))
 
 (defun org-agents--attr-census-table (table)
   "TABLE, the live walk's census hash, as the census list shape.
@@ -4574,14 +4606,27 @@ an empty registry, where tier two has nothing to check."
             entries (if (= 1 entries) "y" "ies")
             declarations (if (= 1 declarations) "" "s"))))
 
-(defun org-agents--attr-report (findings files entries read &optional unconfirmed)
+(defun org-agents--attr-report (findings files entries read
+                                        &optional unconfirmed limited)
   "Show FINDINGS over FILES and ENTRIES, and return how many there were.
 READ is how many files were opened; see `org-agents--attr-clean-line'.
-UNCONFIRMED, when non-zero, is how many candidate names appeared in
-property-line SHAPE outside any drawer and were therefore not reported --
-the visible cost of `org-agents--attr-confirm-limit'.  It is said in the
-echo area rather than put among the findings, because putting `LOGBOOK' in
-the buffer on every run is exactly the noise confirmation removes.
+
+UNCONFIRMED, when non-zero, is how many candidate names were LOOKED AT in
+every file holding them and turned out to appear in property-line SHAPE
+outside any drawer -- `LOGBOOK' and friends.  Nothing is being withheld
+there: they are not properties.  It is said in the echo area rather than
+put among the findings, because putting `LOGBOOK' in the buffer on every
+run is exactly the noise confirmation removes.
+
+LIMITED is a different thing wearing the same clothes, and conflating the
+two was a defect: these are names `org-agents--attr-confirm-limit' ran out
+of file opens on, so they MAY be real properties whose only genuine
+drawer line sits past the twentieth file.  MEASURED, and the reason they
+are NAMED rather than counted: with 25 decoy files and one real drawer in
+the alphabetically last, the report dropped a genuine property and told
+the reader it had dropped something that was never a property -- a
+specific, reassuring and wrong reason not to look.  There are four of
+them on the author's whole corpus, so the names fit.
 `compilation-mode', and not one line of navigation code.  MEASURED: with
 findings of the shape `FILE:LINE: TEXT' inserted into a buffer,
 `compilation-mode' parsed every one of them as an error -- so `RET',
@@ -4604,7 +4649,7 @@ absolute, so that is belt rather than braces."
       (setq-local default-directory (expand-file-name org-directory))
       (goto-char (point-min)))
     (display-buffer buffer)
-    (message "org-agents: %d finding%s over %d file%s%s"
+    (message "org-agents: %d finding%s over %d file%s%s%s"
              (length findings) (if (= 1 (length findings)) "" "s")
              (length files) (if (= 1 (length files)) "" "s")
              (if (and unconfirmed (> unconfirmed 0))
@@ -4612,6 +4657,15 @@ absolute, so that is belt rather than braces."
                                  " outside any drawer and %s not reported")
                          unconfirmed (if (= 1 unconfirmed) "" "s")
                          (if (= 1 unconfirmed) "was" "were"))
+               "")
+             (if limited
+                 (format (concat "; %d name%s not confirmed within the first"
+                                 " %d files and may be real: %s -- re-run"
+                                 " over a narrower scope to settle %s")
+                         (length limited) (if (= 1 (length limited)) "" "s")
+                         org-agents--attr-confirm-limit
+                         (string-join limited ", ")
+                         (if (= 1 (length limited)) "it" "them"))
                ""))
     (length findings)))
 
@@ -4752,7 +4806,7 @@ seconds went, not Org parsing, whose whole-corpus walk is 38.59 s."
               (if blind
                   (org-agents--attr-findings blind declared blind-table)
                 (cons 0 nil)))
-             (`(,names . ,unconfirmed)
+             (`(,names ,unconfirmed ,limited)
               (org-agents--attr-name-findings
                (cond ((and fast blind)
                       (org-agents--attr-census-merge
@@ -4764,7 +4818,7 @@ seconds went, not Org parsing, whose whole-corpus walk is 38.59 s."
            (org-agents--attr-sort (nconc names findings blind-findings))
            files (+ entries blind-entries)
            (+ (length tier2) (length blind))
-           unconfirmed))))))
+           unconfirmed limited))))))
 
 ;; The `COLUMNS' generator, and the one thing this epic does NOT build.
 ;;
