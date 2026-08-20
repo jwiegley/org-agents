@@ -151,8 +151,8 @@
 ;;                  separated.  A trailing `:ETC' leaves the vocabulary
 ;;                  open, which is Org's own spelling of that.
 ;;   :ATTR_DEFAULT: the default, as text.
-;;   :ATTR_FACES:   `VALUE FACE | VALUE FACE ...', parsed and stored and
-;;                  consumed by nothing yet.
+;;   :ATTR_FACES:   `VALUE FACE | VALUE FACE ...': what
+;;                  `org-agents-faces-mode' draws a headline with.
 ;;
 ;; The drawer must sit immediately under the heading, where Org keeps a
 ;; property drawer.  One written after the body text is not a property
@@ -236,6 +236,23 @@
 ;; disk byte-identical, which is the one thing that makes writing
 ;; `:AGENT_MATCHED:' on every save affordable.  A C-g during such an update
 ;; aborts the save along with it.
+;;
+;; Appearance:
+;;
+;; The registry's `:ATTR_FACES:' is what `org-agents-faces-mode' draws with:
+;; a headline whose RESOLVED value for a declared attribute is one that
+;; attribute maps to a face is drawn in that face, ahead of `org-level-N'
+;; rather than instead of it.  Resolved, so an entry spelling only
+;; `:PROTOTYPE:' -- or nothing at all, and taking `:ATTR_DEFAULT:' -- is
+;; faced exactly as one spelling the value in its own drawer.  It CHANGES NO
+;; BYTES: one font-lock keyword, no text written, no property written, no
+;; overlay, and turning it off puts the buffer back exactly as it was.
+;; `global-org-agents-faces-mode' turns it on in EVERY Org buffer, and
+;; deliberately not only in those whose text mentions a property -- a value
+;; that arrives through a prototype is spelled nowhere, so a text scan would
+;; miss the entries the mode exists for.  Two refusals, both stated in the
+;; `Appearance' section below: no geometry, and no writes of any kind from an
+;; appearance declaration.
 ;;
 ;; Scope, and why an unbounded one is worth narrowing:
 ;;
@@ -3066,8 +3083,9 @@ The plist, in this order:
               drawer: the reader synthesizes it.
   `:default'  `:ATTR_DEFAULT:' as TEXT, or nil where there is none or
               where what was written does not parse as the type.
-  `:faces'    `((VALUE . FACE) ...)', parsed and stored and consumed by
-              nothing in this epic.
+  `:faces'    `((VALUE . FACE) ...)', which `org-agents-faces-mode'
+              draws a headline with.  Read here and never re-parsed: see
+              `org-agents--faces-declared'.
   `:doc'      the entry's body, or nil.
   `:file'     the registry, expanded.
   `:line'     the heading's line in it, so that a diagnosis about the
@@ -5391,6 +5409,368 @@ for a user who asked for it by name."
   org-agents-mode org-agents--turn-on
   ;; `:risky t' reaches the `defcustom' this generates: turning the mode
   ;; on is what makes every save of an Org file run its agents' queries.
+  :risky t
+  :group 'org-agents)
+
+;;;; Appearance
+
+;; A headline's APPEARANCE following a declared attribute's resolved value.
+;; This is Tinderbox's `$Color', and the whole of it is one font-lock
+;; keyword: `:ATTR_FACES:' maps values to faces, and a headline whose
+;; resolved value is one of those values is drawn in the face beside it.
+;;
+;; It CHANGES NO BYTES.  No text is inserted, no property is written, no
+;; overlay is created -- the `face' text property font-lock manages, and
+;; removes again, is the entire mechanism.  Turning the mode off
+;; un-declares the keyword and lets font-lock's own unfontify pass take
+;; the face off, so the buffer comes back exactly as it was.
+;; `org-agents-test-faces-change-no-bytes' watches the writers by name and
+;; `org-agents-test-faces-disabling-leaves-no-residue' watches the
+;; restoration; both are the guard, and both are worth keeping.
+;;
+;; The value it reads is the RESOLVED one, which is what makes the mode
+;; worth having: an entry that spells only `:PROTOTYPE: Task', or that
+;; spells nothing at all and takes `:ATTR_DEFAULT:', is faced exactly as
+;; one that spells the value in its own drawer.  Grep does not see an
+;; inherited value and neither does the drawer under the user's eye -- but
+;; the face does, and reading a corpus is what that is for.
+;;
+;; The cost is what is DISPLAYED.  The matcher reads only the entry at its
+;; match and honours its LIMIT, so jit-lock pays per screenful and not per
+;; corpus: MEASURED over a 400-entry buffer of which one entry is drawn, a
+;; twelve-line window costs 5 resolutions where the whole buffer costs 799,
+;; and a headline outside the region carries no `face' property at all.
+;;
+;; `org-agents--faces-fontify-region' is the one piece of machinery beyond
+;; the keyword, and it exists for two things a keyword cannot do, because
+;; a keyword has no extent over which to hold a dynamic binding.  It reads
+;; the registry ONCE for the region -- MEASURED, a whole-buffer
+;; fontification of that fixture costs 405 `org-agents--file-cache-key'
+;; calls and 0.097 s with the batch established per matcher call, against
+;; 1 call and 0.033 s with it established once for the region, over an
+;; Org-alone baseline of 0.010 s: a marginal cost of 23 ms against 87 ms,
+;; and the saving grows with the buffer list because that key walks it.  And it
+;; binds `org-agents--prototype-warned', whose own docstring already
+;; assigns a fontifier that obligation: MEASURED, twenty entries naming
+;; one missing master produce twenty messages unbound and one bound, and
+;; unbound those would be twenty messages PER REDISPLAY.
+;;
+;; Two refusals, and they are refusals rather than omissions.
+;;
+;; NO GEOMETRY.  Tinderbox's `$Width', `$Xpos' and `$Height' describe a
+;; map view, and Org has no map: there is nothing in an outline for them
+;; to mean, so they are not ported and no spelling of them is reserved.
+;;
+;; NO WRITES, of any kind, from an appearance declaration.  Setting a tag
+;; or a TODO state from a resolved value is action code arriving through
+;; another door: it would be INHERITABLE behaviour, which part 3 of
+;; docs/research/action-code-safety.md is about -- a master's declaration
+;; running in every follower's file makes per-file trust meaningless.  Any
+;; such thing goes through the action-code trust model or not at all.
+
+(require 'font-lock)                    ; the keyword, and the region function
+
+(defconst org-agents--faces-heading-re "^\\*+ \\(.*\\)$"
+  "The headline this mode faces, with group 1 spanning what it draws.
+The same span as Org's own headline keyword's group 3 -- the TODO
+keyword, the priority, the title and the tags -- and never the trailing
+newline, so `org-fontify-whole-heading-line' still governs the fill of
+the line and this mode governs the text on it.
+
+Not built from `org-fontify-whole-heading-line', and not built from
+anything else optional either: `font-lock-remove-keywords' removes by
+`equal', so a keyword form that depended on an option would fail to
+remove if the option changed between the two calls.  See
+`org-agents--faces-keywords'.")
+
+(defvar org-agents--faces-face nil
+  "The face `org-agents--faces-matcher' last decided on.
+Read by the FACENAME of `org-agents--faces-keywords', which font-lock
+`eval's at apply time -- so a bare variable reference is a legal and
+idiomatic dynamic face, and Org's own headline keyword does the same
+thing with `(org-get-level-face 1)'.  Set immediately before the matcher
+answers non-nil and read immediately after, with nothing between: the
+matcher and `font-lock-apply-highlight' are two steps of one call.")
+
+(defconst org-agents--faces-keywords
+  '((org-agents--faces-matcher (0 org-agents--faces-face prepend)))
+  "The ONE font-lock keyword `org-agents-faces-mode' installs.
+SUBEXP 0 because the matcher sets match-data to exactly the span it wants
+faced, and `prepend' with the keyword APPENDED to `font-lock-keywords'.
+Both of those are load-bearing and neither is stylistic.
+
+Org's own headline keyword carries OVERRIDE nil -- \"apply only where no
+face is set yet\" -- so whichever keyword runs first claims the headline
+outright.  MEASURED, adding this one at the FRONT of the list, which is
+`font-lock-add-keywords''s default, leaves the title `(org-warning)' with
+`org-level-N' destroyed; `append' puts it last, where it prepends onto
+what Org already put there and the title reads `(org-warning
+org-level-1)'.  The four OVERRIDE values from that position: `prepend'
+gives `(org-warning org-level-1)' -- ours wins attribute by attribute and
+Org's survives underneath; `append' gives `(org-level-1 org-warning)',
+where Org's colour wins and ours is dead weight; `keep' gives
+`org-level-1' alone, so ours never applies; and t gives `org-warning'
+alone, DESTROYING `org-level-N' -- the height, the family, the lot.
+`prettify-symbols-mode' uses the default HOW; do not copy it here.
+
+A `defconst', and it must stay one: `font-lock-remove-keywords' removes
+by `equal', so the same form has to be passed to the add and to the
+remove.  MEASURED, that round trip leaves `font-lock-keywords' `equal' to
+what it was and leaves nothing in `font-lock-removed-keywords-alist'.")
+
+(defvar-local org-agents--faces-warned nil
+  "`(REGISTRY-KEY . TABLE)' of diagnostics already said in this buffer.
+The table outlives a fontified region, so a typo in the registry is said
+once and not once per scroll; and it is REMADE where the registry's cache
+key has moved, so a typo the user has since fixed is noticed and one they
+have not is not re-said.  See `org-agents--faces-warned-table'.")
+
+(defvar-local org-agents--faces-outer-fontify nil
+  "What `font-lock-fontify-region-function' was before this mode wrapped it.
+Meaningful only where `org-agents--faces-outer-local' is non-nil.")
+
+(defvar-local org-agents--faces-outer-local nil
+  "Non-nil when `font-lock-fontify-region-function' was ALREADY local.
+MEASURED, an Org buffer does not localize that variable -- only
+`font-lock-unfontify-region-function' -- so the ordinary restore is
+`kill-local-variable'.  But another mode may have localized it first, and
+MEASURED, an unconditional `kill-local-variable' loses that mode's value
+for good.  Which of the two restores is right is what this records.")
+
+(defun org-agents--faces-warned-table ()
+  "This buffer's diagnostic table, fresh where the registry has changed.
+Keyed on `(car org-agents--attributes-cache)', which IS the registry's
+own cache key: the caller has just run `org-agents--with-attributes', so
+that key is up to date and a table made against it is a table made
+against the declarations now in force.
+
+Bound over `org-agents--prototype-warned', so ONE table serves both the
+prototype diagnostics and this section's face diagnostics, through the
+existing `org-agents--prototype-report' and its existing key-space
+convention -- `\"dangling\\0...\"', `\"cycle\\0...\"', and here
+`\"face\\0ATTR\\0FACE\"' and `\"faces\\0MESSAGE\"'.  No second reporter."
+  (let ((key (car org-agents--attributes-cache)))
+    (unless (and org-agents--faces-warned
+                 (equal key (car org-agents--faces-warned)))
+      (setq org-agents--faces-warned
+            (cons key (make-hash-table :test #'equal))))
+    (cdr org-agents--faces-warned)))
+
+(defun org-agents--faces-declared ()
+  "`(NAME . FACES)' for every declared attribute that names faces, in file order.
+`:ATTR_FACES:' IS the opt-in, and there is deliberately no option beside
+it: a declaration that names faces is a declaration asking to be drawn,
+and a second list to enrol it in would be a second place to edit whose
+commonest failure would be a registry that names faces and silently draws
+nothing -- the one bug this section exists to prevent.
+
+File order because `org-agents-attributes' is file order, and its own
+docstring says why: the registry is a document, and the order its author
+chose is information.  That order is the precedence rule -- see
+`org-agents--faces-at'."
+  (cl-loop for name in (org-agents-attributes)
+           for faces = (plist-get (org-agents-attribute name) :faces)
+           when faces collect (cons name faces)))
+
+(defun org-agents--faces-at (pom attrs)
+  "The face ATTRS give the entry at POM, or nil where they give none.
+ATTRS is `org-agents--faces-declared''s answer, hoisted by the caller so
+that the registry is consulted once for a region rather than once per
+headline.  The FIRST declaration that resolves to a named value wins.
+
+`org-agents-resolve-property-quietly' and not `org-entry-get': a value
+arriving through a `:PROTOTYPE:' chain or out of `:ATTR_DEFAULT:' must
+face this headline exactly as a local value does, and that is the whole
+point of the mode.  Quietly, because fontification must not signal.
+
+The value is matched WHOLE and CASE-SENSITIVELY.  Both halves are one
+decision with `property-resolved''s `string-equal' and with
+`org-agents-attribute-valid-p''s \"compared case-SENSITIVELY, because a
+declared vocabulary is one the user wrote down\", and the three must not
+drift.  A consequence worth knowing: a `set' or `list' attribute is faced
+only where its whole value equals a declared key, since `:ATTR_FACES:'
+does not face by member.
+
+A face the registry names and Emacs does not is a DIAGNOSTIC and not an
+error, said once per attribute and face.  A typo in the registry costs
+its own mapping and must not cost the rest of the buffer's fontification
+-- so the walk goes on to the next declaration, which is what lets a
+later one still face the headline.  `facep' is checked here, at USE, and
+never in the reader: `org-agents--attr-parse-faces' says why, which is
+that a face this names may well be defined by a theme loaded afterwards."
+  (catch 'org-agents--face
+    (pcase-dolist (`(,name . ,faces) attrs)
+      (when-let* ((value (org-agents-resolve-property-quietly name pom))
+                  (face (cdr (assoc-string (string-trim value) faces))))
+        (if (facep face)
+            (throw 'org-agents--face face)
+          (org-agents--prototype-report
+           (format "face\0%s\0%s" name face)
+           "org-agents: attribute `%s' names no such face: `%s'" name face))))
+    nil))
+
+(defun org-agents--faces-matcher (limit)
+  "Face the next headline before LIMIT that a declared attribute draws.
+A font-lock MATCHER: it answers non-nil for a match, leaves match-data
+describing what to face and leaves point where the search should resume.
+Called again by font-lock for whatever is left of the region, so a
+headline that maps to nothing must not stop the scan -- hence the loop,
+which runs on to LIMIT and answers nil there.
+
+Three details, all measured, and each of them a way to get this wrong.
+
+`org-agents-resolve-property-quietly' CLOBBERS match-data, so the
+resolution happens inside `save-match-data' and `set-match-data' is the
+last thing done.  It does not move point today -- measured across a local
+value, a chain hop, a declared default and a dangling reference -- and
+`save-excursion' wraps it anyway, so that where this loop leaves point is
+a property of this function rather than a fact about a callee.
+
+And it must never SIGNAL.  `org-agents-resolve-property-quietly' demotes
+a `user-error' and nothing else, and an `error' escaping a matcher
+reaches redisplay, where Emacs turns the keyword off for the rest of the
+session -- leaving a buffer that has silently stopped following its
+attributes.  So the per-headline resolution wears a `condition-case'
+belt, reporting through the once-per-key table rather than through
+`with-demoted-errors', which would message per occurrence.
+
+Answers nil without resolving anything at all where nothing declares a
+face, which is what makes the global variant affordable in a corpus with
+no registry."
+  (let ((attrs (org-agents--faces-declared))
+        (found nil))
+    (while (and attrs (not found)
+                (re-search-forward org-agents--faces-heading-re limit t))
+      (let ((bol (match-beginning 0))
+            (beg (match-beginning 1))
+            (end (match-end 1)))
+        (when-let* ((face (save-excursion
+                            (save-match-data
+                              (condition-case err
+                                  (org-agents--faces-at bol attrs)
+                                (error
+                                 (org-agents--prototype-report
+                                  (concat "faces\0" (error-message-string err))
+                                  "org-agents: faces: %s"
+                                  (error-message-string err))))))))
+          (setq org-agents--faces-face face)
+          (set-match-data (list beg end))
+          (setq found t))))
+    found))
+
+(defun org-agents--faces-fontify-region (beg end &optional loudly)
+  "Fontify BEG to END with the registry read once and each diagnostic said once.
+The smallest thing that can hold a dynamic binding across a whole
+fontification run, which a font-lock keyword cannot.  Both bindings are
+measured, and the section comment above carries the numbers: one registry
+read against 405 for a whole-buffer pass over a 400-entry buffer, and one
+message against twenty for twenty dangling references.  Please do not
+simplify it away -- `org-agents-test-faces-read-the-registry-once-per-region'
+and `org-agents-test-faces-a-dangling-prototype-is-said-once' are what
+will tell you if you do.
+
+Calls whatever this variable held before the mode wrapped it, so a mode
+that had installed a region function of its own goes on fontifying
+underneath."
+  (org-agents--with-attributes
+    (let ((org-agents--prototype-warned (org-agents--faces-warned-table)))
+      (funcall (if org-agents--faces-outer-local
+                   org-agents--faces-outer-fontify
+                 #'font-lock-default-fontify-region)
+               beg end loudly))))
+
+;;;###autoload
+(define-minor-mode org-agents-faces-mode
+  "Face this buffer's headlines from declared attribute values.
+A headline whose RESOLVED value for a declared attribute is one that the
+attribute's `:ATTR_FACES:' names is drawn in the face beside it, ahead of
+`org-level-N' rather than instead of it -- so the colour follows the
+attribute and the height, the family and everything else the face does
+not specify still come from Org.
+
+Resolved, and that is the point.  A value arriving through a
+`:PROTOTYPE:' chain, or out of the registry's `:ATTR_DEFAULT:', faces the
+headline exactly as a value in its own drawer does, so an entry that
+spells nothing at all is drawn from what it inherits.
+
+`:ATTR_FACES:' is the whole of the opt-in: every declared attribute that
+names faces is consulted, in the order the registry declares them, and
+the first one that resolves to a named value wins.
+
+CHANGES NO BYTES.  One font-lock keyword and nothing else: no text is
+inserted, no property is written, no overlay is created, and turning the
+mode off puts the buffer back exactly as it was -- the keyword is removed
+and font-lock's own unfontify pass takes the face off.  So it is safe to
+leave on in a file under version control.
+
+Costs what is displayed.  jit-lock calls the matcher over the region it
+is about to draw, the matcher reads only the entry at its match, and the
+registry is read once for that region rather than once per headline.
+
+Nothing here writes, and nothing here is geometry.  See the `Appearance'
+section of org-agents.el for both refusals and for why they are
+refusals."
+  :lighter " Attrs"
+  :group 'org-agents
+  (cond
+   ((not org-agents-faces-mode)
+    (font-lock-remove-keywords nil org-agents--faces-keywords)
+    ;; Only where ours is still the installed one.  A mode layered on TOP
+    ;; of this one, going off after it, would otherwise be clobbered.
+    (when (eq font-lock-fontify-region-function
+              #'org-agents--faces-fontify-region)
+      (if org-agents--faces-outer-local
+          (setq-local font-lock-fontify-region-function
+                      org-agents--faces-outer-fontify)
+        (kill-local-variable 'font-lock-fontify-region-function)))
+    (kill-local-variable 'org-agents--faces-outer-fontify)
+    (kill-local-variable 'org-agents--faces-outer-local)
+    (kill-local-variable 'org-agents--faces-warned)
+    (font-lock-flush))
+   ;; Turned off again before the refusal is signaled, as `org-agents-mode'
+   ;; is: `define-minor-mode' has set the variable by the time this body
+   ;; runs, so a refusal that only signaled would leave a mode reporting
+   ;; itself enabled with no keyword behind it.
+   ((not (derived-mode-p 'org-mode))
+    (setq org-agents-faces-mode nil)
+    (user-error "org-agents: `org-agents-faces-mode' needs an Org buffer"))
+   (t
+    (setq org-agents--faces-outer-local
+          (local-variable-p 'font-lock-fontify-region-function))
+    (setq org-agents--faces-outer-fontify
+          (and org-agents--faces-outer-local font-lock-fontify-region-function))
+    (setq-local font-lock-fontify-region-function
+                #'org-agents--faces-fontify-region)
+    ;; `append', and `org-agents--faces-keywords' says at length why.
+    (font-lock-add-keywords nil org-agents--faces-keywords 'append)
+    (font-lock-flush))))
+
+(defun org-agents--faces-turn-on ()
+  "Enable `org-agents-faces-mode' in an Org buffer.
+What `global-org-agents-faces-mode' calls in each buffer.  A buffer that
+is not Org is passed over silently rather than refused: the mode's own
+refusal is for a user who asked for it by name.
+
+Every Org buffer, and DELIBERATELY not the shape `org-agents--turn-on'
+has.  That one arms only a buffer whose text matches `:AGENT_QUERY:', and
+copying it here would be a bug: the values this mode draws from arrive
+through a `:PROTOTYPE:' chain or out of `:ATTR_DEFAULT:', and an entry
+faced that way spells NOTHING AT ALL -- grep does not see an inherited
+value, so a text scan for any property name would miss exactly the
+entries this mode exists for.
+
+Affordable because measured: where nothing declares a face the matcher
+answers nil before it resolves anything, so a corpus with no registry
+pays a regexp scan of the displayed region and nothing else."
+  (when (derived-mode-p 'org-mode)
+    (org-agents-faces-mode 1)))
+
+;;;###autoload
+(define-globalized-minor-mode global-org-agents-faces-mode
+  org-agents-faces-mode org-agents--faces-turn-on
+  ;; `:risky t' reaches the `defcustom' this generates: turning the mode on
+  ;; is what makes every Org buffer read the registry and walk prototype
+  ;; chains as it redisplays.
   :risky t
   :group 'org-agents)
 

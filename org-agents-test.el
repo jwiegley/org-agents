@@ -872,8 +872,9 @@ pushed pattern would return NO files for a query that matches thousands."
     org-agents-files
     org-agents-attributes-file
     ;; `define-globalized-minor-mode' generates a `defcustom' too, and it
-    ;; lands in this group like any other.
-    global-org-agents-mode)
+    ;; lands in this group like any other.  One per globalized mode.
+    global-org-agents-mode
+    global-org-agents-faces-mode)
   "Every `org-agents' user option, written out here on purpose.
 This test owns the list.  A `defcustom' added to the package and not to
 this list fails the completeness half of
@@ -894,7 +895,8 @@ published default of `org-agents-exclude', and be asked about nothing
 afterwards.")
 
 (defconst org-agents-test--auto-risky-options
-  '(org-agents-mode-hook global-org-agents-mode-hook)
+  '(org-agents-mode-hook global-org-agents-mode-hook
+    org-agents-faces-mode-hook global-org-agents-faces-mode-hook)
   "The package's options that Emacs classes risky by NAME.
 `define-minor-mode' and `define-globalized-minor-mode' generate a hook
 option each, and `risky-local-variable-p' answers t for any name ending
@@ -6482,6 +6484,737 @@ at save time anyway."
       ;; Turning it off disarms what it armed.
       (with-current-buffer (find-file-noselect agent-file)
         (should-not org-agents-mode)))))
+
+;;;; Appearance
+
+;; `org-agents-faces-mode' changes no bytes, so every test here asserts on
+;; a text property and nothing else -- and the one that asserts loudest is
+;; `org-agents-test-faces-change-no-bytes', which watches the writers.
+;;
+;; HOW THESE TESTS SEE A FACE AT ALL, since `-batch' makes it look
+;; impossible.  `font-lock-mode' refuses to enable when `noninteractive' is
+;; non-nil or the buffer's name begins with a space, so it is nil
+;; throughout, and this does not matter: `font-lock-ensure' does not go
+;; through the mode.  It runs when `font-lock-specified-p' is non-nil,
+;; which an Org buffer makes true by setting `font-lock-defaults', and it
+;; calls `font-lock-ensure-function', whose default value fontifies unless
+;; `font-lock-fontified' is set.  Nothing sets that outside
+;; `font-lock-default-fontify-buffer' and `font-lock-turn-on-thing-lock',
+;; neither of which runs here -- so every `font-lock-ensure' call really
+;; re-fontifies, and `font-lock-default-fontify-region' unfontifies before
+;; it fontifies, so a second call after a keyword change is a clean rebuild
+;; and not a smear.  MEASURED, all of it.
+;;
+;; Two consequences for a reader adding a test here.  A test that enabled
+;; `font-lock-mode' and asserted on a face would assert nothing, because
+;; the mode turns itself straight back off.  And `with-temp-buffer' is
+;; usable for a face -- the recipe above needs no `font-lock-mode' -- but
+;; cannot reach the REAL jit-lock path, because its buffer is named
+;; " *temp*" and the leading space is a second refusal.  Exactly one test
+;; reaches that path, `org-agents-test-faces-flush-reaches-jit-lock', and
+;; it says there how.
+
+(defconst org-agents-test--faces-registry "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:    string
+:ATTR_VALUES:  active stalled done :ETC
+:ATTR_DEFAULT: active
+:ATTR_FACES:   active org-todo | stalled org-warning \
+| done org-agents-test--nonesuch-face
+:END:
+Where the entry stands.
+
+* OWNER
+:PROPERTIES:
+:ATTR_TYPE:  string
+:ATTR_FACES: ada bold
+:END:
+Who has it.
+
+* Prototypes
+** Task
+:PROPERTIES:
+:STATUS: stalled
+:END:
+"
+  "Two face-declaring attributes and one prototype, in a deliberate ORDER.
+`STATUS' is declared FIRST, which is what
+`org-agents-test-faces-first-declaration-wins' asserts on: the precedence
+rule is the registry's own file order, and a test that did not depend on
+the order would not notice a reader that sorted.
+
+`done' is mapped to a face that does not exist, on purpose.  A typo in a
+registry is a diagnostic and not an error, and the two tests that say so
+need a name Emacs will never define.
+
+`:ATTR_DEFAULT: active' is what makes an entry spelling NOTHING AT ALL
+faced, which is the case a text scan cannot find and the whole reason
+`org-agents--faces-turn-on' does not do one.")
+
+(defconst org-agents-test--faces-corpus
+  '(("a.org" . "\
+* Local
+:PROPERTIES:
+:STATUS: stalled
+:END:
+* Follower
+:PROPERTIES:
+:PROTOTYPE: Task
+:END:
+* Bare
+* Unmapped
+:PROPERTIES:
+:STATUS: waiting
+:END:
+* Shouted
+:PROPERTIES:
+:STATUS: STALLED
+:END:
+* Both
+:PROPERTIES:
+:STATUS: stalled
+:OWNER: ada
+:END:
+* Second
+:PROPERTIES:
+:STATUS: waiting
+:OWNER: ada
+:END:
+* Typo
+:PROPERTIES:
+:STATUS: done
+:END:
+* Typo and owner
+:PROPERTIES:
+:STATUS: done
+:OWNER: ada
+:END:
+"))
+  "One entry per case the mode has to get right, named for its case.
+`Local' spells the value; `Follower' spells only `:PROTOTYPE:'; `Bare'
+spells nothing and takes `:ATTR_DEFAULT:' -- and all three must be faced
+identically where they resolve identically, which is the point of the
+mode.  `Unmapped' and `Shouted' resolve to values `:ATTR_FACES:' does not
+name.  `Both' has a value under each attribute and must take the first
+declaration's.  `Second' has an unmapped `STATUS' and a mapped `OWNER',
+so it pins that a miss CONTINUES the walk.  `Typo' maps to a face that
+does not exist, and `Typo and owner' pins that an unknown face does not
+end the walk either.")
+
+(defun org-agents-test--faces-many (n drawn)
+  "A corpus of one file holding N entries, of which only DRAWN is faced.
+Every other entry spells `:STATUS: waiting', which `:ATTR_FACES:' does
+not name, so it resolves and is not drawn.
+
+Mostly-undrawn is the shape that makes the cost test discriminate, and
+finding that out cost a test that did not.  The matcher's LIMIT bounds
+its INTERNAL loop -- the one that runs on past a headline it does not
+face -- so a fixture in which every headline is faced stops that loop at
+the first line either way, and a matcher searching with a nil LIMIT
+scored the same as one honouring it.  With only one entry drawn, a
+LIMIT-less search runs from the region to the end of the buffer looking
+for a second, and the count says so."
+  (list (cons "many.org"
+              (mapconcat
+               (lambda (i)
+                 (format "* Entry %d\n:PROPERTIES:\n:STATUS: %s\n:END:\n"
+                         i (if (= i drawn) "stalled" "waiting")))
+               (number-sequence 1 n) ""))))
+
+(defun org-agents-test--face-at (heading)
+  "The `face' property on HEADING's title text and on its stars, as a plist.
+Both halves, because the mode promises something about each: the title
+carries our face ahead of Org's, and the stars carry Org's alone -- which
+is what keeps `org-hide-leading-stars' working."
+  (save-excursion
+    (goto-char (point-min))
+    (unless (re-search-forward
+             (concat "^\\(\\*+\\) \\(" (regexp-quote heading) "\\)$") nil t)
+      (error "org-agents-test: no heading `%s' in %s" heading (buffer-name)))
+    (list :title (get-text-property (match-beginning 2) 'face)
+          :stars (get-text-property (match-beginning 1) 'face))))
+
+(defun org-agents-test--title-face (heading)
+  "The `face' property on HEADING's title text."
+  (plist-get (org-agents-test--face-at heading) :title))
+
+(defmacro org-agents-test--with-faces-buffer (&rest body)
+  "Run BODY in the corpus's first file, visited, faced and fontified.
+`files' comes from `org-agents-test--with-attr-corpus', which is what
+supplies the registry these faces are declared in."
+  (declare (indent 0) (debug t))
+  `(with-current-buffer (find-file-noselect (car files))
+     (org-agents-faces-mode 1)
+     (font-lock-ensure)
+     ,@body))
+
+(ert-deftest org-agents-test-faces-a-resolved-value-however-it-arrives ()
+  "A local value, a prototype's value and a declared default face alike.
+This is the whole of the epic in one assertion.  `Local' spells `stalled'
+in its own drawer, `Follower' spells only `:PROTOTYPE: Task', and `Bare'
+spells nothing whatever -- and the mode draws each of them from what it
+RESOLVES, so the first two are `org-warning' and the third is the
+default's `org-todo'.  Nothing in `Follower' or `Bare' says `stalled' or
+`active', which is exactly why `org-entry-get' cannot be what answers
+here.
+
+Our face is PREPENDED onto Org's rather than replacing it, so
+`org-level-1' survives underneath and everything the attribute does not
+specify -- the height, the family -- still comes from Org.  MEASURED, the
+four `OVERRIDE' values give `(org-warning org-level-1)' for `prepend',
+`(org-level-1 org-warning)' for `append' (Org's colour wins and ours is
+dead weight), `org-level-1' alone for `keep' (ours never applies) and
+`org-warning' alone for t, which DESTROYS `org-level-N' outright.
+
+And the stars keep `org-level-1' by itself: the keyword faces the heading
+text and never the leading stars."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (org-agents-test--with-faces-buffer
+      (should (equal '(:title (org-warning org-level-1) :stars org-level-1)
+                     (org-agents-test--face-at "Local")))
+      (should (equal '(:title (org-warning org-level-1) :stars org-level-1)
+                     (org-agents-test--face-at "Follower")))
+      (should (equal '(:title (org-todo org-level-1) :stars org-level-1)
+                     (org-agents-test--face-at "Bare"))))))
+
+(ert-deftest org-agents-test-faces-an-unnamed-value-is-not-faced ()
+  "A resolved value `:ATTR_FACES:' does not name leaves the headline alone.
+Whole and case-SENSITIVELY, and both halves are one decision with
+`property-resolved''s own `string-equal' and with
+`org-agents-attribute-valid-p''s \"compared case-SENSITIVELY, because a
+declared vocabulary is one the user wrote down\".  The three must not
+drift, so `Shouted' -- which spells `STALLED' -- is not faced either.
+
+Silently.  A value outside the drawn set is the ordinary case, not a
+fault: `org-agents-check-attributes' is what reports a value outside its
+vocabulary, and a fontifier that messaged about one would say it on every
+scroll."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (let (msgs)
+      (setq msgs (org-agents-test--messages
+                   (org-agents-test--with-faces-buffer
+                     (should (eq 'org-level-1
+                                 (org-agents-test--title-face "Unmapped")))
+                     (should (eq 'org-level-1
+                                 (org-agents-test--title-face "Shouted"))))))
+      (should-not (cl-find-if (lambda (m) (string-match-p "waiting\\|STALLED" m))
+                              msgs)))))
+
+(ert-deftest org-agents-test-faces-first-declaration-wins ()
+  "Two attributes name a face for one entry; the registry's order decides.
+`org-agents-attributes' answers in FILE order -- \"the registry is a
+document, and the order its author chose is information\" -- and the walk
+stops at the first declaration that resolves to a named value.  So `Both'
+takes `STATUS''s `org-warning' and not `OWNER''s `bold', and there is no
+option to spell that differently: the ordering already has a spelling the
+user controls, which is where the declarations sit in the file.
+
+`Second' is the other half and is what makes this a test of the ORDER
+rather than of the first element: its `STATUS' resolves to a value
+`:ATTR_FACES:' does not name, and the walk must therefore CONTINUE and
+find `OWNER''s."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (org-agents-test--with-faces-buffer
+      (should (equal '(org-warning org-level-1)
+                     (org-agents-test--title-face "Both")))
+      (should (equal '(bold org-level-1)
+                     (org-agents-test--title-face "Second"))))))
+
+(ert-deftest org-agents-test-faces-an-undefined-face-is-a-diagnostic ()
+  "A face the registry names and Emacs does not costs its mapping only.
+Three things, and the second and third are what make it a diagnostic
+rather than an error.  It is said ONCE, by attribute and face, however
+many entries map to it -- keyed through the same
+`org-agents--prototype-report' table the prototype diagnostics use, so a
+scroll does not re-say it.  The rest of the buffer is faced normally,
+which a `user-error' out of a matcher would have cost.  And the walk
+CONTINUES past it, so `Typo and owner' still takes `OWNER''s `bold' --
+the unknown face costs its own mapping and not the declarations after it.
+
+`facep' is checked at USE and never at READ, and
+`org-agents--attr-parse-faces' says why: a face this names may well be
+defined by a theme loaded after the registry was first read, so a reader
+that validated would reject it for good."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (let ((msgs (org-agents-test--messages
+                  (org-agents-test--with-faces-buffer
+                    (should (eq 'org-level-1
+                                (org-agents-test--title-face "Typo")))
+                    (should (equal '(bold org-level-1)
+                                   (org-agents-test--title-face "Typo and owner")))
+                    ;; Every other entry in the same buffer is faced.
+                    (should (equal '(org-warning org-level-1)
+                                   (org-agents-test--title-face "Local")))
+                    ;; And a second pass says nothing new.
+                    (font-lock-ensure)))))
+      (setq msgs (cl-remove-if-not
+                  (lambda (m) (string-match-p "no such face" m)) msgs))
+      (should (= 1 (length msgs)))
+      (should (string-match-p "STATUS" (car msgs)))
+      (should (string-match-p "org-agents-test--nonesuch-face" (car msgs))))))
+
+(ert-deftest org-agents-test-faces-an-unreadable-attr-faces-is-said-once ()
+  "An `:ATTR_FACES:' that does not parse is named once, by attribute.
+Said by the READER, which runs at most once per edit to the registry --
+which is the property this test is really about.  The consumer reads the
+`:faces' key `org-agents--attr-declaration' stored and does not re-parse
+`:ATTR_FACES:' itself, so a broken line costs one message across as many
+fontifications as the buffer gets.  A matcher that parsed the registry
+for itself would repeat it on every scroll.
+
+`org-agents-test-attributes-faces-parsed-not-applied' pins the same
+storage from the reader's side; this pins it from the consumer's.  And
+the other attribute still faces, because a bad field costs its field."
+  (org-agents-test--with-attr-corpus "\
+* STATUS
+:PROPERTIES:
+:ATTR_TYPE:  string
+:ATTR_FACES: active
+:END:
+
+* OWNER
+:PROPERTIES:
+:ATTR_TYPE:  string
+:ATTR_FACES: ada bold
+:END:
+"
+      '(("a.org" . "\
+* One
+:PROPERTIES:
+:STATUS: active
+:END:
+* Two
+:PROPERTIES:
+:OWNER: ada
+:END:
+"))
+    (let ((msgs (org-agents-test--messages
+                  (org-agents-test--with-faces-buffer
+                    (font-lock-ensure)
+                    (should (eq 'org-level-1 (org-agents-test--title-face "One")))
+                    (should (equal '(bold org-level-1)
+                                   (org-agents-test--title-face "Two")))))))
+      (setq msgs (cl-remove-if-not
+                  (lambda (m) (string-match-p "unreadable :ATTR_FACES:" m)) msgs))
+      (should (= 1 (length msgs)))
+      (should (string-match-p "STATUS" (car msgs))))))
+
+(ert-deftest org-agents-test-faces-a-dangling-prototype-is-said-once ()
+  "Twenty entries naming one missing master cost one message.
+`org-agents--prototype-warned''s own docstring already assigns this
+obligation -- \"a caller that runs the resolver over many entries of its
+own -- a fontifier, say -- inherits the obligation to bind it\" -- and
+this is that caller.  MEASURED: unbound, twenty such entries produce
+twenty messages, and they would be twenty messages PER REDISPLAY.
+
+The table this mode binds it to outlives a region, so the count is one
+across two whole-buffer fontifications rather than one per region."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      (list (cons "a.org"
+                  (mapconcat
+                   (lambda (i)
+                     (format "* Entry %d\n:PROPERTIES:\n:PROTOTYPE: Nope\n:END:\n"
+                             i))
+                   (number-sequence 1 20) "")))
+    (let ((msgs (org-agents-test--messages
+                  (org-agents-test--with-faces-buffer
+                    (font-lock-ensure)
+                    ;; Each of them still resolves to the declared default,
+                    ;; so the dangling reference costs a message and not a face.
+                    (should (equal '(org-todo org-level-1)
+                                   (org-agents-test--title-face "Entry 7")))))))
+      (should (= 1 (length (cl-remove-if-not
+                           (lambda (m) (string-match-p "no prototype" m))
+                           msgs)))))))
+
+(ert-deftest org-agents-test-faces-a-diagnostic-is-re-said-after-an-edit ()
+  "Fixing the registry is noticed; leaving it broken is not re-said.
+The once-per-diagnostic table is keyed on the registry's own cache key,
+which `org-agents--with-attributes' has just brought up to date -- so a
+table made against it is a table made against the declarations now in
+force.  Keyed on the buffer alone, the fix below would never be noticed
+and the user would go on seeing an unfaced headline with no message to
+say why.
+
+The registry is edited in a BUFFER and not saved, because that is the
+edit `org-agents--file-cache-key' invalidates on reliably: with a buffer
+visiting the file the key carries `buffer-chars-modified-tick', where an
+unvisited file offers only a modification time and a size."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (let ((broken (lambda (msgs)
+                    (length (cl-remove-if-not
+                             (lambda (m) (string-match-p "no such face" m))
+                             msgs)))))
+      ;; Not `org-agents-test--with-faces-buffer': its own fontification
+      ;; would say the first message outside the capture below.
+      (with-current-buffer (find-file-noselect (car files))
+        (org-agents-faces-mode 1)
+        ;; Said once, and not again while the registry says the same thing.
+        (should (= 1 (funcall broken (org-agents-test--messages
+                                       (font-lock-ensure)
+                                       (font-lock-ensure)))))
+        (should (eq 'org-level-1 (org-agents-test--title-face "Typo")))
+        ;; Fix the face name.  The entry is faced, and nothing is said.
+        (with-current-buffer (find-file-noselect registry)
+          (goto-char (point-min))
+          (should (search-forward "org-agents-test--nonesuch-face" nil t))
+          (replace-match "org-done" t t))
+        (should (= 0 (funcall broken (org-agents-test--messages
+                                       (font-lock-ensure)))))
+        (should (equal '(org-done org-level-1)
+                       (org-agents-test--title-face "Typo")))
+        ;; Break it again, and it is said once more.
+        (with-current-buffer (find-file-noselect registry)
+          (goto-char (point-min))
+          (should (search-forward "org-done" nil t))
+          (replace-match "org-agents-test--nonesuch-face" t t))
+        (should (= 1 (funcall broken (org-agents-test--messages
+                                       (font-lock-ensure)))))))))
+
+(ert-deftest org-agents-test-faces-never-signal-out-of-a-matcher ()
+  "An error inside the resolution is reported, not raised.
+`org-agents-resolve-property-quietly' demotes a `user-error' and nothing
+else, and an `error' escaping a font-lock matcher reaches redisplay --
+where Emacs turns the offending keyword off for the rest of the session
+and the user gets a buffer that has silently stopped following its
+attributes.  So the per-headline resolution wears a `condition-case'
+belt, reporting through the same once-per-key table rather than through
+`with-demoted-errors', which would message per occurrence.
+
+The rest of the buffer still fontifies: `org-level-1' is Org's own
+keyword, and the belt is what keeps ours from taking Org's down with it."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (with-current-buffer (find-file-noselect (car files))
+      (org-agents-faces-mode 1)
+      (let ((msgs (org-agents-test--messages
+                    (cl-letf (((symbol-function
+                                'org-agents-resolve-property-quietly)
+                               (lambda (&rest _)
+                                 (error "org-agents-test: deliberate"))))
+                      ;; No signal escapes, twice over.
+                      (font-lock-ensure)
+                      (font-lock-ensure)))))
+        (should (eq 'org-level-1 (org-agents-test--title-face "Local")))
+        (should (= 1 (length (cl-remove-if-not
+                              (lambda (m) (string-match-p "deliberate" m))
+                              msgs))))))))
+
+(ert-deftest org-agents-test-faces-cost-scales-with-what-is-displayed ()
+  "Fontifying a window costs a window's resolutions, not a buffer's.
+This is what \"jit-lock-driven\" means as an assertion rather than as a
+claim: the matcher reads only the entry at its match and honours its
+LIMIT, so a four-hundred-entry corpus costs 5 resolutions to draw a
+twelve-line window of it where the whole buffer costs 799.  A headline
+outside the region carries no `face' property at all, which is the same
+statement from the other side.
+
+The whole-buffer half is what keeps the counter honest.  An
+implementation that resolved through `org-agents-resolve-property'
+directly, or that hoisted every resolution to mode-enable time, would
+score zero on the narrow count and must not pass on that account.
+
+`org-agents-test--faces-many' says why only one entry in it is drawn,
+and it is the difference between this test discriminating and not."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      (org-agents-test--faces-many 400 205)
+    (with-current-buffer (find-file-noselect (car files))
+      (org-agents-faces-mode 1)
+      (let ((resolves 0)
+            narrow)
+        (cl-letf* ((orig (symbol-function 'org-agents-resolve-property-quietly))
+                   ((symbol-function 'org-agents-resolve-property-quietly)
+                    (lambda (&rest args)
+                      (setq resolves (1+ resolves))
+                      (apply orig args))))
+          ;; A window holding the drawn entry and three after it.
+          (goto-char (point-min))
+          (should (re-search-forward "^\\* Entry 205$" nil t))
+          (let ((beg (line-beginning-position)))
+            (forward-line 12)
+            (font-lock-ensure beg (point)))
+          (setq narrow resolves)
+          (should (> narrow 0))
+          (should (< narrow 30))
+          ;; Drawn: inside the region.  Untouched: outside it.
+          (should (equal '(org-warning org-level-1)
+                         (org-agents-test--title-face "Entry 205")))
+          (should-not (org-agents-test--title-face "Entry 5"))
+          (should-not (org-agents-test--title-face "Entry 399"))
+          (setq resolves 0)
+          (font-lock-ensure (point-min) (point-max))
+          (should (> resolves 700))
+          (should (> resolves (* 10 narrow))))))))
+
+(ert-deftest org-agents-test-faces-read-the-registry-once-per-region ()
+  "One registry read per fontified region, however many headlines it holds.
+`org-agents-resolve-property' reaches the registry, and cold that costs
+`org-agents--file-cache-key' -- `file-truename' plus
+`find-buffer-visiting', which walks the buffer list truenaming each
+buffer's file.  MEASURED over the four-hundred-entry fixture: a
+whole-buffer fontification costs 405 keys and 0.097 s with the batch
+established per matcher CALL, and 1 key and 0.033 s with it established
+once for the region, over an Org-alone baseline of 0.010 s.  The saving
+grows with the buffer list, which on a working Emacs is hundreds of
+buffers long.
+
+That is what `org-agents--faces-fontify-region' exists for, and a font-lock
+keyword cannot do it: a keyword has no extent over which to hold a dynamic
+binding.  Please do not simplify it away -- and if you do, this test and
+`org-agents-test-faces-a-dangling-prototype-is-said-once' are what will
+tell you."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      (org-agents-test--faces-many 100 7)
+    (with-current-buffer (find-file-noselect (car files))
+      (org-agents-faces-mode 1)
+      (let ((keys 0))
+        (cl-letf* ((orig (symbol-function 'org-agents--file-cache-key))
+                   ((symbol-function 'org-agents--file-cache-key)
+                    (lambda (&rest args)
+                      (setq keys (1+ keys))
+                      (apply orig args))))
+          (font-lock-ensure))
+        (should (= 1 keys))))))
+
+(ert-deftest org-agents-test-faces-with-no-registry-consult-nothing ()
+  "No registry declares no faces, and nothing is resolved or said.
+The global variant arms every Org buffer, so this is the case most users
+are in most of the time and it has to cost nothing measurable: the
+matcher answers nil before it resolves anything at all, and there is no
+message about a file that is not there."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      '(("a.org" . "* One\n* Two\n* Three\n"))
+    (let ((org-agents-attributes-file
+           (expand-file-name "no-such-registry.org" dir))
+          (org-agents--attributes-cache nil)
+          (org-agents--prototypes-cache nil)
+          (resolves 0))
+      (with-current-buffer (find-file-noselect (car files))
+        (org-agents-faces-mode 1)
+        (let ((msgs (org-agents-test--messages
+                      (cl-letf* ((orig (symbol-function
+                                        'org-agents-resolve-property-quietly))
+                                 ((symbol-function
+                                   'org-agents-resolve-property-quietly)
+                                  (lambda (&rest args)
+                                    (setq resolves (1+ resolves))
+                                    (apply orig args))))
+                        (font-lock-ensure)))))
+          (should (= 0 resolves))
+          (should-not msgs)
+          (should (eq 'org-level-1 (org-agents-test--title-face "One")))
+          (should (eq 'org-level-1 (org-agents-test--title-face "Three"))))))))
+
+(ert-deftest org-agents-test-faces-change-no-bytes ()
+  "Enabling, fontifying and disabling writes nothing whatever.
+The epic's headline claim, and the guard against action code arriving
+through the appearance door: an appearance declaration that could set a
+tag or a TODO state would be inheritable behaviour, which is what
+`docs/action-code-safety.md' part 3 says makes per-file trust meaningless.
+So the writers are watched by name, and every other way of noticing a
+write is asserted beside them -- the modification flag, the character
+tick, the text itself, the file's bytes, and the absence of any overlay,
+since an overlay is the other way a package changes an appearance and
+this one does not use it.
+
+The registry is read once BEFORE the tripwire goes up, deliberately.
+`org-agents--in-org-copy' inserts the registry's text into a temporary
+buffer of its own making, and that is this package writing into its own
+scratch space rather than into the user's file -- but it is still a call
+to `insert', and a tripwire that caught it would be reporting the wrong
+thing."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (let ((before (org-agents-test--file-text (car files))))
+      (with-current-buffer (find-file-noselect (car files))
+        (org-agents--with-attributes nil)
+        (let ((text (buffer-substring-no-properties (point-min) (point-max)))
+              (tick (buffer-chars-modified-tick))
+              (org-agents-test--tripwire-count 0))
+          (cl-letf (((symbol-function 'insert) #'org-agents-test--tripwire)
+                    ((symbol-function 'delete-region)
+                     #'org-agents-test--tripwire)
+                    ((symbol-function 'org-entry-put)
+                     #'org-agents-test--tripwire)
+                    ((symbol-function 'replace-buffer-contents)
+                     #'org-agents-test--tripwire))
+            (org-agents-faces-mode 1)
+            (font-lock-ensure)
+            (org-agents-faces-mode -1)
+            (font-lock-ensure))
+          (should (= 0 org-agents-test--tripwire-count))
+          (should-not (buffer-modified-p))
+          (should (= tick (buffer-chars-modified-tick)))
+          (should (equal text (buffer-substring-no-properties (point-min)
+                                                              (point-max))))
+          (should-not (overlays-in (point-min) (point-max)))))
+      (should (equal before (org-agents-test--file-text (car files)))))))
+
+(ert-deftest org-agents-test-faces-disabling-leaves-no-residue ()
+  "Turning the mode off puts the buffer back exactly as it was.
+Nothing here removes a text property.  The mode un-declares its keyword
+and lets font-lock's own unfontify pass take the face off, which is the
+whole mechanism: `font-lock-default-fontify-region' unfontifies before it
+fontifies, and `font-lock-flush' is what marks the region for that to
+happen.  So \"no residue\" is four separate assertions -- the keyword
+list is `equal' to what it was, our buffer-local variables are gone, the
+face is gone after a refontification, and the text never moved.
+
+`font-lock-remove-keywords' removes by `equal', which is why
+`org-agents--faces-keywords' is a `defconst' holding no value that
+depends on an option: a keyword form built from
+`org-fontify-whole-heading-line' would fail to remove if the option
+changed between the two calls.  MEASURED, the nil-MODE path also leaves
+no record in `font-lock-removed-keywords-alist'.
+
+In batch `font-lock-flush' is a no-op -- both of its guards fail -- so
+the assertion after the disable has to force the refontification itself.
+`org-agents-test-faces-flush-reaches-jit-lock' is where the flush is
+tested for what it does interactively."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (with-current-buffer (find-file-noselect (car files))
+      (font-lock-set-defaults)
+      (let ((keywords (copy-tree font-lock-keywords)))
+        (org-agents-faces-mode 1)
+        (font-lock-ensure)
+        (should (equal '(org-warning org-level-1)
+                       (org-agents-test--title-face "Local")))
+        (should-not (equal keywords font-lock-keywords))
+        (org-agents-faces-mode -1)
+        (should (equal keywords font-lock-keywords))
+        (should-not (local-variable-p 'font-lock-fontify-region-function))
+        (should-not (local-variable-p 'org-agents--faces-outer-fontify))
+        (should-not (local-variable-p 'org-agents--faces-outer-local))
+        (should-not (local-variable-p 'org-agents--faces-warned))
+        (should-not font-lock-removed-keywords-alist)
+        (font-lock-ensure)
+        (should (eq 'org-level-1 (org-agents-test--title-face "Local")))
+        (should-not (overlays-in (point-min) (point-max)))))))
+
+(ert-deftest org-agents-test-faces-disabling-restores-a-wrapped-region-function ()
+  "A `font-lock-fontify-region-function' another mode set is given back.
+An Org buffer does not make that variable buffer-local -- MEASURED, only
+`font-lock-unfontify-region-function' -- so the ordinary restore is
+`kill-local-variable'.  But another mode may have localized it first, and
+MEASURED, an unconditional `kill-local-variable' loses that mode's value
+for good.  Hence the two records: what the value was, and whether it was
+already local.
+
+The `eq' guard is the other half, and it is what keeps a mode layered on
+TOP of ours from being clobbered when ours goes off first: a restore that
+did not check whose function is installed would overwrite the outer one."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (with-current-buffer (find-file-noselect (car files))
+      (setq-local font-lock-fontify-region-function
+                  #'org-agents-test--faces-sentinel-region)
+      (org-agents-faces-mode 1)
+      (should (eq font-lock-fontify-region-function
+                  #'org-agents--faces-fontify-region))
+      ;; And the sentinel is still what actually fontifies, underneath.
+      (font-lock-ensure)
+      (should (equal '(org-warning org-level-1)
+                     (org-agents-test--title-face "Local")))
+      (org-agents-faces-mode -1)
+      (should (eq font-lock-fontify-region-function
+                  #'org-agents-test--faces-sentinel-region))
+      (should (local-variable-p 'font-lock-fontify-region-function)))))
+
+(defun org-agents-test--faces-sentinel-region (beg end &optional loudly)
+  "Stand in for another mode's `font-lock-fontify-region-function'.
+It fontifies, so that the test can assert the wrap CALLS what it wrapped
+rather than merely recording it."
+  (font-lock-default-fontify-region beg end loudly))
+
+(ert-deftest org-agents-test-faces-mode-refuses-a-non-org-buffer ()
+  "There are no attributes outside Org, and the mode says so rather than arm.
+Off afterwards as well, and with nothing installed: `define-minor-mode'
+sets the variable before the body runs, so a refusal that only signaled
+would leave a mode reporting itself enabled with no keyword behind it.
+`org-agents-mode' is refused the same way, for the same reason."
+  (with-temp-buffer
+    (fundamental-mode)
+    (let ((keywords font-lock-keywords))
+      (should-error (org-agents-faces-mode 1) :type 'user-error)
+      (should-not org-agents-faces-mode)
+      (should (equal keywords font-lock-keywords))
+      (should-not (local-variable-p 'font-lock-fontify-region-function)))))
+
+(ert-deftest org-agents-test-faces-global-arms-every-org-buffer ()
+  "The global variant arms an Org buffer whose text mentions no property.
+Deliberately UNLIKE `global-org-agents-mode', whose predicate is a text
+scan for `:AGENT_QUERY:'.  The values this mode draws from arrive through
+a `:PROTOTYPE:' chain or out of `:ATTR_DEFAULT:', and an entry faced that
+way spells NOTHING AT ALL -- \"grep does not see an inherited value\", and
+neither would a turn-on predicate that grepped.  So the buffer below,
+whose whole content is one bare headline, is the case a text scan would
+miss and is exactly the case the mode exists for.
+
+Affordable because measured: with no registry the apparatus costs a
+regexp scan of the displayed region and nothing else, which is what
+`org-agents-test-faces-with-no-registry-consult-nothing' asserts.
+
+A buffer that is not Org is passed over silently rather than refused: the
+mode's own refusal is for a user who asked for it by name."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      '(("bare.org" . "* Nothing at all\n"))
+    (let ((plain (expand-file-name "plain.txt" dir)))
+      (with-temp-file plain (insert "not org at all\n"))
+      (global-org-agents-faces-mode 1)
+      (unwind-protect
+          (progn
+            (with-current-buffer (find-file-noselect (car files))
+              (should org-agents-faces-mode)
+              (font-lock-ensure)
+              (should (equal '(org-todo org-level-1)
+                             (org-agents-test--title-face "Nothing at all"))))
+            (with-current-buffer (find-file-noselect plain)
+              (should-not org-agents-faces-mode)))
+        (global-org-agents-faces-mode -1))
+      ;; Turning it off disarms what it armed.
+      (with-current-buffer (find-file-noselect (car files))
+        (should-not org-agents-faces-mode)))))
+
+(ert-deftest org-agents-test-faces-flush-reaches-jit-lock ()
+  "The real jit-lock path: enabling and disabling both refresh the buffer.
+The one test here that reaches `font-lock-mode' proper, and it has to
+work for it.  A buffer whose name does not begin with a space, and
+`noninteractive' bound to nil for the length of the call, is what gets
+past the two refusals -- MEASURED, that yields `font-lock-mode' t,
+`jit-lock-mode' t and `font-lock-flush-function' `jit-lock-refontify',
+which is the function that does the work interactively.
+`with-temp-buffer' cannot be used: its buffer is named \" *temp*\".
+
+The buffer is fontified BEFORE the mode is enabled, on purpose.  That is
+what makes this a test of `font-lock-flush': with the region already
+carrying jit-lock's `fontified' property, `jit-lock-fontify-now' skips it
+unless something has cleared it, so a mode that added its keyword without
+flushing would leave the buffer looking exactly as it did before -- and a
+mode that removed its keyword without flushing would leave the face on
+the screen after being turned off."
+  (org-agents-test--with-attr-corpus org-agents-test--faces-registry
+      org-agents-test--faces-corpus
+    (with-current-buffer (find-file-noselect (car files))
+      (let ((noninteractive nil))
+        (font-lock-mode 1))
+      (should font-lock-mode)
+      (should (eq font-lock-flush-function #'jit-lock-refontify))
+      (font-lock-ensure)
+      (should (eq 'org-level-1 (org-agents-test--title-face "Local")))
+      (org-agents-faces-mode 1)
+      (font-lock-ensure)
+      (should (equal '(org-warning org-level-1)
+                     (org-agents-test--title-face "Local")))
+      (org-agents-faces-mode -1)
+      (font-lock-ensure)
+      (should (eq 'org-level-1 (org-agents-test--title-face "Local"))))))
 
 ;;;; Prefilter (ripgrep)
 
