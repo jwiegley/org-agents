@@ -293,7 +293,6 @@
 (require 'org-ql-search)                ; `org-agents-preview' delegates to it
 (require 'org-ql-ext)
 (require 'compile)                      ; `org-agents-check-attributes' report
-(require 'org-colview)                  ; `org-agents-attribute-columns'
 
 ;; `org-ql-select' expands into a call to this, which org-ql does not
 ;; autoload: without the declaration the compiler reports it as possibly
@@ -1746,9 +1745,8 @@ Three kinds of answer, and conflating any two of them is a bug:
                   but a partial answer from a broken tool is not a thing
                   to build on and the live fallback is merely slower.
   t               no pattern was offered, so nothing was narrowed at
-                  all.  Distinct from the empty list, which is the
-                  narrowest possible answer, and what an EMPTY PATTERNS
-                  yields.
+                  all.  What an EMPTY PATTERNS yields, and distinct from
+                  the empty list, which is the narrowest possible answer.
 
 Each pattern is a separate invocation and the resulting file sets are
 INTERSECTED.  Independent runs rather than clever reuse, because they

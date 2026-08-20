@@ -331,6 +331,53 @@ must point at a line that exists therefore walks `org-get-property-block`
 with `org-property-re` and reads `org-entry-get` only where the joined value
 is the thing being judged.
 
+**L17. Enabling `org-mode` over a buffer FOLLOWS its `#+SETUPFILE:`, and
+`org-inhibit-startup` does not stop it.** Measured, with `org-file-contents`
+instrumented: a buffer whose first line is `#+SETUPFILE: /tmp/…/setup.org`
+had that function called on the path **twice** per `(delay-mode-hooks
+(org-mode))`, and with `#+SETUPFILE: /no/such/setup.org` the mode emitted
+`Unable to read file "/no/such/setup.org"` twice and carried on.
+`org-file-contents` (org.el:4862-4892) routes a URL through
+`org--should-fetch-remote-resource-p` and `url-retrieve-synchronously`, so
+the keyword is a fetch and a possible prompt. That is why
+`org-agents--attributes-read` neutralizes the keyword in its own copy of the
+text before enabling the mode: the read happens inside
+`org-property-allowed-value-functions`, where neither a blocking fetch nor a
+question belongs. `org-agents-test-attributes-setupfile-is-not-followed`
+pins it.
+
+**L18. A cache whose KEY is expensive is not a cache for a batch:
+`find-buffer-visiting` walks the whole buffer list and truenames each
+buffer's file name.** So a registry look-up that recomputes
+`org-agents--attributes-cache-key` pays that walk, and
+`org-agents-check-attributes` asks once per drawer line while visiting every
+file in scope — the buffer list growing under it as it goes. Measured, over
+fixture corpora of 20 entries and two linted lines per entry: 200 files cost
+1.57 s with the key computed once per command and 4.43 s with it computed per
+look-up; 600 files cost 4.96 s and 33.93 s. Tripling the corpus cost the
+memoized version 3.2x and the other 7.7x, which is the quadratic term
+showing. Hence `org-agents--with-attributes`, and
+`org-agents-test-check-attributes-reads-the-registry-once`, which asserts
+the count rather than the clock.
+
+**L19. A property drawer BEFORE the first heading is a real property
+block.** Measured: for a file beginning `:PROPERTIES:` / `:WIDGET: x` /
+`:END:` / `#+TITLE: t`, `(org-get-property-block)` at `point-min` answers
+the block's range and `(org-entry-get nil "WIDGET")` answers `"x"` — and
+with `org-use-property-inheritance` on, every entry in the file sees it.
+`org-map-entries` visits no such drawer, because it belongs to no heading,
+so the lint walks it separately.
+
+**L20. `org-columns-compile-format` truncates a column name at anything
+outside `[[:alnum:]_-]`, silently.** Measured: `%HAS=EQ %WITH.DOT{+}`
+compiles to `(("HAS" …) ("WITH" …))` — the names cut at the punctuation and
+the number's `{+}` operator dropped with it — while `org--valid-property-p`
+rejects only whitespace, so Org accepts `WITH.DOT` as a property name and
+the registry can declare it. The character class is org-colview.el's own,
+`(in alnum "_-")` in the `rx` at org-colview.el:1215-1221. Hence
+`org-agents--attribute-column-name-re`, and a refusal rather than an
+always-empty column.
+
 ---
 
 ## 3. Org dynamic blocks

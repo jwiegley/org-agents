@@ -13,6 +13,13 @@
 (require 'ert)
 (require 'org-agents)
 
+;; The shipped code calls nothing in `org-colview'; the COLUMNS format it
+;; generates is a string.  This suite is the only thing that compiles one,
+;; through `org-columns-compile-format' and
+;; `org-columns-summary-types-default', so the library is required HERE
+;; rather than at the package's own load time.
+(require 'org-colview)
+
 ;; Ahead of every test, because a macro used before it is defined is
 ;; compiled as a FUNCTION call: byte-compiling this file said "macro
 ;; `org-agents-test--messages' defined too late", and the gate test that

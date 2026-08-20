@@ -15,8 +15,8 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~4,250 lines), and one
-tests it, `org-agents-test.el` — 266 ERT tests, all of which run in a
+One file makes up the package, `org-agents.el` (~4,400 lines), and one
+tests it, `org-agents-test.el` — 276 ERT tests, all of which run in a
 plain `make test` with no external service. The 25 that exercise the
 prefilter end to end need `rg` on `PATH`, and `make test` says so when it
 is missing.
@@ -605,11 +605,24 @@ Org extensions in the author's init:
              org-agents-update-buffer
              org-agents-update-all
              org-agents-preview
+             org-agents-list-approvals
+             org-agents-check-attributes
+             org-agents-attribute-columns
              org-agents-mode
              global-org-agents-mode)
   ;; Org calls the dynamic-block writer by name, from C-c C-x C-u and from
-  ;; `org-update-all-dblocks', so it has to be autoloaded as well.
-  :autoload (org-dblock-write:org-agents)
+  ;; `org-update-all-dblocks', so it has to be autoloaded as well — and
+  ;; `org-agents-allowed-values' is called by name off one of Org's hooks,
+  ;; from any Org buffer, which is why the `:init' below is safe.
+  :autoload (org-dblock-write:org-agents
+             org-agents-allowed-values)
+  :init
+  ;; Completion of declared attribute values. A library has no business
+  ;; adding itself to a user's hook at load time, so this is yours to add;
+  ;; the symbol is autoloaded, so the package still loads on first use and
+  ;; not at startup.
+  (add-hook 'org-property-allowed-value-functions
+            #'org-agents-allowed-values)
   :bind (("M-s a" . org-agents-preview)
          :map org-mode-map
          ("C-c C-x Q" . org-agents-update))
@@ -624,14 +637,15 @@ not; set it to `require` to be refused rather than kept waiting, or to
 name, or somewhere Emacs's `exec-path` does not reach, name it with
 `org-agents-rg-executable`.
 
-One thing is not turned on for you. Completion of declared attribute
-values is a function on one of Org's own hooks, and a library has no
-business adding itself to a user's hook at load time, so you add it:
-
-```elisp
-(add-hook 'org-property-allowed-value-functions
-          #'org-agents-allowed-values)
-```
+The `add-hook` above is the one thing that is not turned on for you, and
+the `:autoload` line beside it is not decoration. This package has no
+generated autoloads file — all that is required is that its files be on
+`load-path` — so a deferred `use-package` form that adds
+`org-agents-allowed-values` to Org's hook without autoloading that symbol
+breaks `org-set-property` in **every** Org buffer with `void-function
+org-agents-allowed-values`. Adding the hook outside the form, in an init
+that never loads `org-agents` eagerly, has the same effect. Keep the two
+together.
 
 After that, `org-set-property` on a name the registry declares offers the
 values it declares — in every Org buffer, not only in the corpus. A name
@@ -647,15 +661,15 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 266 tests, no external service needed
+make test        # 276 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
 make check       # gate, then test
 ```
 
-`make test` reports `266 tests, 266 results as expected, 0 unexpected` and
+`make test` reports `276 tests, 276 results as expected, 0 unexpected` and
 takes about twenty seconds. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `207 results as expected, 0
+set up. Where `rg` is not on `PATH` it reports `251 results as expected, 0
 unexpected, 25 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
 predecessor report green for months while proving nothing. No test asserts
