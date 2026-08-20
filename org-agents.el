@@ -2246,23 +2246,32 @@ files that are not the corpus.
 Four things about the process are load-bearing, each MEASURED while this
 was written, and each of which was wrong on the first attempt:
 
-  - Completion is SENTINEL-driven.  A loop on `process-live-p' returns as
-    soon as the child dies, which can be before its output has been
-    read.
+  - Completion is SENTINEL-driven, with `process-live-p' as a SECOND
+    signal and a bounded drain after it.  Neither alone is enough, and
+    both halves are measured.  A loop on `process-live-p' alone returns
+    as soon as the child dies, which can be before its output has been
+    read: after the child is reaped, `(process-status proc)' is `exit'
+    while the output buffer is still EMPTY, so answering there answers
+    \"no file matches\" for a run that matched.  And the sentinel alone
+    can never arrive: see the `accept-process-output' item below.
   - stderr goes to a SEPARATE pipe process.  Merged into stdout it
     corrupts the answer: measured, a dangling symlink under `--follow'
     gives exit 2 with one real path on stdout AND a warning line on
     stderr, and glued together the warning becomes a NUL-delimited
     \"path\" that `org-agents--rg-paths' keeps and `org-agents--same-files'
     then silently drops a real file over.
-  - ...and a separate stderr forces JUST-THIS-ONE nil in
-    `accept-process-output'.  Emacs implements `:stderr' as an internal
-    pipe process, and `just-this-one' t forbids reading it, which
-    withholds the main process's own exit handling: measured, every run
-    DEADLOCKS and \"times out\" at the deadline, with `:stderr' as a pipe
-    and as a buffer alike.  So other processes' filters may run during
-    this wait; that is the price and it is stated in
-    `org-agents-rg-timeout'.
+  - ...and a separate stderr forces the wait to be
+    `(accept-process-output nil ...)' -- PROCESS nil, no PROCESS
+    argument at all.  Emacs implements `:stderr' as an internal pipe
+    process, and naming a PROCESS withholds the main process's own exit
+    handling: with `just-this-one' t every run DEADLOCKS at the
+    deadline, and with `just-this-one' nil it deadlocks whenever the
+    child has ALREADY been reaped when this loop starts -- measured,
+    1.8 million iterations in 3.5 s, a hot spin for the whole bound,
+    ending in a successful answer thrown away as an expiry.  With nil
+    the pending sentinel runs on the first call.  The price of nil is
+    that other processes' filters may run during this wait; that is
+    stated in `org-agents-rg-timeout'.
   - the stderr pipe's sentinel is `ignore', or Emacs writes \"Process ...
     stderr finished\" into the buffer and the diagnostic quotes Emacs at
     the user.
@@ -2320,20 +2329,49 @@ the child on every Emacs this package supports."
                             :connection-type 'pipe
                             :noquery t
                             :sentinel (lambda (&rest _) (setq done t)))))
-              ;; `just-this-one' nil: with a separate stderr, t deadlocks.
+              ;; PROCESS is nil, not PROC, and that is the whole of it:
+              ;; MEASURED, `accept-process-output' given PROC returns
+              ;; INSTANTLY and never delivers PROC's sentinel once the
+              ;; child has already been reaped -- 1.8 million iterations
+              ;; in 3.5 s, a hot spin for the whole bound, after which a
+              ;; SUCCESSFUL answer was discarded as an expiry.  A child
+              ;; ripgrep answers in milliseconds hits that window
+              ;; whenever anything delays this loop's first call.  With
+              ;; nil the pending sentinel runs on the first call, and a
+              ;; nil bound then WAITS rather than spins.
               (let ((deadline (and org-agents-rg-timeout
                                    (+ (float-time) org-agents-rg-timeout))))
+                ;; `process-live-p' is a SECOND completion signal, so
+                ;; sentinel delivery is not the only way out of here.
                 (while (and (not done)
+                            (process-live-p proc)
                             (or (null deadline) (< (float-time) deadline)))
-                  (accept-process-output proc 0.05 nil nil)))
+                  (accept-process-output nil 0.05))
+                ;; A process that has exited may still have its output
+                ;; unread and its sentinel undelivered: MEASURED, after
+                ;; the spin above `(process-status proc)' is `exit' while
+                ;; the output buffer is still EMPTY, so answering here
+                ;; without draining would answer "no file matches" for a
+                ;; run that matched.  Bounded, and on nil for the same
+                ;; reason as above.
+                (unless done
+                  (let ((drain (+ (float-time) 1.0)))
+                    (while (and (not done) (< (float-time) drain))
+                      (accept-process-output nil 0.05)))))
               ;; `done' is tested BEFORE anything deletes the process:
               ;; `delete-process' runs the sentinel, which sets `done', so
               ;; a later test could not tell an expiry from an answer.
               (if (not done)
-                  (progn
+                  (let ((live (process-live-p proc)))
                     (delete-process proc)
-                    (message "org-agents: %s timed out after %s s"
-                             org-agents-rg-executable org-agents-rg-timeout)
+                    (if live
+                        (message "org-agents: %s timed out after %s s"
+                                 org-agents-rg-executable
+                                 org-agents-rg-timeout)
+                      ;; Dead, but its output never arrived.  Saying
+                      ;; "timed out" here would name the wrong cause.
+                      (message "org-agents: %s exited without delivering its output"
+                               org-agents-rg-executable))
                     'unavailable)
                 ;; The MAIN process's sentinel can fire before the stderr
                 ;; pipe has delivered what is left in it -- OBSERVED as a

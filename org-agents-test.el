@@ -8718,6 +8718,56 @@ answer, never a wrong one, which is what makes a bound safe to have."
                               msgs)))
       (delete-directory dir t))))
 
+(ert-deftest org-agents-test-rg-run-answers-a-child-already-reaped ()
+  "A run that SUCCEEDED before the wait began is still an answer.
+This is the sharp edge of an asynchronous prefilter and it was a live
+defect: MEASURED, `accept-process-output' given the PROCESS argument
+returns INSTANTLY and never delivers that process's sentinel once the
+child has already been reaped -- 1.8 million iterations in 3.5 s of hot
+spin, and then a correct answer discarded as an expiry, with
+`org-agents: rg timed out' in the echo area.  Every pattern this package
+builds is answered in milliseconds on a warm corpus, so the window is
+the common case rather than a corner: anything that delays the loop's
+first call -- GC, another timer, a busy machine -- lands in it.  It was
+caught in the wild as two different full-suite tests failing at exactly
+30 s, the default bound.
+
+The trigger here is DETERMINISTIC rather than a race run many times: the
+`make-process' stub spins in pure Elisp after spawning, which runs no
+timers, no sentinels and no process output, so the child exits and is
+reaped with its sentinel undelivered -- the exact state the wait loop
+used to meet.  Both halves of the fix are asserted: PROCESS nil, so the
+sentinel arrives at all, and the bounded drain after the loop, without
+which the buffer read here is still EMPTY and a matching run answers
+\"no file matches\"."
+  (let* ((dir (make-temp-file "org-agents-rg" t))
+         (org-agents-rg-executable
+          (org-agents-test--fake-rg (expand-file-name "rg" dir)
+                                    "printf '/c/a.org\\0'"))
+         (org-agents-rg-timeout 3)
+         result msgs (t0 nil) (elapsed nil))
+    (unwind-protect
+        (cl-letf* ((real (symbol-function 'make-process))
+                   ((symbol-function 'make-process)
+                    (lambda (&rest args)
+                      (let ((proc (apply real args)))
+                        (let ((stop (+ (float-time) 0.5)))
+                          (while (< (float-time) stop) nil))
+                        proc))))
+          (setq t0 (float-time))
+          (setq msgs (org-agents-test--messages
+                       (setq result (org-agents--rg-run "PAT" dir))))
+          (setq elapsed (- (float-time) t0))
+          ;; The answer, and the whole answer.  `unavailable' here is the
+          ;; defect, and so is nil -- an empty buffer read before the
+          ;; drain reports "no file matches" for a run that matched.
+          (should (equal result '("/c/a.org")))
+          ;; And it did not burn the bound to get there.
+          (should (< elapsed 2))
+          (should-not (cl-find-if (lambda (m) (string-match-p "timed out" m))
+                                  msgs)))
+      (delete-directory dir t))))
+
 (ert-deftest org-agents-test-rg-run-honours-no-timeout ()
   "Nil is no bound, and it is honoured rather than quietly floored.
 The option exists so that someone on a slow but working filesystem can
