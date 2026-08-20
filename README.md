@@ -168,6 +168,59 @@ agent with no view rather than an error, and takes the default.
 `(ts-inactive :from ...)` over a corpus that holds agents will match the
 agents themselves.
 
+### A file the scope names but nothing can open
+
+A scope may name a file that is not there, or one the permissions refuse.
+Handed such a file, org-ql calls `display-warning` — which *returns* the
+warning text as a string, leaves that string among the buffers it is about
+to map over, and calls `buffer-name` on it. The diagnostic therefore
+arrives as the payload of a type error:
+
+```
+Wrong type argument: bufferp, "Error (org-ql-select): Can't open file: /home/you/org/gone.org"
+```
+
+and one bad path made **every** agent in the buffer fail with what reads
+like a bug in this package. Reproduced for a missing file and for a
+`chmod 000` one, over `agenda`, over an explicit list, and over `all`. It
+is a *fallback-path* fault: ripgrep cannot read an unreadable file either,
+so a narrowed scope never reports one and the type error appeared only
+where the walk was live — the slow path, which is the worst place to meet
+a type error.
+
+The package now checks the list before org-ql sees it, and answers two
+ways, because the two kinds of scope make different promises:
+
+| scope | a file nothing can open |
+| --- | --- |
+| an explicit `AGENT_SCOPE` file list | **refused**: `user-error`, naming the files. You named this file in this agent, so a smaller answer with nothing to say it was smaller is not on offer |
+| `agenda`, a directory, `active`, `all` | **skipped**, with one message naming the scope and the files. These describe a set rather than enumerating it, so one stale path in a list Org maintains — or one root-owned stray in the corpus — must not break every agent in the buffer |
+
+Never silent either way: the message is the whole difference between a
+skip and a drop. `org-agents-preview` reaches org-ql with a file list too,
+met the same type error, and is guarded the same way — its scope is
+`agenda` by construction, so unreadable files there are skipped and named.
+
+The test is "readable, **or** already visited", which mirrors org-ql's own
+rule rather than inventing a stricter one. Measured: a file visited while
+readable and then made unreadable has `file-readable-p` nil,
+`find-buffer-visiting` non-nil, and org-ql over it works and returns its
+match. A bare `file-readable-p` gate would newly refuse something that
+works today.
+
+If you set `org-agenda-skip-unavailable-files` to `t` — as the author
+does — Org has already filtered the list and this package has nothing to
+say about it, and says nothing. Everything here is about the Emacs default
+of `nil`.
+
+Cost, measured over a 3,639-file `active` scope: 0.465 s, against 0.265 s
+for the recursive walk that produced the list and the ten-odd seconds
+org-ql then spends opening those files. So it is *not* negligible against
+the walk — it is roughly twice it — and it is negligible against the read
+it precedes, which is the comparison that matters, because the check only
+ever runs on the list org-ql is about to open. On a narrowed scope the
+list is short and so is the check.
+
 ## The attribute registry
 
 An agent's vocabulary is the package's own — `AGENT_QUERY`, `AGENT_VIEW`,

@@ -315,6 +315,19 @@
 ;; genuinely matches nothing renders zero matches rather than reporting a
 ;; broken prefilter.
 ;;
+;; A file the scope NAMES but nothing can open is reported by this package
+;; rather than by org-ql, and the two kinds of scope get different answers:
+;; an explicit `:AGENT_SCOPE:' file list is REFUSED, naming the files,
+;; because the user named them in this agent; `agenda', a directory,
+;; `active' and `all' SKIP, with one message naming the scope and the
+;; files, because they describe a set rather than enumerating it and one
+;; stale path must not break every agent in the buffer.  Never silently.
+;; Handed such a file, org-ql calls `display-warning', which returns the
+;; warning text as a string and leaves it among the buffers it maps
+;; `buffer-name' over, so the diagnostic used to arrive as `Wrong type
+;; argument: bufferp, "Error (org-ql-select): Can not open file: ..."'.
+;; See `org-agents--readable-files'.
+;;
 ;; Only conjuncts whose ripgrep answer is provably a superset of org-ql's
 ;; are pushed into the prefilter; everything else stays residual and is
 ;; applied by org-ql.  A broad `org-use-property-inheritance' -- `t' most
@@ -2407,6 +2420,88 @@ than the file list."
        path))
     (_ nil)))
 
+(defconst org-agents--unreadable-shown 5
+  "How many unreadable file names a scope diagnostic spells out.
+The usual case is one stale path, and naming it is the whole point.  A
+root-owned corpus could put thousands in one message, so the rest are
+counted instead of listed.")
+
+(defun org-agents--unreadable-text (files)
+  "FILES named for a diagnostic: at most `org-agents--unreadable-shown' of them."
+  (let ((shown (take org-agents--unreadable-shown files))
+        (extra (- (length files) org-agents--unreadable-shown)))
+    (concat (mapconcat #'abbreviate-file-name shown ", ")
+            (when (> extra 0) (format ", and %d more" extra)))))
+
+(defun org-agents--readable-files (scope files)
+  "The members of FILES something can open, with the rest named once.
+Handed a file it cannot open, `org-ql-select' calls `display-warning',
+which RETURNS the warning text as a string; that string is left in the
+list org-ql then maps `buffer-name' over, so the diagnostic arrives as
+the payload of a type error -- `Wrong type argument: bufferp, \"Error
+\(org-ql-select): Can\\='t open file: ...\"' -- and one bad path makes
+EVERY agent in the buffer fail with what reads like a bug in this
+package.  REPRODUCED for a missing file and for a `chmod 000' one, over
+`agenda', over an explicit list, and over `all'.  It is a fallback-path
+fault: ripgrep cannot read an unreadable file either, so a narrowed scope
+never reports one and the type error appears only where the walk is live.
+
+Two answers, because the two kinds of scope make different promises:
+
+  - An explicit list of file names is a HARD `user-error' naming the
+    files.  The user named this file IN THIS AGENT; rendering a smaller
+    answer with nothing to say it was smaller is the failure mode this
+    package refuses everywhere else.
+  - `agenda', a directory, `active' and `all' SKIP, with one message
+    naming the files and the scope.  These describe a set rather than
+    enumerating it -- `org-agenda-files' is a list Org maintains and
+    filters -- so one stale entry, or one root-owned stray in the corpus,
+    must not break every agent in the buffer.  The precedent is inside
+    this package: `org-agents--agent-files' already drops an unreadable
+    file, and `org-agents--attr-findings' names one and continues.
+
+Never silent either way: the message is the whole difference between a
+skip and a drop.
+
+The test is `(or (file-readable-p f) (find-buffer-visiting f))' and BOTH
+halves are needed.  MEASURED: a file visited while readable and then
+`chmod 000' has `file-readable-p' nil, `find-buffer-visiting' non-nil,
+and `org-ql-select' over it works and returns its match -- so a bare
+`file-readable-p' would newly refuse something that works today.  This
+mirrors org-ql's own rule rather than inventing a stricter one.
+`file-readable-p' is asked FIRST because it is one stat, where
+`find-buffer-visiting' may compare truenames and file attributes against
+every buffer in the session; ordered this way the expensive half runs
+only for the file that is about to be reported.
+
+Cost, MEASURED over the author's 3,639-file `active' scope: 0.465 s,
+against 0.265 s for the `directory-files-recursively' walk that produced
+the list and the ten-odd seconds org-ql then spends opening those files.
+So it is NOT negligible against the walk -- it is roughly twice it -- and
+it is negligible against the read it precedes, which is the comparison
+that matters, because this only ever runs on the list org-ql is about to
+open.  On a narrowed scope the list is small and so is the check."
+  (if (cl-every (lambda (f) (or (file-readable-p f) (find-buffer-visiting f)))
+                files)
+      ;; `eq', so the common path allocates nothing and no caller can tell
+      ;; this ran.
+      files
+    (let ((good nil) (bad nil))
+      (dolist (f files)
+        (if (or (file-readable-p f) (find-buffer-visiting f))
+            (push f good)
+          (push f bad)))
+      (setq good (nreverse good) bad (nreverse bad))
+      (if (and (listp scope) (cl-every #'stringp scope))
+          (user-error
+           (concat "org-agents: :AGENT_SCOPE: names %d file(s) that cannot"
+                   " be read, so this agent is not answered: %s")
+           (length bad) (org-agents--unreadable-text bad))
+        (message (concat "org-agents: scope `%s' names %d file(s) that cannot"
+                         " be read; they are skipped: %s")
+                 scope (length bad) (org-agents--unreadable-text bad))
+        good))))
+
 (defun org-agents--same-files (base candidates)
   "Return the members of BASE that CANDIDATES names too.
 Names are compared as truenames.  `org-directory' is commonly itself a
@@ -2544,12 +2639,20 @@ exists to make unnecessary."
 (defun org-agents--scope-files (agent)
   "Resolve AGENT's scope to files, narrowing an unbounded scope with ripgrep.
 `org-agents--narrowed-files' over the patterns AGENT's query offers, and
-every word of that function's contract holds here unchanged."
-  (org-agents--narrowed-files
+every word of that function's contract holds here unchanged.
+
+The answer then passes through `org-agents--readable-files', which is
+where a file nothing can open is named rather than reaching org-ql to
+become a type error.  It is applied to the FINAL list and not to the base
+one: a narrowed scope's list is short, and an unnarrowed one's list is
+exactly the set org-ql is about to open."
+  (org-agents--readable-files
    (plist-get agent :scope)
-   (org-agents--rg-conjunct-patterns
-    (org-agents--prefilter-conjuncts (plist-get agent :query)))
-   "conjunct" t))
+   (org-agents--narrowed-files
+    (plist-get agent :scope)
+    (org-agents--rg-conjunct-patterns
+     (org-agents--prefilter-conjuncts (plist-get agent :query)))
+    "conjunct" t)))
 
 (defun org-agents--self-match-p (element marker)
   "Non-nil when ELEMENT is the very entry MARKER points at.
@@ -5278,7 +5381,16 @@ beside the requires for what that does and does not buy."
   (let* ((query (org-agents--expand
                  (org-agents--read-sexp "the query" query-string)))
          (form (org-agents--effective-query query))
-         (files (org-agenda-files)))
+         ;; A preview reaches org-ql with a file list too, so it meets the
+         ;; same type error an agent did: REPRODUCED, `wrong-type-argument
+         ;; bufferp "Error (org-ql-select): Can't open file: ..."' from
+         ;; `org-agents-preview' over an `org-agenda-files' holding one
+         ;; path that is not there.  `agenda' is the scope by
+         ;; construction, so the unreadable ones are skipped and named
+         ;; rather than refused -- see `org-agents--readable-files'.  Where
+         ;; that leaves nothing, the empty-agenda `user-error' below is
+         ;; still what the user reads, after the message that said why.
+         (files (org-agents--readable-files 'agenda (org-agenda-files))))
     (unless (org-agents--gate form)
       (user-error "org-agents: query not approved"))
     ;; Handed no files, `org-ql-search' searches the current buffer -- so a

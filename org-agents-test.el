@@ -4303,6 +4303,86 @@ common, and the agent would silently match nothing at all."
             ;; user reads and the link that will be followed.
             (should (equal (list link) (org-agents--scope-files agent)))))))))
 
+(ert-deftest org-agents-test-scope-names-an-unreadable-file ()
+  "A file a scope names but nothing can open is reported BY NAME, once.
+Handed one, `org-ql-select' calls `display-warning', which RETURNS the
+warning text as a string, leaves that string in its list of buffers, and
+calls `buffer-name' on it -- so the diagnostic arrives as the payload of
+`Wrong type argument: bufferp, \"Error (org-ql-select): Can\\='t open
+file: ...\"', and every agent in the buffer fails with a type error that
+reads like a bug in this package.  REPRODUCED for a missing file and for
+a `chmod 000' one, over `agenda', an explicit list, and `all'.
+
+The two halves of the decision, which are deliberately different:
+
+  - An explicit `:AGENT_SCOPE:' file list is a HARD `user-error'.  The
+    user named this file in this agent; dropping it would render a
+    smaller answer with nothing to say it was smaller.
+  - `agenda', a directory, `active' and `all' SKIP, with one message
+    naming the files.  These describe a set rather than enumerating it,
+    and one stale path in a list Org maintains -- or one root-owned stray
+    in the corpus -- must not break every agent in the buffer.  Never
+    silent: the message is the difference between a skip and a drop.
+
+`org-agenda-skip-unavailable-files' at `t' has already filtered the list,
+so that configuration must be untouched -- the fourth arm asserts the
+package says nothing at all there."
+  (org-agents-test--with-corpus
+    (let ((missing (expand-file-name "nope.org" dir))
+          (query '(and (todo) (property "NEXT_REVIEW"))))
+      (with-current-buffer (find-file-noselect agent-file)
+        (goto-char (point-min))
+        (let ((base (org-agents--read-agent)))
+          ;; 1. `agenda' at the Emacs default: skipped, named once, and the
+          ;; match from the readable file still arrives.
+          (let* ((agent (plist-put (copy-sequence base) :scope 'agenda))
+                 (org-agenda-files (list a missing))
+                 (org-agenda-skip-unavailable-files nil)
+                 matches
+                 (msgs (org-agents-test--messages
+                         (setq matches (org-agents--collect agent)))))
+            (should (= 1 (length matches)))
+            (should (= 1 (length (cl-remove-if-not
+                                  (lambda (m) (string-match-p (regexp-quote missing) m))
+                                  msgs))))
+            (should (cl-find-if (lambda (m) (string-match-p "agenda" m)) msgs)))
+          ;; 2. An explicit list naming the same file: refused, by name.
+          (let* ((agent (plist-put (copy-sequence base) :scope (list a missing)))
+                 (err (should-error (org-agents--collect agent) :type 'user-error)))
+            (should (string-match-p (regexp-quote missing)
+                                    (error-message-string err))))
+          ;; 3. `org-agenda-skip-unavailable-files' t: Org filtered the list
+          ;; already, so this package has nothing to say and says nothing.
+          (let* ((agent (plist-put (copy-sequence base) :scope 'agenda))
+                 (org-agenda-files (list a missing))
+                 (org-agenda-skip-unavailable-files t)
+                 matches
+                 (msgs (org-agents-test--messages
+                         (setq matches (org-agents--collect agent)))))
+            (should (= 1 (length matches)))
+            (should-not (cl-find-if (lambda (m) (string-match-p "cannot be read" m))
+                                    msgs)))
+          ;; 4. A file visited while readable and then made unreadable still
+          ;; renders its match, in an EXPLICIT list where a false alarm
+          ;; would be a `user-error'.  MEASURED: `file-readable-p' is nil,
+          ;; `find-buffer-visiting' is non-nil, and `org-ql-select' over it
+          ;; works -- so the predicate is `(or (find-buffer-visiting f)
+          ;; (file-readable-p f))', mirroring org-ql's own rule, and a bare
+          ;; `file-readable-p' would newly refuse what works today.
+          (let ((visited (expand-file-name "visited.org" dir)))
+            (with-temp-file visited
+              (insert "* TODO Visited\n:PROPERTIES:\n"
+                      ":NEXT_REVIEW: [2020-01-01 Wed]\n:END:\n"))
+            (find-file-noselect visited)
+            (set-file-modes visited #o000)
+            (unwind-protect
+                (let ((agent (plist-put (copy-sequence base)
+                                        :scope (list visited))))
+                  (should-not (file-readable-p visited))
+                  (should (find-buffer-visiting visited))
+                  (should (= 1 (length (org-agents--collect agent)))))
+              (set-file-modes visited #o644))))))))
+
 (ert-deftest org-agents-test-collect-applies-exclusion-and-todo ()
   (org-agents-test--in-agent
     (let* ((agent (org-agents--read-agent))
@@ -6163,21 +6243,32 @@ all, so an update over a file set stopped silently partway through."
     ;; A preview searches the agenda, so the fixture has to supply one:
     ;; batch implies `-q', which leaves `org-agenda-files' empty, and a
     ;; preview refuses that rather than searching the current buffer.
-    (cl-letf (((symbol-function 'org-agenda-files) (lambda (&rest _) '("a.org")))
-              ((symbol-function 'org-ql-search)
-               (lambda (fs query &rest _) (setq files fs received query))))
-      (org-agents-preview "(todo)")
-      (should (equal received `(and (todo) ,org-agents-exclude)))
-      (should (equal files '("a.org")))
-      ;; The `$PROP' layer is expanded exactly as an agent's query is.
-      (org-agents-preview "(and (todo) $URL)")
-      (should (equal received
-                     `(and (and (todo) (property "URL")) ,org-agents-exclude)))
-      ;; And with the exclusion off, the query alone: nil conjoined here
-      ;; would be a clause that never matches.
-      (let ((org-agents-exclude nil))
-        (org-agents-preview "(todo)")
-        (should (equal received '(todo)))))))
+    ;;
+    ;; The file is a REAL one, and it has to be.  The fixture named
+    ;; \"a.org\" for as long as `org-ql-search' was stubbed and nothing ever
+    ;; tried to open it -- but a preview now checks its file list for
+    ;; readability before org-ql sees it, exactly as an agent's scope is
+    ;; checked, so a name that is not there is skipped and named and the
+    ;; list arrives empty.  See `org-agents--readable-files'.
+    (let ((real (make-temp-file "org-agents-preview" nil ".org"
+                                "* TODO Something\n")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-agenda-files) (lambda (&rest _) (list real)))
+                    ((symbol-function 'org-ql-search)
+                     (lambda (fs query &rest _) (setq files fs received query))))
+            (org-agents-preview "(todo)")
+            (should (equal received `(and (todo) ,org-agents-exclude)))
+            (should (equal files (list real)))
+            ;; The `$PROP' layer is expanded exactly as an agent's query is.
+            (org-agents-preview "(and (todo) $URL)")
+            (should (equal received
+                           `(and (and (todo) (property "URL")) ,org-agents-exclude)))
+            ;; And with the exclusion off, the query alone: nil conjoined here
+            ;; would be a clause that never matches.
+            (let ((org-agents-exclude nil))
+              (org-agents-preview "(todo)")
+              (should (equal received '(todo)))))
+        (delete-file real)))))
 
 (ert-deftest org-agents-test-preview-refuses-an-empty-agenda ()
   "A preview with no agenda files must not fall back to the current buffer.
@@ -6237,6 +6328,31 @@ does and `org-ql-search' is reached."
           (org-agents-exclude '(shell-command "touch /tmp/pwned")))
       (let ((err (should-error (org-agents-preview "(todo)") :type 'user-error)))
         (should (string-match-p "not approved" (error-message-string err)))))))
+
+(ert-deftest org-agents-test-preview-names-an-unreadable-agenda-file ()
+  "A preview reaches org-ql with a file list too, and met the same type error.
+REPRODUCED: `org-agents-preview' over an `org-agenda-files' holding one
+path that is not there signalled `wrong-type-argument bufferp \"Error
+\(org-ql-select): Can\\='t open file: ...\"' -- the same defect
+`org-agents-test-scope-names-an-unreadable-file' pins for an agent, one
+entry point away.  A preview's scope is `agenda' by construction, so the
+answer is the `agenda' answer: skipped, named once, and the readable file
+still searched."
+  (let ((real (make-temp-file "org-agents-preview" nil ".org" "* TODO Something\n"))
+        (missing (expand-file-name "nope.org" (make-temp-file "org-agents-gone" t)))
+        files)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-agenda-files)
+                   (lambda (&rest _) (list real missing)))
+                  ((symbol-function 'org-ql-search)
+                   (lambda (fs &rest _) (setq files fs))))
+          (let ((msgs (org-agents-test--messages (org-agents-preview "(todo)"))))
+            (should (equal files (list real)))
+            (should (cl-find-if (lambda (m)
+                                  (and (string-match-p (regexp-quote missing) m)
+                                       (string-match-p "cannot be read" m)))
+                                msgs))))
+      (delete-file real))))
 
 (ert-deftest org-agents-test-preview-requires-org-ql-search-lazily ()
   "`org-ql-search' is this file's dependency for ONE command, so one command
