@@ -3044,6 +3044,70 @@ CLOCK: [2020-01-01 Wed 10:00]
     (org-agents-check-attributes 'all)
     (should (equal '("REALONE") (org-agents-test--attr-undeclared-names)))))
 
+(ert-deftest org-agents-test-attr-lint-asks-no-question ()
+  "The lint opens files the user never named, so it must not ask about one.
+A QUESTION is not an error, and that is the whole of it: neither the
+`ignore-errors' in the confirmation pass nor the `condition-case' in the
+value walk covers `find-file-noselect' stopping to ask.  MEASURED before
+the fix, over a corpus holding one 11,000,037-byte file:
+`org-agents-check-attributes' printed \"File big.org is large (10 MiB),
+really open?\" and under `--batch' with stdin at /dev/null never returned
+-- `read-answer' loops on EOF rather than signalling.
+
+A TRIPWIRE rather than a giant fixture: `large-file-warning-threshold' is
+bound low enough that every file in the corpus is \"large\", and the
+functions Emacs asks with are counted.  So this test cannot hang even
+when it fails, and it fails on the count rather than on a timeout -- the
+stubs ANSWER, so every other assertion here still holds and only
+`prompts' distinguishes the fixed code from the broken code.
+
+`read-multiple-choice' is the one that matters, and reading the source
+was necessary rather than optional: `files--ask-user-about-large-file'
+asks through it whenever OFFER-RAW is set, which visiting a file does,
+and through `y-or-n-p' otherwise.  A tripwire on `read-answer' -- the
+plausible guess -- catches NEITHER, and a test built on it would have
+hung instead of failing.
+
+Both file loops are covered, because both had the defect: the census's
+confirmation pass on the fast path, and the value tier's walk on the
+explicit-list path."
+  (skip-unless (executable-find "rg"))
+  (let ((prompts 0))
+    (cl-letf (((symbol-function 'read-multiple-choice)
+               (lambda (&rest _) (cl-incf prompts) '(?y "yes")))
+              ((symbol-function 'read-answer)
+               (lambda (&rest _) (cl-incf prompts) "yes"))
+              ((symbol-function 'y-or-n-p)
+               (lambda (&rest _) (cl-incf prompts) t)))
+      (org-agents-test--with-attr-corpus org-agents-test--registry-example
+          '(("one.org" . "\
+* E
+:PROPERTIES:
+:WIDGET: x
+:STATUS: open
+:END:
+"))
+        (let ((large-file-warning-threshold 10))
+          ;; The fast path: ripgrep answers the vocabulary and the
+          ;; confirmation pass opens the file to prove one candidate.
+          (org-agents-check-attributes 'all)
+          (should (member "WIDGET" (org-agents-test--attr-undeclared-names)))
+          ;; The buffers the first run left VISITED are killed between the
+          ;; two, or the second run finds them and `find-file-noselect'
+          ;; never reaches the size check at all -- which would leave the
+          ;; walk's own file loop untested.  MEASURED: one prompt without
+          ;; this, two with it, on the broken code.
+          (dolist (buf (buffer-list))
+            (when-let* ((f (buffer-file-name buf)))
+              (when (member f files)
+                (with-current-buffer buf (set-buffer-modified-p nil))
+                (kill-buffer buf))))
+          ;; The walk: an explicit file list names its files, and the
+          ;; value tier reads every one of them.
+          (org-agents-check-attributes files)
+          (should (member "WIDGET" (org-agents-test--attr-undeclared-names))))
+        (should (= 0 prompts))))))
+
 (ert-deftest org-agents-test-attr-census-pattern-is-printable-ascii ()
   "The census pattern is printable ASCII, like every other pushed pattern.
 Same rule as `org-agents-test-attr-drawer-pattern-is-printable-ascii' and

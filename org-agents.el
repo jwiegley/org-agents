@@ -3757,6 +3757,37 @@ consulted, because that function clobbers it -- the same hazard
       (when (and block (>= here (car block)) (< here (cdr block)))
         (string-remove-suffix "+" key)))))
 
+(defun org-agents--attr-visit (file)
+  "Visit FILE for the attribute lint, without asking the user anything.
+`find-file-noselect' with nothing bound, which is how both of this
+command's file loops used to open a file, can ASK A QUESTION -- and a
+question is not an error, so neither `ignore-errors' nor a
+`condition-case' on `error' covers it.  MEASURED, with a corpus holding
+one 11,000,037-byte file whose only undeclared name was in it:
+`M-x org-agents-check-attributes' printed
+
+  File big.org is large (10 MiB), really open? ([Y]es, [N]o, [L]iterally, [?]):
+
+and stopped there -- under `--batch', with stdin at /dev/null, forever,
+because `read-answer' loops on EOF rather than signalling.  So a lint
+over a scope the user described rather than enumerated could stop to ask
+about a file they never named, or never return at all.
+
+`large-file-warning-threshold' nil is what removes it: the file is READ,
+which is this command's whole job, and the cost is bounded by the file
+rather than by a user who may not be there.  `10 MiB' is the default
+threshold and the largest `.org' file on the author's corpus is 1.8 MB,
+so nothing here trips it today -- the point is that the answer does not
+depend on that.
+
+What this CANNOT suppress, and does not pretend to: a question asked by
+the user's own `find-file-hook' -- org-crypt's passphrase prompt is the
+realistic one.  Binding that hook to nil would leave the buffer, which
+stays visited in the user's session, set up differently from every other
+buffer they open, which is a worse trade than a prompt they can answer."
+  (let ((large-file-warning-threshold nil))
+    (find-file-noselect file)))
+
 (defun org-agents--attr-confirm-candidate (candidate)
   "Confirm CANDIDATE is a property really in use, as `(NAME FILE LINE)'.
 CANDIDATE is `(KEY COUNT (FILE LINE...)...)' as `org-agents--attr-census-rg'
@@ -3769,7 +3800,10 @@ at, and the name as Emacs decoded it.
 
 A file that cannot be read is skipped rather than reported: the census
 already knows the name is in that file, and a file the OS refuses would
-have made ripgrep exit 2 and sent the whole run down the live walk."
+have made ripgrep exit 2 and sent the whole run down the live walk.  The
+file is opened through `org-agents--attr-visit', because a QUESTION is
+not an error and the `ignore-errors' here does not cover one -- see that
+function for the prompt this used to reach."
   (let ((groups (cddr candidate))
         (opened 0)
         (answer nil))
@@ -3779,7 +3813,7 @@ have made ripgrep exit 2 and sent the whole run down the live walk."
              (lines (cddr group)))
         (cl-incf opened)
         (ignore-errors
-          (with-current-buffer (find-file-noselect file)
+          (with-current-buffer (org-agents--attr-visit file)
             (org-with-wide-buffer
              (dolist (line lines)
                (unless answer
@@ -4168,13 +4202,17 @@ kill came from, and it was never Org parsing: the same corpus's walk with
 no findings built at all is 38.59 s.
 
 The per-file `condition-case' is the same guard `org-agents-update-all'
-carries and for the same reason: `find-file-noselect' can fail or ask a
-question of its own -- a file grown past `large-file-warning-threshold',
-one changed on disk since it was last visited, a coding system that
-cannot decode it -- and one such file must not take the whole run with
-it.  The file is NAMED, on a line of the same navigable shape, so the
-report says what it could not read rather than quietly reading less than
-it was asked to.
+carries and for the same reason: opening a file can fail -- one changed
+on disk since it was last visited, a coding system that cannot decode it
+-- and one such file must not take the whole run with it.  The file is
+NAMED, on a line of the same navigable shape, so the report says what it
+could not read rather than quietly reading less than it was asked to.
+
+What this `condition-case' does NOT cover is a QUESTION, because a
+question is not an error: `find-file-noselect' asking about a file past
+`large-file-warning-threshold' stopped the whole lint dead, and under
+`--batch' never returned at all.  `org-agents--attr-visit' is what opens
+the file, and it is where that is measured.
 
 A PROGRESS REPORTER over the file loop where there are more than
 `org-agents--attr-progress-threshold' files.  A command that reads
@@ -4194,7 +4232,7 @@ reporter the cost."
                         0 (length files)))))
     (dolist (file files)
       (condition-case err
-          (with-current-buffer (find-file-noselect file)
+          (with-current-buffer (org-agents--attr-visit file)
             (pcase-let ((`(,n . ,fs) (org-agents--attr-buffer-findings
                                       file declared census)))
               (cl-incf entries n)
