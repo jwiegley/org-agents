@@ -2299,6 +2299,42 @@ a hash table keyed by file name: `org-agents-attributes-file' names ONE
 file, and a table keyed on it would grow one entry that never got a
 second.")
 
+(defvar org-agents--attributes-fresh nil
+  "Non-nil while `org-agents--attributes-cache' is known to be up to date.
+Bound by `org-agents--with-attributes' and by nothing else, around a
+BATCH of look-ups that all want the same answer.
+
+The cache hit itself is one `equal', but computing the key it is compared
+against is not free: `org-agents--attributes-cache-key' calls
+`file-truename' and `find-buffer-visiting', and the second of those walks
+the whole buffer list and truenames each buffer's file name.  And
+`org-agents-check-attributes' looks a name up once per drawer line while
+visiting every file in scope, so the buffer list grows under it as it
+goes and the cost of the key alone grows as the square of the corpus.
+MEASURED, over fixture corpora of 20 entries and two linted lines each:
+200 files cost 1.57 s with the key computed once per command and 4.43 s
+with it computed per look-up; 600 files cost 4.96 s and 33.93 s.
+
+Within one batch that is not merely faster but no less correct: the
+registry cannot be edited by the user in the middle of a synchronous
+command, and this package never writes it.")
+
+(defmacro org-agents--with-attributes (&rest body)
+  "Run BODY with the registry read at most once, however often it is asked.
+The key is computed and the cache brought up to date ONCE, here, and
+every `org-agents-attribute' and `org-agents-attributes' inside BODY then
+answers from it with no further look at the file system -- see
+`org-agents--attributes-fresh' for what that saves and why it is sound.
+
+For a batch of look-ups over a corpus.  A single completion needs nothing
+of this: it wants the freshest answer there is, which is what the cache
+gives it unwrapped."
+  (declare (indent 0) (debug t))
+  `(progn
+     (org-agents--attributes-alist)
+     (let ((org-agents--attributes-fresh t))
+       ,@body)))
+
 (defun org-agents--attr-warn (name file reason)
   "Say that the registry entry NAME in FILE is REASON.
 Said once per edit to the registry however many times a declaration is
@@ -2612,7 +2648,19 @@ buffer.
 The unreadable branch CLEARS the cache rather than answering from it.  A
 registry that has been deleted declares nothing from that moment, and
 going on answering what it used to say would be a stale answer with no
-way back to a true one."
+way back to a true one.
+
+Inside `org-agents--with-attributes' the key is not recomputed at all:
+the batch established it once on entry, and recomputing it per look-up is
+what made a corpus-wide lint quadratic."
+  (if org-agents--attributes-fresh
+      (cdr org-agents--attributes-cache)
+    (org-agents--attributes-alist-1)))
+
+(defun org-agents--attributes-alist-1 ()
+  "Read `org-agents--attributes-alist' answer, consulting the file system.
+Split out so that the fresh-cache short circuit above it is one branch
+and this is the whole of the work it skips."
   (let* ((file (expand-file-name org-agents-attributes-file))
          (key (org-agents--attributes-cache-key file)))
     (cond
@@ -3000,15 +3048,27 @@ the option rebound behind the user's back -- see the REFUSE argument of
 The findings go into a `compilation-mode' buffer, one per line, each
 `FILE:LINE:' and so navigable with `RET' and `next-error'.  A run with
 nothing to report says so there, with its counts, rather than popping an
-empty buffer."
+empty buffer.
+
+Every file in scope is left VISITED, as `org-agents-update-all' leaves
+the files it wrote to.  Over a corpus that is thousands of buffers, and
+nothing here reaps them: killing a buffer this command opened would be
+indistinguishable, from inside, from killing one the user had open
+already.  `M-x org-agents-check-attributes' over `all' is therefore a
+command with a footprint, and README's \"Honest limitations\" says so.
+
+The registry is read ONCE for the whole run -- see
+`org-agents--with-attributes'.  Recomputing the cache key per look-up
+made the run quadratic in the corpus."
   (interactive
    (list (org-agents--read-scope
           (completing-read "Scope: " org-agents--scope-names nil nil
                            "agenda"))))
-  (let* ((files (org-agents--narrowed-files
-                 scope (list org-agents--rg-drawer-pattern) "pattern" nil))
-         (found (org-agents--attr-findings files)))
-    (org-agents--attr-report (cdr found) files (car found))))
+  (let ((files (org-agents--narrowed-files
+                scope (list org-agents--rg-drawer-pattern) "pattern" nil)))
+    (org-agents--with-attributes
+      (let ((found (org-agents--attr-findings files)))
+        (org-agents--attr-report (cdr found) files (car found))))))
 
 ;; The `COLUMNS' generator, and the one thing this epic does NOT build.
 ;;

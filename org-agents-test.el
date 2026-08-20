@@ -2341,6 +2341,63 @@ the lint had blessed."
     (org-agents-check-attributes files)
     (should-not (org-agents-test--attr-finding-lines))))
 
+(ert-deftest org-agents-test-check-attributes-reads-the-registry-once ()
+  "The registry is read -- and its cache KEY computed -- once per run.
+The hit itself is one `equal', but the key it is compared against costs a
+`file-truename' and a `find-buffer-visiting', and the second walks the
+whole buffer list and truenames each buffer's file name.  The lint asks
+for a declaration once per drawer line, after visiting every file in
+scope, so a key computed per look-up makes the command quadratic in the
+corpus: MEASURED, 200 files of 20 entries took 4.43 s against 1.57 s, and
+600 files 33.93 s against 4.96 s -- tripling the corpus cost the memoized
+version 3.2x and the other 7.7x, which is the quadratic term showing.
+
+Asserted as a COUNT rather than as a duration, and asserted twice over: a
+corpus with six times the property lines must cost the same one key."
+  (let ((keys 0)
+        (real (symbol-function 'org-agents--attributes-cache-key)))
+    (cl-letf (((symbol-function 'org-agents--attributes-cache-key)
+               (lambda (&rest args) (cl-incf keys) (apply real args))))
+      (org-agents-test--with-attr-corpus org-agents-test--registry-example
+          '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:STATUS: open
+:REVIEWS: 3
+:END:
+"))
+        (org-agents-check-attributes files)
+        (should (= 1 keys)))
+      (setq keys 0)
+      (org-agents-test--with-attr-corpus org-agents-test--registry-example
+          '(("a.org" . "\
+* Entry
+:PROPERTIES:
+:STATUS: open
+:REVIEWS: 3
+:OPEN: true
+:WIDGET: x
+:END:
+* Another
+:PROPERTIES:
+:STATUS: wip
+:REVIEWS: 4
+:OPEN: false
+:GADGET: y
+:END:
+")
+            ("b.org" . "\
+* Third
+:PROPERTIES:
+:STATUS: done
+:REVIEWS: 5
+:OPEN: true
+:DOODAD: z
+:END:
+"))
+        (org-agents-check-attributes files)
+        (should (= 1 keys))))))
+
 (ert-deftest org-agents-test-check-attributes-accumulated-and-lower-case-keys ()
   "A key is looked up as Org looks one up, and an accumulation is named.
 Two things Org does that a naive walk gets wrong, both MEASURED against

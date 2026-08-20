@@ -320,6 +320,10 @@ hold no declared name at all. Unlike an agent, the linter is never refused
 that declined to run would be failing its own contract rather than saving
 anyone an expense.
 
+It also *opens* nearly all of that corpus, and leaves it open: every file
+in scope comes out of the run visited by a buffer, and nothing here reaps
+them. See "Honest limitations" for what to do about it.
+
 **3. Column formats.** `M-x org-agents-attribute-columns` reads attribute
 names and returns a `COLUMNS` format built from their declarations; with a
 prefix argument it writes it into the entry at point's `:COLUMNS:` property,
@@ -842,6 +846,27 @@ candidate set. `RIPGREP_CONFIG_PATH` is unset for the child, because
 ripgrep prepends that file's arguments to the command line and the
 package's own flags do not override `--max-depth`, `--max-filesize`,
 `--pre`, `--encoding` or `--glob`.
+
+### 5. A corpus-scope lint leaves every file in scope visited
+
+`org-agents-check-attributes` opens each file with `find-file-noselect`,
+as `org-agents-update-all` does, and kills nothing afterwards: a buffer
+this command opened is indistinguishable, from inside, from one you had
+open already. But an update visits only what `org-agents-files` names —
+one file by default — while this is the first command here whose scope can
+be `all`, and its `^[ \t]*:PROPERTIES:` pattern narrows a property-heavy
+corpus barely at all. Measured: a 13-file scope went from 0 visited Org
+buffers to 13. On a corpus of a few thousand files that is a few thousand
+buffers, with no message saying so.
+
+They are ordinary file buffers, unmodified because the lint edits nothing,
+so nothing is at risk — but memory and every buffer-list operation
+afterwards feel it, and the report's findings are navigable whether or not
+the buffers stay. The remedy is the ordinary one: kill the unmodified Org
+buffers once you have worked through the report, with
+`clean-buffer-list`, with `M-x ibuffer` and `* u`, or by restarting the
+session you ran the seeding lint in. Run the `all` scope deliberately
+rather than casually.
 
 ### Others, less sharp
 
