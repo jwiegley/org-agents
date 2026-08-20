@@ -609,7 +609,12 @@ $ref sits in a position the expander has no reading for, and would
 otherwise reach org-ql as a void variable at match time."
   (org-agents--check-head-spelling form)
   (when-let* ((ref (org-agents--leftover-ref form)))
-    (user-error "org-agents: no expansion for `%s' in `%S'" ref form)))
+    ;; Printed through `org-agents--query-text', not with `%S': under an
+    ;; ambient `print-length' the query showed as a prefix ending in
+    ;; `...', and the conjunct the unreadable reference sits in is the one
+    ;; thing this message exists to supply.
+    (user-error "org-agents: no expansion for `%s' in `%s'"
+                ref (org-agents--query-text form))))
 
 (defun org-agents--query-text (query)
   "Return QUERY printed whole, as one string.
@@ -620,13 +625,35 @@ three can come to say less than another.  Two display sites once
 printed with `%S' under whatever `print-length' the user had, which
 showed a prefix of a query the hash covered entire.
 
-`print-level' and `print-length' are bound to nil so nothing is elided,
-and `print-circle' to nil so a shared substructure is printed out rather
-than abbreviated to `#1#' -- an abbreviation is exactly the failure this
-function exists to prevent, whichever variable produces it."
+Every printer variable that can change what this prints is bound here,
+because the text has to be a function of the form and of nothing else --
+neither of what the caller's init happens to set, nor of what a query can
+arrange for itself:
+
+  `print-level', `print-length' nil, so nothing is elided;
+  `print-circle' nil, so a shared substructure is printed out rather than
+    abbreviated to `#1#';
+  `print-escape-newlines', `print-escape-control-characters' t, so a
+    string in the query cannot break the text into lines.  A query is
+    shown in the minibuffer, which is capped at `max-mini-window-height'
+    and scrolled to the end of the prompt: forty newlines in a `regexp'
+    argument pushed the dangerous conjunct off the top of the window and
+    left the user answering yes to a prompt that appeared to ask about
+    nothing, under a hash that covered all of it;
+  `print-gensym' t, so an uninterned symbol prints as `#:foo' and cannot
+    share text -- and therefore a hash -- with the interned symbol of the
+    same name;
+  `print-quoted' t and `float-output-format' nil, their defaults, so that
+    an init that changes either does not silently invalidate every
+    approval stored on that machine."
   (let ((print-level nil)
         (print-length nil)
-        (print-circle nil))
+        (print-circle nil)
+        (print-escape-newlines t)
+        (print-escape-control-characters t)
+        (print-gensym t)
+        (print-quoted t)
+        (float-output-format nil))
     (prin1-to-string query)))
 
 (defun org-agents--query-hash (query)
