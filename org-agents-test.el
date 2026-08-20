@@ -2226,6 +2226,12 @@ the registry file, and the corpus root is the `dir' a test body wants.
             (org-id-locations (make-hash-table :test #'equal))
             (org-id-files nil)
             (org-agents-prefilter 'auto)
+            ;; No timeout, for the reason
+            ;; `org-agents-test--with-rg-corpus-unguarded' gives: this
+            ;; fixture now spawns ripgrep for the attribute census, and a
+            ;; spurious expiry would send a test that is about the CENSUS
+            ;; down the live walk and quietly assert nothing about it.
+            (org-agents-rg-timeout nil)
             (files nil))
        (ignore F)
        (unwind-protect
@@ -9194,7 +9200,19 @@ or none: a nonexistent executable name, a fake shell script, or
 `org-agents-prefilter' nil.  Call the guarded macro for anything that
 runs the real thing."
   (declare (indent 0))
-  `(let ((org-agents-prefilter 'auto))
+  `(let ((org-agents-prefilter 'auto)
+         ;; NO TIMEOUT for the soundness fixtures.  These tests assert what
+         ;; ripgrep FOUND -- which patterns cover which files -- and a
+         ;; spurious expiry turns that into `unavailable' and a coverage
+         ;; test into a lie about coverage.  OBSERVED: at load average 25 a
+         ;; run over a 34-file temp corpus hit the 30-second default and
+         ;; `org-agents-test-rg-covers-an-accumulated-property-name' failed
+         ;; on `(listp unavailable)' after 30.997 s.  The bound itself has
+         ;; its own tests -- `org-agents-test-rg-run-times-out-and-does-not-hang'
+         ;; and `...-honours-no-timeout' -- so nothing is lost by taking it
+         ;; off here, and a run over three dozen files in a temp directory
+         ;; is not the case a bound exists for.
+         (org-agents-rg-timeout nil))
      (let* ((dir (make-temp-file "org-agents-rg-corpus" t))
             (outside (make-temp-file "org-agents-rg-outside" t))
             ;; A registry OUTSIDE the corpus, and one that does not exist
