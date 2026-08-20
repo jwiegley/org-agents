@@ -5632,28 +5632,26 @@ its recorded heading text, marked `(?)': a link that does not resolve
 is worse than text saying there is none."
   (let (target title)
     (if-let* ((m (org-agents--live-marker element)))
-        (with-current-buffer (marker-buffer m)
-          (org-with-wide-buffer
-           (goto-char m)
-           ;; The base buffer's file, as `org-id' itself reads it: an
-           ;; indirect buffer visits nothing, and a match reached
-           ;; through one would have no file to fall back on.
-           (let ((file (buffer-file-name (buffer-base-buffer)))
-                 (id (org-id-get)))
-             (setq title (org-get-heading t t t t)
-                   target
-                   (cond
-                    (id (when file (org-id-add-location id file))
-                        (concat "id:" id))
-                    ;; With neither an ID nor a file there is nothing to
-                    ;; link to: `file:nil::*…' is not a location, and
-                    ;; `org-id-add-location' refuses a buffer that
-                    ;; visits nothing.
-                    (file
-                     ;; `org-link-heading-search-string' supplies the
-                     ;; `*' that makes the search a headline search.
-                     (concat "file:" file "::"
-                             (org-link-heading-search-string))))))))
+        (org-with-point-at m
+          ;; The base buffer's file, as `org-id' itself reads it: an
+          ;; indirect buffer visits nothing, and a match reached
+          ;; through one would have no file to fall back on.
+          (let ((file (buffer-file-name (buffer-base-buffer)))
+                (id (org-id-get)))
+            (setq title (org-get-heading t t t t)
+                  target
+                  (cond
+                   (id (when file (org-id-add-location id file))
+                       (concat "id:" id))
+                   ;; With neither an ID nor a file there is nothing to
+                   ;; link to: `file:nil::*…' is not a location, and
+                   ;; `org-id-add-location' refuses a buffer that
+                   ;; visits nothing.
+                   (file
+                    ;; `org-link-heading-search-string' supplies the
+                    ;; `*' that makes the search a headline search.
+                    (concat "file:" file "::"
+                            (org-link-heading-search-string)))))))
       (setq title (or (org-element-property :raw-value element) "")))
     (if target
         (org-link-make-string target title)
@@ -5805,54 +5803,52 @@ the agent's own buffer, where an edit would move it."
                        (list (org-agents--alias-target text) text
                              (org-agents--format-suffix element format-props))))
                    matches)))
-      (with-current-buffer (marker-buffer marker)
-        (org-with-wide-buffer
-         (goto-char marker)
-         (when (org-before-first-heading-p)
-           (user-error "org-agents: the children view needs an agent heading"))
-         (org-back-to-heading t)
-         (let* ((level (org-current-level))
-                (regions (org-agents--alias-regions
-                          level (save-excursion (org-end-of-subtree t t)
-                                                (point))))
-                (targets (mapcar #'car rendered)))
-           ;; Back to front: every edit below lies at or after the
-           ;; region it belongs to, so the regions still to come keep
-           ;; the positions they were found at.  Forwards, each
-           ;; deletion and each retitle would move the next one.
-           (pcase-dolist (`(,beg ,end ,pristine ,target ,heading)
-                          (nreverse regions))
-             (cond
-              (pristine (delete-region beg end))
-              ;; An alias whose heading holds no link cannot be compared
-              ;; against this round's matches at all, so it is left as
-              ;; it stands rather than marked on a guess.  It joins no
-              ;; target to `kept' either, so pass 2 writes a fresh alias
-              ;; for the match it stood for: a duplicate, accepted, the
-              ;; price of not reading a mangled link as any match at all.
-              ((null target))
-              (t (push target kept)
-                 (goto-char beg)
-                 (org-agents--mark-stale heading
-                                         (not (member target targets))))))
-           ;; What the user annotated stays where it is; the rest of the
-           ;; matches follow the subtree as it now stands.  The text is
-           ;; inserted before the newline that ends the subtree rather
-           ;; than at the position after it, which another agent's
-           ;; marker in this buffer may be sitting on.  Without
-           ;; TO-HEADING that position is also above any blank lines the
-           ;; user left before the next heading, so the insertion has
-           ;; never had this end of the problem.
-           (when-let* ((new (cl-remove-if (lambda (row) (member (car row) kept))
-                                          rendered)))
-             (goto-char marker)
-             (org-back-to-heading t)
-             (org-end-of-subtree t)
-             (pcase-dolist (`(,_ ,text ,suffix) new)
-               (insert "\n" (make-string (1+ level) ?*) " " text)
-               (when-let* ((extra (org-string-nw-p suffix)))
-                 (insert " " extra))
-               (insert "\n:PROPERTIES:\n:AGENT_MATCH: t\n:END:")))))))
+      (org-with-point-at marker
+        (when (org-before-first-heading-p)
+          (user-error "org-agents: the children view needs an agent heading"))
+        (org-back-to-heading t)
+        (let* ((level (org-current-level))
+               (regions (org-agents--alias-regions
+                         level (save-excursion (org-end-of-subtree t t)
+                                               (point))))
+               (targets (mapcar #'car rendered)))
+          ;; Back to front: every edit below lies at or after the
+          ;; region it belongs to, so the regions still to come keep
+          ;; the positions they were found at.  Forwards, each
+          ;; deletion and each retitle would move the next one.
+          (pcase-dolist (`(,beg ,end ,pristine ,target ,heading)
+                         (nreverse regions))
+            (cond
+             (pristine (delete-region beg end))
+             ;; An alias whose heading holds no link cannot be compared
+             ;; against this round's matches at all, so it is left as
+             ;; it stands rather than marked on a guess.  It joins no
+             ;; target to `kept' either, so pass 2 writes a fresh alias
+             ;; for the match it stood for: a duplicate, accepted, the
+             ;; price of not reading a mangled link as any match at all.
+             ((null target))
+             (t (push target kept)
+                (goto-char beg)
+                (org-agents--mark-stale heading
+                                        (not (member target targets))))))
+          ;; What the user annotated stays where it is; the rest of the
+          ;; matches follow the subtree as it now stands.  The text is
+          ;; inserted before the newline that ends the subtree rather
+          ;; than at the position after it, which another agent's
+          ;; marker in this buffer may be sitting on.  Without
+          ;; TO-HEADING that position is also above any blank lines the
+          ;; user left before the next heading, so the insertion has
+          ;; never had this end of the problem.
+          (when-let* ((new (cl-remove-if (lambda (row) (member (car row) kept))
+                                         rendered)))
+            (goto-char marker)
+            (org-back-to-heading t)
+            (org-end-of-subtree t)
+            (pcase-dolist (`(,_ ,text ,suffix) new)
+              (insert "\n" (make-string (1+ level) ?*) " " text)
+              (when-let* ((extra (org-string-nw-p suffix)))
+                (insert " " extra))
+              (insert "\n:PROPERTIES:\n:AGENT_MATCH: t\n:END:"))))))
     (length matches)))
 
 ;;;; Dynamic block
@@ -8671,38 +8667,36 @@ and must not be accused of writing."
             (push (list :label (plist-get target :label)
                         :skip (or skip "no live buffer") :outcome nil)
                   rows)
-          (with-current-buffer (marker-buffer marker)
-            (org-with-wide-buffer
-             (goto-char marker)
-             (let ((file (buffer-file-name (buffer-base-buffer)))
-                   (line (line-number-at-pos)))
-               (pcase-dolist (`(,verb . ,args) verbs)
-                 (let* ((plan (org-agents--action-call verb 'plan args))
-                        (token (org-agents--action-token verb)))
-                   (org-agents--action-tick-tripwire ticks token)
-                   (unless (and (consp plan)
-                                (or (null (car plan)) (stringp (car plan)))
-                                (or (null (cdr plan)) (stringp (cdr plan))))
-                     (user-error
-                      (concat "org-agents: the verb `%s' planned nothing: its"
-                              " `plan' phase must answer (OLD . NEW), each a"
-                              " string or nil, and it answered %S")
-                      token plan))
-                   (push (list :file file :line line
-                               :marker (copy-marker marker)
-                               :verb verb :token token :args args
-                               :old (car plan) :new (cdr plan)
-                               ;; A row that would change nothing is not
-                               ;; an edit, and must not be counted in the
-                               ;; sentence the user answers nor asked
-                               ;; about at all -- MEASURED,
-                               ;; `delete-property!(OWNER)' over ninety
-                               ;; entries where four carry `OWNER' asked
-                               ;; ninety times and called itself ninety
-                               ;; edits.
-                               :noop (equal (car plan) (cdr plan))
-                               :outcome nil)
-                         rows)))))))))
+          (org-with-point-at marker
+            (let ((file (buffer-file-name (buffer-base-buffer)))
+                  (line (line-number-at-pos)))
+              (pcase-dolist (`(,verb . ,args) verbs)
+                (let* ((plan (org-agents--action-call verb 'plan args))
+                       (token (org-agents--action-token verb)))
+                  (org-agents--action-tick-tripwire ticks token)
+                  (unless (and (consp plan)
+                               (or (null (car plan)) (stringp (car plan)))
+                               (or (null (cdr plan)) (stringp (cdr plan))))
+                    (user-error
+                     (concat "org-agents: the verb `%s' planned nothing: its"
+                             " `plan' phase must answer (OLD . NEW), each a"
+                             " string or nil, and it answered %S")
+                     token plan))
+                  (push (list :file file :line line
+                              :marker (copy-marker marker)
+                              :verb verb :token token :args args
+                              :old (car plan) :new (cdr plan)
+                              ;; A row that would change nothing is not
+                              ;; an edit, and must not be counted in the
+                              ;; sentence the user answers nor asked
+                              ;; about at all -- MEASURED,
+                              ;; `delete-property!(OWNER)' over ninety
+                              ;; entries where four carry `OWNER' asked
+                              ;; ninety times and called itself ninety
+                              ;; edits.
+                              :noop (equal (car plan) (cdr plan))
+                              :outcome nil)
+                        rows))))))))
     (nreverse rows)))
 
 (defun org-agents--action-counts (rows visited)
@@ -8888,11 +8882,9 @@ would look at, and its plan was never a field's value."
     (and (not (org-agents--action-terminal-p verb))
          (markerp marker) (marker-buffer marker)
          (condition-case err
-             (let ((plan (with-current-buffer (marker-buffer marker)
-                           (org-with-wide-buffer
-                            (goto-char marker)
-                            (org-agents--action-call verb 'plan
-                                                     (plist-get row :args))))))
+             (let ((plan (org-with-point-at marker
+                           (org-agents--action-call verb 'plan
+                                                    (plist-get row :args)))))
                (and (consp plan)
                     (not (equal (car plan) (plist-get row :new)))
                     (org-agents--action-side (car plan))))
@@ -8946,13 +8938,11 @@ into is not the file the row names."
                ((not (and (markerp marker) (marker-buffer marker)))
                 (plist-put row :outcome "skipped: no live buffer"))
                (t
-                (with-current-buffer (marker-buffer marker)
-                  (org-with-wide-buffer
-                   (goto-char marker)
-                   (let ((org-agents--action-planned (plist-get row :new)))
-                     (org-agents--with-action-quiet-hooks
-                       (org-agents--action-call verb 'apply
-                                                (plist-get row :args))))))
+                (org-with-point-at marker
+                  (let ((org-agents--action-planned (plist-get row :new)))
+                    (org-agents--with-action-quiet-hooks
+                     (org-agents--action-call verb 'apply
+                                              (plist-get row :args)))))
                 (cl-pushnew (marker-buffer marker) buffers)
                 (dolist (buffer (buffer-list))
                   (when (and (buffer-file-name buffer)
