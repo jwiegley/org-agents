@@ -6713,16 +6713,29 @@ headings, a list view's items and a table view's rows alike.
 
 This is what makes a STAMP fall out of `org-agents-apply-actions': a
 stamp is this command pointed at a selection, and the region is the
-selection.  The action text still comes from the agent's own drawer."
-  (unless (use-region-p)
+selection.  The action text still comes from the agent's own drawer.
+
+Point and the mark, and DELIBERATELY not `use-region-p'.  That predicate
+answers nil wherever `transient-mark-mode' is off -- which is a setting
+some people keep, and MEASURED, is also what `-batch' has -- and it is
+the right predicate for a command that acts on the region only when one
+happens to be active.  This one was told to: the prefix argument IS the
+request, so what has to be true is that there is a mark and that it is
+somewhere other than point."
+  (unless (mark t)
     (user-error (concat "org-agents: with a prefix argument this acts on the"
                         " entries the region's links name, and there is no"
                         " region")))
-  (let ((targets nil)
-        (seen (make-hash-table :test #'equal))
-        (end (region-end)))
+  (let* ((targets nil)
+         (seen (make-hash-table :test #'equal))
+         (start (min (point) (mark t)))
+         (end (max (point) (mark t))))
+    (when (= start end)
+      (user-error (concat "org-agents: with a prefix argument this acts on the"
+                          " entries the region's links name, and the region"
+                          " is empty")))
     (save-excursion
-      (goto-char (region-beginning))
+      (goto-char start)
       (beginning-of-line)
       (while (< (point) end)
         (when-let* ((target (org-agents--alias-target

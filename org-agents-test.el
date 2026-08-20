@@ -10941,5 +10941,491 @@ Mutation that must fail it: a registry- or list-based resolver."
     (fmakunbound 'org-agents-action/shout!)
     (fmakunbound 'org-agents-action/halfway!)))
 
+;;;; Actions: the command and its dry run
+
+(defun org-agents-test--action-report-lines ()
+  "The lines of the action report buffer, and nothing else."
+  (with-current-buffer org-agents--action-buffer
+    (split-string (buffer-substring-no-properties (point-min) (point-max))
+                  "\n" t)))
+
+(defun org-agents-test--action-edit-lines ()
+  "The report lines that are intended edits -- `FILE:LINE: ...' and no other."
+  (cl-remove-if-not (lambda (line) (string-match-p "\\`/.*:[0-9]+: " line))
+                    (org-agents-test--action-report-lines)))
+
+(defun org-agents-test--action-corpus-snapshot (&rest files)
+  "The text of FILES, buffer and disk both, as one comparable list.
+Buffer AND disk, because an action's edits land in a buffer and are never
+saved: a snapshot off disk alone would call an unsaved mass edit no
+change at all.  Learnt the hard way -- see
+`org-agents-test-action-save-differs-only-by-the-render'."
+  (mapcar (lambda (file)
+            (list file
+                  (org-agents-test--file-text file)
+                  (with-current-buffer (find-file-noselect file)
+                    (buffer-substring-no-properties (point-min) (point-max)))))
+          files))
+
+(ert-deftest org-agents-test-action-dry-run-writes-nothing ()
+  "The dry run reports every intended edit and writes not one byte.
+Answered `no', so nothing is applied: every corpus file is identical in
+its buffer and on disk, no buffer is modified, and the report holds one
+line per intended edit with its `old -> new'.
+
+Mutation that must fail it: plan and apply in one pass."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today) tag!(+reviewed)"
+    (let ((before (org-agents-test--action-corpus-snapshot a b)))
+      (org-agents-test--answering-no (org-agents-apply-actions))
+      (should (equal before (org-agents-test--action-corpus-snapshot a b)))
+      (should-not (buffer-modified-p (find-file-noselect a)))
+      (should-not (buffer-modified-p (find-file-noselect b)))
+      ;; Two verbs at each of the two matches.
+      (let ((lines (org-agents-test--action-edit-lines)))
+        (should (= 4 (length lines)))
+        (should (cl-every (lambda (line) (string-match-p " -> " line)) lines))
+        (should (= 2 (cl-count-if
+                      (lambda (line)
+                        (string-match-p "set-property!(REVIEWED, today)" line))
+                      lines)))
+        (should (= 2 (cl-count-if
+                      (lambda (line) (string-match-p "tag!(\\+reviewed)" line))
+                      lines))))
+      ;; The header, read AT THE MOMENT the question is asked: the whole
+      ;; report is there and it says nothing has been written.  Read
+      ;; afterwards it would say what the run went on to do instead,
+      ;; which is a different claim.
+      (let (header)
+        (let ((noninteractive nil)
+              (inhibit-interaction nil))
+          (cl-letf (((symbol-function 'y-or-n-p)
+                     (lambda (&rest _)
+                       (setq header
+                             (car (org-agents-test--action-report-lines)))
+                       nil))
+                    ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+            (org-agents-apply-actions)))
+        (should (string-match-p "4 edits at 2 entries in 1 file" header))
+        (should (string-match-p "Nothing written yet" header)))
+      ;; And afterwards it says so, which is the other half of honest.
+      (should (string-match-p "NOTHING WAS APPLIED"
+                              (car (org-agents-test--action-report-lines))))
+      (should (equal before (org-agents-test--action-corpus-snapshot a b))))))
+
+(ert-deftest org-agents-test-action-applies-exactly-what-was-listed ()
+  "Applying does what the report said, at those entries, and nothing else.
+Both halves: every reported edit is in the buffer afterwards, and no
+entry outside the plan changed at all -- the second file in the corpus is
+compared byte for byte, buffer and disk.
+
+Mutations that must fail it: apply a verb the report omitted; apply at an
+entry that was not in the plan."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today) tag!(+reviewed)"
+    (let ((untouched (org-agents-test--action-corpus-snapshot b)))
+      (org-agents-test--answering-yes (org-agents-apply-actions))
+      (let ((stamp (format-time-string (org-time-stamp-format nil t))))
+        (dolist (heading '("Fix widget" "Fix gadget"))
+          (should (equal stamp (org-agents-test--action-property
+                                a heading "REVIEWED")))
+          (should (member "reviewed"
+                          (org-agents-test--action-tags a heading)))
+          ;; And the tags that were there are still there.
+          (should (member "api" (org-agents-test--action-tags a heading)))))
+      ;; `Fix gadget' keeps the tag only it had.
+      (should (member "stale" (org-agents-test--action-tags a "Fix gadget")))
+      (should-not (member "stale" (org-agents-test--action-tags a "Fix widget")))
+      ;; The file nothing matched in is untouched.
+      (should (equal untouched (org-agents-test--action-corpus-snapshot b)))
+      ;; Every line says it was applied.
+      (should (cl-every (lambda (line) (string-match-p "  applied\\'" line))
+                        (org-agents-test--action-edit-lines))))))
+
+(ert-deftest org-agents-test-action-report-is-navigable ()
+  "The report is a `compilation-mode' buffer whose lines are locations.
+`FILE:LINE:' first, so `RET', `next-error' and `M-g n' walk the INTENDED
+edits before anything has been written -- which is worth more than any
+prose about a dry run, and is the same measured precedent
+`org-agents--attr-report' rests on.
+
+Mutation that must fail it: drop the `FILE:LINE:' prefix."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (org-agents-test--answering-no (org-agents-apply-actions))
+    (with-current-buffer org-agents--action-buffer
+      (should (derived-mode-p 'compilation-mode))
+      (goto-char (point-min))
+      (compilation-next-error 1)
+      (let ((location (compilation-next-error 0)))
+        (should location))
+      ;; The first location is the first intended edit, in the file the
+      ;; matches live in.
+      (should (string-match-p (regexp-quote a)
+                              (car (org-agents-test--action-edit-lines)))))))
+
+(ert-deftest org-agents-test-action-failing-verb-leaves-an-honest-report ()
+  "A verb that fails part way through says exactly what was and was not done.
+The lines before it say `applied', its own says `FAILED', the ones after
+it say `not attempted' -- and the buffer state matches that claim
+exactly.  There is no rollback: `atomic-change-group' cannot span
+buffers, and a corpus-wide undo does not exist.  The honest substitute is
+this report, and this test is what says it is honest.
+
+Mutations that must fail it: continue past the failure; report a count
+without the per-line outcome."
+  (unwind-protect
+      (progn
+        (defun org-agents-action/flaky! (phase name)
+          "Apply once, then fail: a verb that breaks part way through a run."
+          (pcase phase
+            ('plan (cons (org-entry-get nil name) "done"))
+            ('apply
+             (if (get 'org-agents-action/flaky! 'fired)
+                 (error "org-agents-test: the second one fails")
+               (put 'org-agents-action/flaky! 'fired t)
+               (org-entry-put nil name "done")))))
+        (org-agents-test--at-agent "flaky!(STATE)"
+          (org-agents-test--answering-yes (org-agents-apply-actions))
+          (let ((lines (org-agents-test--action-edit-lines)))
+            (should (= 2 (length lines)))
+            (should (string-match-p "  applied\\'" (nth 0 lines)))
+            (should (string-match-p "FAILED: .*the second one fails"
+                                    (nth 1 lines))))
+          ;; And the buffer says the same thing: one entry written, one not.
+          (should (equal "done" (org-agents-test--action-property
+                                 a "Fix widget" "STATE")))
+          (should-not (org-agents-test--action-property
+                       a "Fix gadget" "STATE"))))
+    (put 'org-agents-action/flaky! 'fired nil)
+    (fmakunbound 'org-agents-action/flaky!)))
+
+(ert-deftest org-agents-test-action-later-rows-are-not-attempted ()
+  "Everything after a failure is marked, not silently skipped.
+Three entries and two verbs, failing at the third row: the report has to
+account for all six lines, because a reader deciding what to fix needs to
+know which edits were never even tried."
+  (unwind-protect
+      (progn
+        (defun org-agents-action/third! (phase name)
+          "Fail on the third apply, whatever it is asked to do."
+          (pcase phase
+            ('plan (cons (org-entry-get nil name) "x"))
+            ('apply
+             (let ((n (1+ (or (get 'org-agents-action/third! 'count) 0))))
+               (put 'org-agents-action/third! 'count n)
+               (if (= n 3)
+                   (error "org-agents-test: the third one fails")
+                 (org-entry-put nil name "x"))))))
+        (org-agents-test--at-agent "third!(P) third!(Q)"
+          (org-agents-test--answering-yes (org-agents-apply-actions))
+          (let ((lines (org-agents-test--action-edit-lines)))
+            (should (= 4 (length lines)))
+            (should (string-match-p "  applied\\'" (nth 0 lines)))
+            (should (string-match-p "  applied\\'" (nth 1 lines)))
+            (should (string-match-p "FAILED" (nth 2 lines)))
+            (should (string-match-p "  not attempted\\'" (nth 3 lines))))))
+    (put 'org-agents-action/third! 'count nil)
+    (fmakunbound 'org-agents-action/third!)))
+
+(ert-deftest org-agents-test-action-saves-nothing ()
+  "After a full apply every modified buffer is still modified, and no file changed.
+That is what actually bounds the blast radius of a bad run: N modified
+buffers, reviewable and undoable one at a time, and not N modified files.
+
+Mutation that must fail it: add a `save-buffer' \"for convenience\"."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (let ((disk (org-agents-test--file-text a)))
+      (org-agents-test--answering-yes (org-agents-apply-actions))
+      (should (buffer-modified-p (find-file-noselect a)))
+      (should (equal disk (org-agents-test--file-text a)))
+      ;; And the change really is in the buffer, so the file's sameness is
+      ;; the absence of a save rather than the absence of an edit.
+      (should (string-match-p ":REVIEWED:"
+                              (with-current-buffer (find-file-noselect a)
+                                (buffer-string)))))))
+
+(ert-deftest org-agents-test-action-reports-modified-buffers ()
+  "The closing message names the counts and every buffer that was written.
+A summary saying only how many had failed would leave the user to find
+out which, and the buffers are what there is to review and undo.
+
+Mutation that must fail it: drop the buffer names."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (let ((messages (org-agents-test--messages
+                      (org-agents-test--answering-yes
+                        (org-agents-apply-actions)))))
+      (let ((closing (car (last messages))))
+        (should (string-match-p "applied 2" closing))
+        (should (string-match-p "modified a\\.org" closing))
+        (should (string-match-p "nothing was saved" closing))))))
+
+(ert-deftest org-agents-test-action-planner-that-writes-is-caught ()
+  "A `plan' phase that writes is caught, named, and nothing is applied.
+The tick tripwire, and it is what makes the dry run's honesty a property
+of the machinery rather than of a verb author's discipline.
+
+MEASURED, and this is why the guard is the tick: `buffer-read-only'
+cannot be used.  `org-entry-put' wraps its body in `org-no-read-only',
+which binds `inhibit-read-only', so a read-only buffer does not stop it
+-- while `org-todo', `org-set-tags', `org-schedule', `org-priority' and
+`org-entry-delete' all signal.  The tick moved for that same suppressed
+write, and does not move for a pass of pure reads.
+
+Mutations that must fail it: drop the tripwire; use `buffer-read-only'
+instead of the tick."
+  (unwind-protect
+      (progn
+        (defun org-agents-action/sneaky! (phase name)
+          "A verb whose `plan' phase writes, which is what must be caught."
+          (org-entry-put nil name "written by the planner")
+          (pcase phase
+            ('plan (cons nil "written by the planner"))
+            ('apply (org-entry-put nil name "written by the planner"))))
+        (org-agents-test--at-agent "sneaky!(SNEAK)"
+          (let ((err (should-error
+                      (org-agents-test--answering-yes (org-agents-apply-actions))
+                      :type 'user-error)))
+            (should (string-match-p "sneaky!" (error-message-string err)))
+            (should (string-match-p "modified" (error-message-string err)))
+            (should (string-match-p "nothing was applied"
+                                    (error-message-string err))))
+          ;; The planner's own write is still there -- it is a bug in that
+          ;; verb, not something this can undo -- but only ONE entry was
+          ;; reached, because the command stopped at the first offence.
+          (should (org-agents-test--action-property a "Fix widget" "SNEAK"))
+          (should-not (org-agents-test--action-property a "Fix gadget"
+                                                        "SNEAK"))))
+    (fmakunbound 'org-agents-action/sneaky!)))
+
+(ert-deftest org-agents-test-action-refuses-over-the-limit ()
+  "Over `org-agents-action-limit' the run is refused, and nothing is planned.
+Refused and not truncated: a truncated plan applies a subset nobody can
+predict, which is worse than a refusal naming the number.  The refusal
+quotes the entry count, the limit and the option, and it fires before the
+planner runs -- so a refused run costs the match and nothing more.
+
+Mutations that must fail it: truncate instead of refusing; gate on edits
+instead of entries."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today) tag!(+reviewed)"
+    (let ((org-agents-action-limit 1))
+      (org-agents-test--with-verb-tripwire
+        (let ((err (should-error
+                    (org-agents-test--answering-yes (org-agents-apply-actions))
+                    :type 'user-error)))
+          (should (string-match-p "2 entries matched"
+                                  (error-message-string err)))
+          (should (string-match-p "org-agents-action-limit"
+                                  (error-message-string err)))
+          (should (string-match-p " is 1" (error-message-string err))))
+        (should (= 0 org-agents-test--verb-calls))))
+    ;; The gate is on ENTRIES and not on edits: four edits at two entries
+    ;; is allowed by a limit of two.
+    (let ((org-agents-action-limit 2))
+      (org-agents-test--answering-no (org-agents-apply-actions))
+      (should (= 4 (length (org-agents-test--action-edit-lines)))))))
+
+(ert-deftest org-agents-test-action-limit-nil-is-no-limit ()
+  "Nil means no limit, and not a limit of zero.
+Mutation that must fail it: treat nil as 0."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (let ((org-agents-action-limit nil))
+      (org-agents-test--answering-no (org-agents-apply-actions))
+      (should (= 2 (length (org-agents-test--action-edit-lines)))))))
+
+(ert-deftest org-agents-test-action-explicit-set-is-the-region ()
+  "With a prefix argument the targets are the entries the region's links name.
+This is what makes a stamp fall out of the command: a stamp is this
+command pointed at a selection, and the region is the selection.  The
+action text still comes from the AGENT'S own drawer -- the aliases in the
+region carry none, and would not be read if they did.
+
+Point has to be in the AGENT'S OWN entry, because that is where the
+action is read from, and that is not a limitation of the region: for a
+list or a table the rendered block sits inside the agent's own entry, so
+selecting rows of it is the natural gesture and point never leaves the
+agent.  Tested here on the fixture's list-view agent for that reason,
+and then again on a `children' agent -- where the aliases are entries of
+their own, so the gesture is point on the agent's heading and the region
+reaching down over them.
+
+Mutations that must fail it: read the action from the alias; ignore the
+region."
+  ;; A list view: the block is inside the agent, so point is too.
+  (org-agents-test--with-action-corpus "set-property!(REVIEWED, today)"
+    (with-current-buffer (find-file-noselect agent-file)
+      (goto-char (point-min))
+      (should (re-search-forward "^\\* Review list" nil t))
+      (org-agents-test--answering-yes (org-agents-update))
+      (goto-char (point-min))
+      (should (re-search-forward "Fix widget" nil t))
+      (push-mark (line-end-position) t t)
+      (goto-char (line-beginning-position))
+      (org-agents-test--answering-yes (org-agents-apply-actions t))
+      ;; One entry, the one the region's link names.
+      (should (equal (format-time-string (org-time-stamp-format nil t))
+                     (org-agents-test--action-property a "Fix widget"
+                                                       "REVIEWED")))
+      (should-not (org-agents-test--action-property a "Fix gadget" "REVIEWED"))
+      (should (= 1 (length (org-agents-test--action-edit-lines))))))
+  ;; A children view: point on the agent, the region over its aliases.
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (org-agents-test--answering-yes (org-agents-update))
+    (goto-char (point-min))
+    (should (re-search-forward "Fix gadget" nil t))
+    (push-mark (line-end-position) t t)
+    (goto-char (point-min))
+    (org-agents-test--answering-yes (org-agents-apply-actions t))
+    ;; Both aliases are inside the region this time, so both entries are
+    ;; planned -- which is the answer the region gave.
+    (should (org-agents-test--action-property a "Fix widget" "REVIEWED"))
+    (should (org-agents-test--action-property a "Fix gadget" "REVIEWED"))
+    (should (= 2 (length (org-agents-test--action-edit-lines))))))
+
+(ert-deftest org-agents-test-action-explicit-set-needs-a-region ()
+  "A prefix argument with no region says so rather than acting on everything.
+The failure mode this closes is the worst kind of convenience: a command
+that quietly widened its own scope when the selection it was told to use
+turned out to be empty."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (org-agents-test--with-verb-tripwire
+      (let ((err (should-error (org-agents-apply-actions t) :type 'user-error)))
+        (should (string-match-p "there is no region"
+                                (error-message-string err))))
+      (should (= 0 org-agents-test--verb-calls))
+      ;; A mark at point is a region of nothing, and is refused as one
+      ;; rather than read as a licence to act on everything.
+      (push-mark (point) t t)
+      (let ((err (should-error (org-agents-apply-actions t) :type 'user-error)))
+        (should (string-match-p "region is empty"
+                                (error-message-string err))))
+      (should (= 0 org-agents-test--verb-calls)))))
+
+(ert-deftest org-agents-test-action-no-action-property ()
+  "An agent with a query and no action says so, and runs no query.
+The read is step 1 and the match is step 3, so a command that has nothing
+to do costs nothing at all.
+
+Mutation that must fail it: read the action after collecting."
+  (org-agents-test--at-agent nil
+    (let ((collected 0))
+      (cl-letf (((symbol-function 'org-agents--collect)
+                 (lambda (&rest _)
+                   (setq collected (1+ collected))
+                   (error "org-agents-test: the query was run"))))
+        (let ((err (should-error (org-agents-apply-actions)
+                                 :type 'user-error)))
+          (should (string-match-p "no :AGENT_ACTION: at point"
+                                  (error-message-string err)))))
+      (should (= 0 collected))))
+  ;; And with no agent at all it names that instead.
+  (org-agents-test--with-action-corpus nil
+    (with-current-buffer (find-file-noselect b)
+      (goto-char (point-min))
+      (let ((err (should-error (org-agents-apply-actions) :type 'user-error)))
+        (should (string-match-p "no agent at point"
+                                (error-message-string err)))))))
+
+(ert-deftest org-agents-test-action-dead-marker-is-reported ()
+  "A match whose buffer was killed is reported, and the run goes on.
+Reported rather than dropped: a target that silently disappeared would
+make the report understate the match set, and the count in the header
+would disagree with the query.
+
+Mutation that must fail it: drop the target silently."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    ;; The markers are made, and then the buffer they point into is killed.
+    (cl-letf* ((real (symbol-function 'org-agents--action-targets))
+               ((symbol-function 'org-agents--action-targets)
+                (lambda (&rest args)
+                  (let ((targets (apply real args)))
+                    (dolist (buffer (buffer-list))
+                      (when (equal (buffer-file-name buffer) a)
+                        (with-current-buffer buffer
+                          (set-buffer-modified-p nil))
+                        (kill-buffer buffer)))
+                    targets))))
+      (org-agents-test--answering-yes (org-agents-apply-actions)))
+    (let ((lines (org-agents-test--action-report-lines)))
+      (should (= 2 (cl-count-if
+                    (lambda (line)
+                      (string-match-p "skipped: no live buffer" line))
+                    lines))))))
+
+(ert-deftest org-agents-test-action-counts-unopened-files ()
+  "The question names how many of the files were not open when it was asked.
+Someone about to edit a file they have never opened should be told so in
+the sentence they answer, not in a paragraph of README -- and after the
+query there is nothing left to ask, because matching opens them.
+
+Mutation that must fail it: omit the count, or take it after the match."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    ;; a.org is not visited yet, and the match is about to open it.
+    (dolist (buffer (buffer-list))
+      (when (equal (buffer-file-name buffer) a)
+        (with-current-buffer buffer (set-buffer-modified-p nil))
+        (kill-buffer buffer)))
+    (let ((asked nil)
+          (noninteractive nil)
+          (inhibit-interaction nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (push prompt asked) nil))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+        (org-agents-apply-actions))
+      (should (= 1 (length asked)))
+      (should (string-match-p "1 not open before this ran" (car asked))))))
+
+(ert-deftest org-agents-test-action-prompt-names-the-destructive-verbs ()
+  "The one question names the destructive verbs in the plan.
+The two things a reader of a long report might not have noticed -- what
+is destructive and what was not open -- belong in the sentence being
+answered."
+  (org-agents-test--at-agent "delete-property!(NEXT_REVIEW)"
+    (let ((asked nil)
+          (noninteractive nil)
+          (inhibit-interaction nil))
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (push prompt asked) nil))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+        (org-agents-apply-actions))
+      (should (string-match-p "including the destructive delete-property!"
+                              (car asked))))))
+
+(ert-deftest org-agents-test-action-nothing-matched-says-so ()
+  "An action whose query matches nothing says that, and plans nothing.
+A report with no lines in it looks like a broken command, and a
+confirmation about zero edits is a question with no answer worth giving."
+  (org-agents-test--at-agent "set-property!(REVIEWED, today)"
+    (org-entry-put nil "AGENT_QUERY" "(property \"NOTHING_HAS_THIS\")")
+    (org-agents-test--with-verb-tripwire
+      (let ((err (should-error (org-agents-apply-actions) :type 'user-error)))
+        (should (string-match-p "nothing matched" (error-message-string err))))
+      (should (= 0 org-agents-test--verb-calls)))))
+
+(ert-deftest org-agents-test-action-report-shows-old-and-new ()
+  "Each line shows the call as the property spells it, and `old -> new'.
+The report is what is agreed to, so what it shows has to be readable
+against the file: the verb and its arguments as written, then the value
+that is there now and the value that would replace it."
+  (org-agents-test--at-agent
+      "set-property!(REVIEWED, today) tag!(+reviewed -api) effort!(0:30)"
+    (org-agents-test--answering-no (org-agents-apply-actions))
+    (let ((lines (org-agents-test--action-edit-lines))
+          (stamp (format-time-string (org-time-stamp-format nil t))))
+      (should (= 6 (length lines)))
+      (should (cl-find-if
+               (lambda (line)
+                 (and (string-match-p "set-property!(REVIEWED, today)" line)
+                      (string-match-p (concat "nil -> " (regexp-quote stamp))
+                                      line)))
+               lines))
+      (should (cl-find-if
+               (lambda (line)
+                 (and (string-match-p "tag!(\\+reviewed -api)" line)
+                      (string-match-p ":api: -> :reviewed:" line)))
+               lines))
+      (should (cl-find-if
+               (lambda (line)
+                 (and (string-match-p "effort!(0:30)" line)
+                      (string-match-p "nil -> 0:30" line)))
+               lines)))))
+
 (provide 'org-agents-test)
 ;;; org-agents-test.el ends here
