@@ -226,7 +226,11 @@
 ;; while the value question needs per-entry reading but only for the
 ;; DECLARED names and only in the files holding them.  MEASURED over a
 ;; 3,616-file scope: 7 to 10 s warm and 64 to 110 s cold, against a
-;; single-tier command that was killed at 600 s with no report at all.  The fast enumerator
+;; single-tier command that was killed at 600 s with no report at all.
+;; Treat those as an order of magnitude, not a benchmark: the same
+;; vocabulary-only run over the same scope measured 3.5 s on an idle
+;; machine and 12.8 s on one busy with other work, so a figure outside
+;; the range above is machine load and not a regression.  The fast enumerator
 ;; reports the same vocabulary as the slow one, and
 ;; `org-agents-test-attr-census-fast-equals-slow' is what says so.  And `org-agents-attribute-columns',
 ;; which builds a `COLUMNS' format out of chosen declarations -- see
