@@ -7,7 +7,7 @@
 
 * Introduction
 :PROPERTIES:
-:DESCRIPTION: What an agent is, and what you need to use one.
+:DESCRIPTION: The five parts of the package, and what you need to use them.
 :END:
 #+cindex: introduction
 #+cindex: org-agents, overview of
@@ -18,14 +18,26 @@
 :END:
 #+cindex: summary
 #+cindex: agent
+#+cindex: dynamic properties, the five parts
+#+cindex: attribute registry, in brief
+#+cindex: prototype, in brief
+#+cindex: appearance, in brief
+#+cindex: action code, in brief
 
-org-agents provides /agents/: ordinary Org entries that carry a query in
-an =:AGENT_QUERY:= property and, when updated, populate themselves with
-links back to every entry in your corpus that the query matches; an agent
-renders those matches as child headings, as a plain list, or as a table.
-Nothing else about the entry is special.  An agent is a heading in an
-ordinary file: folding, annotation, links, export and version control
-reach it exactly as they reach any heading written by hand.
+org-agents implements a model of /dynamic properties/ over Org outlines,
+in five parts: agents, a corpus-wide attribute registry, prototypes,
+appearance drawn from attribute values, and action code.  Agents are the
+part most readers meet first, and the four that follow govern the
+property values an agent queries over---declaring them, inheriting them,
+drawing them, and writing them.
+
+An agent is an ordinary Org entry carrying a query in an =:AGENT_QUERY:=
+property, which on update populates itself with links back to every entry
+in your corpus that the query matches; an agent renders those matches as
+child headings, as a plain list, or as a table.  Nothing else about the
+entry is special.  An agent is a heading in an ordinary file: folding,
+annotation, links, export and version control reach it exactly as they
+reach any heading written by hand.
 
 Tinderbox, published by Eastgate Systems, has had agents since 2002; the
 idea and the word both come from there, as do prototypes, action code and
@@ -34,8 +46,7 @@ the typed attribute model that the rest of this package implements.  See
 became of each one here, and [[*History and Acknowledgments]] for the
 attribution they are owed.
 
-Beyond agents themselves, org-agents implements the remainder of that
-model over Org outlines:
+The other four parts, each with its own chapter below:
 
 #+attr_texinfo: :table-type table :indic asis
 - a corpus-wide attribute registry ::
