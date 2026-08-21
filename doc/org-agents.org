@@ -2410,7 +2410,10 @@ enumerate: the file names exist as a list before anything is read.
 hold is to walk the tree.  That difference decides which scopes are
 prefiltered ([[*Which scopes get narrowed, and why]]) and how an
 unreadable file is reported
-([[*A file the scope names but cannot open]]).
+([[*A file the scope names but cannot open]]).  It also decides whether the
+file set is stable between two updates: a described scope's walk can
+intermittently drop a symlink to a file on this platform, and an
+enumerating scope cannot.  See [[*Limitations of the prefilter]].
 
 A scope that names no directory is refused, before anything is spawned, so
 that a mistyped scope is diagnosed as one rather than as a prefilter
@@ -2913,9 +2916,12 @@ one unreadable file among two, ripgrep prints the readable match, writes
 =Permission denied= to stderr, /and/ exits 2 --- and a partial answer is
 exactly the unsound direction, so the whole answer is discarded and the
 scope is scanned live.  A symlink loop does the same by the same route,
-since =--follow= over one makes ripgrep exit 2.  Either way every agent
-over that root falls back to a live scan until the file or the loop is
-dealt with: slow, correct, and reported as =ripgrep failed=.
+since =--follow= over one makes ripgrep exit 2.  Under =auto= every agent
+over that root then falls back to a live scan until the file or the loop
+is dealt with: slow, correct, and reported as =ripgrep failed=.  Under
+=require= they *refuse to update at all*, which is that setting keeping
+its word --- one stray root-owned file anywhere under the root is enough
+to stop every corpus-scope agent, and the refusal names the reason.
 
 Finally, the intersection of ripgrep's answer with the scope's own file
 list depends on ripgrep's traversal not being narrower than
@@ -2926,7 +2932,23 @@ git repository, ripgrep skips dot-directories by default and the Emacs
 walk descends into them, and the Emacs walk matches its regexp with
 ~case-fold-search~ so =NOTES.ORG= is in the base set.  A file ripgrep
 failed to visit would be a match lost with no error, and those flags are
-the guarantee against it rather than something the intersection makes safe.
+what keeps ripgrep's traversal from being the narrower of the two rather
+than something the intersection makes safe.
+
+#+cindex: symlink, to a file, and an unstable base set
+#+findex: directory-files-recursively
+The Emacs walk has the last word, though, and on this platform it is
+itself not quite stable.  ~directory-files-recursively~ can
+intermittently drop a *symlink to a file* from an =active= or =all=
+scope's base set: ~file-name-all-completions~ sometimes reports such a
+link with a trailing slash, which makes the walk take it for a directory
+it must not follow.  So a corpus assembled out of per-file symlinks may
+see matches in the linked files appear and disappear between updates of
+the same agent, with *nothing said either time*.  A symlink to a
+/directory/ is unaffected, and so is the prefilter --- ripgrep reports
+the file either way.  This is the one place in this chapter where a
+match can go missing quietly, and it is not the prefilter's doing: name
+the files in an explicit =:AGENT_SCOPE:= list where that matters.
 
 * Views
 :PROPERTIES:
@@ -5320,6 +5342,14 @@ writes =:LAST_REPEAT:=. A dry run cannot show any of that, and the line
 you approved said =TODO -> DONE=. Advancing a repeater is a per-entry
 judgement, which is what {{{kbd(C-c C-t)}}} is for.
 
+The verb sets the keyword and *nothing else*: no =CLOSED= stamp, no state
+note, no statistics cookie refreshed in an ancestor, no tag trigger, and
+no org-edna trigger.  That is a consequence of the apply pass binding the
+hooks and the logging off, which is what keeps a run inside the rows its
+report showed; [[*The blast radius]] gives the list and the argument.  If
+you want an entry's whole state change, {{{kbd(C-c C-t)}}} is the command
+that does it.
+
 ~priority!(LETTER)~ takes one upper-case letter inside
 ~org-priority-highest~ to ~org-priority-lowest~, and names the range when
 it refuses.
@@ -5464,7 +5494,40 @@ after, because a promise about one buffer is not a promise about the
 corpus.
 
 The apply pass runs with hooks and logging bound off, so nothing arrives
-in the files that the report did not name.
+in the files that the report did not name.  Thirteen names are bound off:
+~org-after-todo-state-change-hook~, ~org-trigger-hook~,
+~org-property-changed-functions~, ~org-after-tags-change-hook~,
+~org-archive-hook~, ~org-archive-finalize-hook~, ~org-log-done~,
+~org-todo-log-states~, ~org-todo-state-tags-triggers~,
+~org-provide-todo-statistics~, ~org-log-reschedule~,
+~org-log-redeadline~ and ~org-archive-subtree-save-file-p~.  Measured,
+each of these through the real command: one function on
+~org-after-todo-state-change-hook~ left =:TRIGGERED: yes= on an entry the
+query never matched while the report said =1 edit at 1 entry in 1 file=,
+and ~org-log-done~ =time= added a =CLOSED:= line no line named.
+
+#+cindex: hooks, and what binding them off costs
+#+vindex: org-log-done
+#+vindex: org-provide-todo-statistics
+#+vindex: org-trigger-hook
+That is what the binding buys, and the cost is worth stating just as
+plainly: *~todo!~ sets the keyword and nothing else.*  No =CLOSED= stamp
+is added or removed, no state note is written --- a note would /prompt/,
+in the middle of a run over a corpus --- no statistics cookie in an
+ancestor is refreshed, and no tag trigger fires.  ~org-trigger-hook~ is
+org-edna's own mechanism, so a corpus with =org-edna-mode= on schedules no
+successors and unblocks nothing on the strength of a run here.  Everything
+in that list is something {{{kbd(C-c C-t)}}} on the same entry would have
+done, and if you want it, that is the command to use.
+
+~org-blocker-hook~ is deliberately *not* bound off: a blocker is your own
+refusal to let an entry change, and binding it off would widen a run past
+what your configuration allows.  Measured, though, ~org-todo~ fails
+*silently* when a blocker blocks --- a ~message~ and a ~throw~, with no
+signal --- so a blocked row would otherwise be reported =applied=.  That
+is why every applied row is *verified* after the fact: the entry is read
+back, and a row whose entry did not end up as its line said is reported as
+what happened rather than as success.
 
 ** How much one run may edit
 :PROPERTIES:
@@ -6120,7 +6183,9 @@ replaces an entry's tags.
 #+attr_texinfo: :options {Action Verb} todo! state
 #+begin_deffn
 #+cindex: @samp{todo!}, action verb
-Set the entry's TODO keyword to STATE. STATE is checked against
+Set the entry's TODO keyword to STATE, *and nothing else*: no =CLOSED=
+stamp, no state note, no statistics cookie in an ancestor, no tag trigger,
+no org-edna trigger.  See [[*The blast radius]].  STATE is checked against
 ~org-todo-keywords-1~ read in the match's own buffer, since those keywords
 are buffer-local.  A repeating entry is refused: ~org-todo~ would shift its
 stamp and write =:LAST_REPEAT:=, and the dry run cannot show either.

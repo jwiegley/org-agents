@@ -2455,7 +2455,10 @@ enumerate: the file names exist as a list before anything is read.
 hold is to walk the tree.  That difference decides which scopes are
 prefiltered (*note Which scopes get narrowed and why::) and how an
 unreadable file is reported (*note A file the scope names but cannot
-open::).
+open::).  It also decides whether the file set is stable between two
+updates: a described scope's walk can intermittently drop a symlink to a
+file on this platform, and an enumerating scope cannot.  See *note
+Limitations of the prefilter::.
 
    A scope that names no directory is refused, before anything is
 spawned, so that a mistyped scope is diagnosed as one rather than as a
@@ -2929,9 +2932,12 @@ writes ‘Permission denied’ to stderr, _and_ exits 2 -- and a partial
 answer is exactly the unsound direction, so the whole answer is
 discarded and the scope is scanned live.  A symlink loop does the same
 by the same route, since ‘--follow’ over one makes ripgrep exit 2.
-Either way every agent over that root falls back to a live scan until
-the file or the loop is dealt with: slow, correct, and reported as
-‘ripgrep failed’.
+Under ‘auto’ every agent over that root then falls back to a live scan
+until the file or the loop is dealt with: slow, correct, and reported as
+‘ripgrep failed’.  Under ‘require’ they *refuse to update at all*, which
+is that setting keeping its word -- one stray root-owned file anywhere
+under the root is enough to stop every corpus-scope agent, and the
+refusal names the reason.
 
    Finally, the intersection of ripgrep's answer with the scope's own
 file list depends on ripgrep's traversal not being narrower than
@@ -2942,8 +2948,21 @@ corpus is commonly a git repository, ripgrep skips dot-directories by
 default and the Emacs walk descends into them, and the Emacs walk
 matches its regexp with ‘case-fold-search’ so ‘NOTES.ORG’ is in the base
 set.  A file ripgrep failed to visit would be a match lost with no
-error, and those flags are the guarantee against it rather than
-something the intersection makes safe.
+error, and those flags are what keeps ripgrep's traversal from being the
+narrower of the two rather than something the intersection makes safe.
+
+   The Emacs walk has the last word, though, and on this platform it is
+itself not quite stable.  ‘directory-files-recursively’ can
+intermittently drop a *symlink to a file* from an ‘active’ or ‘all’
+scope's base set: ‘file-name-all-completions’ sometimes reports such a
+link with a trailing slash, which makes the walk take it for a directory
+it must not follow.  So a corpus assembled out of per-file symlinks may
+see matches in the linked files appear and disappear between updates of
+the same agent, with *nothing said either time*.  A symlink to a
+_directory_ is unaffected, and so is the prefilter -- ripgrep reports
+the file either way.  This is the one place in this chapter where a
+match can go missing quietly, and it is not the prefilter's doing: name
+the files in an explicit ‘:AGENT_SCOPE:’ list where that matters.
 
 
 File: org-agents.info,  Node: Views,  Next: Dynamic blocks,  Prev: Scope and the ripgrep prefilter,  Up: Top
@@ -5249,6 +5268,14 @@ writes ‘:LAST_REPEAT:’.  A dry run cannot show any of that, and the line
 you approved said ‘TODO -> DONE’.  Advancing a repeater is a per-entry
 judgement, which is what ‘C-c C-t’ is for.
 
+   The verb sets the keyword and *nothing else*: no ‘CLOSED’ stamp, no
+state note, no statistics cookie refreshed in an ancestor, no tag
+trigger, and no org-edna trigger.  That is a consequence of the apply
+pass binding the hooks and the logging off, which is what keeps a run
+inside the rows its report showed; *note The blast radius:: gives the
+list and the argument.  If you want an entry's whole state change, ‘C-c
+C-t’ is the command that does it.
+
    ‘priority!(LETTER)’ takes one upper-case letter inside
 ‘org-priority-highest’ to ‘org-priority-lowest’, and names the range
 when it refuses.
@@ -5381,7 +5408,36 @@ compared after, because a promise about one buffer is not a promise
 about the corpus.
 
    The apply pass runs with hooks and logging bound off, so nothing
-arrives in the files that the report did not name.
+arrives in the files that the report did not name.  Thirteen names are
+bound off: ‘org-after-todo-state-change-hook’, ‘org-trigger-hook’,
+‘org-property-changed-functions’, ‘org-after-tags-change-hook’,
+‘org-archive-hook’, ‘org-archive-finalize-hook’, ‘org-log-done’,
+‘org-todo-log-states’, ‘org-todo-state-tags-triggers’,
+‘org-provide-todo-statistics’, ‘org-log-reschedule’,
+‘org-log-redeadline’ and ‘org-archive-subtree-save-file-p’.  Measured,
+each of these through the real command: one function on
+‘org-after-todo-state-change-hook’ left ‘:TRIGGERED: yes’ on an entry
+the query never matched while the report said ‘1 edit at 1 entry in 1
+file’, and ‘org-log-done’ ‘time’ added a ‘CLOSED:’ line no line named.
+
+   That is what the binding buys, and the cost is worth stating just as
+plainly: *‘todo!’ sets the keyword and nothing else.*  No ‘CLOSED’ stamp
+is added or removed, no state note is written -- a note would _prompt_,
+in the middle of a run over a corpus -- no statistics cookie in an
+ancestor is refreshed, and no tag trigger fires.  ‘org-trigger-hook’ is
+org-edna's own mechanism, so a corpus with ‘org-edna-mode’ on schedules
+no successors and unblocks nothing on the strength of a run here.
+Everything in that list is something ‘C-c C-t’ on the same entry would
+have done, and if you want it, that is the command to use.
+
+   ‘org-blocker-hook’ is deliberately *not* bound off: a blocker is your
+own refusal to let an entry change, and binding it off would widen a run
+past what your configuration allows.  Measured, though, ‘org-todo’ fails
+*silently* when a blocker blocks -- a ‘message’ and a ‘throw’, with no
+signal -- so a blocked row would otherwise be reported ‘applied’.  That
+is why every applied row is *verified* after the fact: the entry is read
+back, and a row whose entry did not end up as its line said is reported
+as what happened rather than as success.
 
 
 File: org-agents.info,  Node: How much one run may edit,  Next: Destructive verbs and batch,  Prev: The blast radius,  Up: Action code
@@ -5999,11 +6055,13 @@ of the keywords in *note Value keywords:: unless it is quoted.  See
      ‘tag!’, which replaces an entry's tags.
 
  -- Action Verb: todo! state
-     Set the entry's TODO keyword to STATE.  STATE is checked against
-     ‘org-todo-keywords-1’ read in the match's own buffer, since those
-     keywords are buffer-local.  A repeating entry is refused:
-     ‘org-todo’ would shift its stamp and write ‘:LAST_REPEAT:’, and the
-     dry run cannot show either.
+     Set the entry's TODO keyword to STATE, *and nothing else*: no
+     ‘CLOSED’ stamp, no state note, no statistics cookie in an ancestor,
+     no tag trigger, no org-edna trigger.  See *note The blast radius::.
+     STATE is checked against ‘org-todo-keywords-1’ read in the match's
+     own buffer, since those keywords are buffer-local.  A repeating
+     entry is refused: ‘org-todo’ would shift its stamp and write
+     ‘:LAST_REPEAT:’, and the dry run cannot show either.
 
  -- Action Verb: priority! letter
      Set the entry's priority to LETTER: one upper-case letter, inside
@@ -6742,7 +6800,7 @@ C Concept Index
                                                               (line   6)
 * arbitrary Lisp in a query:             What is evaluated and what is refused.
                                                               (line   6)
-* archive!, action verb:                 Action verbs.        (line  62)
+* archive!, action verb:                 Action verbs.        (line  64)
 * ATTR_DEFAULT, and the prefilter:       Inheritance and pushability.
                                                               (line  44)
 * ATTR_DEFAULT, in resolution:           The resolution order.
@@ -6815,7 +6873,7 @@ C Concept Index
 * dangling prototype:                    The two diagnostics. (line   6)
 * date, attribute type:                  The six types.       (line  20)
 * date, in the examples' output:         The example corpus.  (line 123)
-* deadline!, action verb:                Action verbs.        (line  53)
+* deadline!, action verb:                Action verbs.        (line  55)
 * declaring an attribute:                Why declare attributes.
                                                               (line   6)
 * delete-property!, action verb:         Action verbs.        (line  22)
@@ -6839,7 +6897,7 @@ C Concept Index
                                                               (line   6)
 * edict, Tinderbox:                      Action code in Tinderbox.
                                                               (line   6)
-* effort!, action verb:                  Action verbs.        (line  57)
+* effort!, action verb:                  Action verbs.        (line  59)
 * empty, value keyword:                  Value keywords.      (line   6)
 * encoding, and a pushed literal:        Limitations of the prefilter.
                                                               (line   9)
@@ -6873,6 +6931,7 @@ C Concept Index
                                                               (line   6)
 * history:                               History and Acknowledgments.
                                                               (line   6)
+* hooks, and what binding them off costs: The blast radius.   (line  34)
 * ID, and readable link targets:         A corpus to work with.
                                                               (line  12)
 * inheritable action, and why there is none: What was deliberately not ported and why.
@@ -6967,7 +7026,7 @@ C Concept Index
                                                               (line   6)
 * previewing a query:                    Looking before you write.
                                                               (line   6)
-* priority!, action verb:                Action verbs.        (line  41)
+* priority!, action verb:                Action verbs.        (line  43)
 * pristine alias:                        The alias contract.  (line   6)
 * property drawer, a query in a:         Putting a query in a property drawer.
                                                               (line   6)
@@ -7032,7 +7091,7 @@ C Concept Index
                                                               (line   6)
 * safety:                                What is evaluated and what is refused.
                                                               (line   6)
-* scheduled!, action verb:               Action verbs.        (line  46)
+* scheduled!, action verb:               Action verbs.        (line  48)
 * scope:                                 Narrowing what the agent reads.
                                                               (line   6)
 * scope <1>:                             Scope and the ripgrep prefilter.
@@ -7063,6 +7122,8 @@ C Concept Index
 * superset argument:                     The push-down rules. (line   6)
 * symlink loop:                          Limitations of the prefilter.
                                                               (line  30)
+* symlink, to a file, and an unstable base set: Limitations of the prefilter.
+                                                              (line  55)
 * system attribute:                      Attributes in Tinderbox.
                                                               (line   6)
 * table view:                            The same matches as a table.
@@ -7165,14 +7226,16 @@ E Command, Function and Name Index
 * AGENT_SCOPE:                           Agent properties.     (line 25)
 * AGENT_SORT:                            Agent properties.     (line 32)
 * AGENT_VIEW:                            Agent properties.     (line 21)
-* archive!:                              Action verbs.         (line 61)
+* archive!:                              Action verbs.         (line 63)
 * ATTR_DEFAULT:                          Registry properties.  (line 27)
 * ATTR_FACES:                            Registry properties.  (line 35)
 * ATTR_TYPE:                             Registry properties.  (line 10)
 * ATTR_VALUES:                           Registry properties.  (line 18)
-* deadline!:                             Action verbs.         (line 52)
+* deadline!:                             Action verbs.         (line 54)
 * delete-property!:                      Action verbs.         (line 21)
-* effort!:                               Action verbs.         (line 56)
+* directory-files-recursively:           Limitations of the prefilter.
+                                                               (line 55)
+* effort!:                               Action verbs.         (line 58)
 * global-org-agents-faces-mode:          Activation.           (line 36)
 * global-org-agents-faces-mode <1>:      Faces in every Org buffer.
                                                                (line  6)
@@ -7271,7 +7334,7 @@ E Command, Function and Name Index
 * org-agents-update <3>:                 Commands.             (line  6)
 * org-agents-update <4>:                 What it changed.      (line 20)
 * org-agents-update-all:                 Your first agent.     (line 51)
-* org-agents-update-all <1>:             Scopes.               (line 48)
+* org-agents-update-all <1>:             Scopes.               (line 51)
 * org-agents-update-all <2>:             By hand.              (line  6)
 * org-agents-update-all <3>:             Commands.             (line 17)
 * org-agents-update-all <4>:             What it changed.      (line 20)
@@ -7291,7 +7354,7 @@ E Command, Function and Name Index
 * org-ql-defpred:                        Putting a query in a property drawer.
                                                                (line  6)
 * org-ql-search:                         What Org already had. (line 34)
-* priority!:                             Action verbs.         (line 40)
+* priority!:                             Action verbs.         (line 42)
 * property-resolved:                     Prototypes in Tinderbox.
                                                                (line 36)
 * property-resolved <1>:                 Reads are virtual.    (line 22)
@@ -7300,7 +7363,7 @@ E Command, Function and Name Index
 * property-resolved <3>:                 Org and org-ql.       (line 16)
 * revert-buffer:                         Reviewing what you approved.
                                                                (line 43)
-* scheduled!:                            Action verbs.         (line 45)
+* scheduled!:                            Action verbs.         (line 47)
 * set-property!:                         Action verbs.         (line 12)
 * tag!:                                  Action verbs.         (line 27)
 * todo!:                                 Action verbs.         (line 33)
@@ -7340,7 +7403,7 @@ F Variable Index
 * org-agents-exclude <4>:                User options.        (line  18)
 * org-agents-files:                      Activation.          (line  13)
 * org-agents-files <1>:                  Your first agent.    (line  51)
-* org-agents-files <2>:                  Scopes.              (line  48)
+* org-agents-files <2>:                  Scopes.              (line  51)
 * org-agents-files <3>:                  User options.        (line  10)
 * org-agents-prefilter:                  What an agent is.    (line  70)
 * org-agents-prefilter <1>:              Activation.          (line  23)
@@ -7373,12 +7436,15 @@ F Variable Index
 * org-directory <2>:                     Scopes.              (line   6)
 * org-directory <3>:                     The example corpus.  (line 108)
 * org-id-locations:                      Naming a master.     (line   6)
+* org-log-done:                          The blast radius.    (line  34)
 * org-property-allowed-value-functions:  Activation.          (line  28)
 * org-property-allowed-value-functions <1>: What Org already had.
                                                               (line   6)
 * org-property-allowed-value-functions <2>: Completing declared values.
                                                               (line   6)
+* org-provide-todo-statistics:           The blast radius.    (line  34)
 * org-ql-ask-unsafe-queries:             The structural gate. (line  55)
+* org-trigger-hook:                      The blast radius.    (line  34)
 * org-use-property-inheritance:          Prototypes in Tinderbox.
                                                               (line  46)
 * org-use-property-inheritance <1>:      Inheritance and pushability.
@@ -7430,97 +7496,97 @@ Node: Refused queries106335
 Node: Reviewing what you approved108247
 Node: Scope and the ripgrep prefilter112371
 Node: Scopes113801
-Node: Which scopes get narrowed and why116157
-Node: What the prefilter can and cannot do118445
-Node: The push-down rules120967
-Node: Inheritance and pushability126684
-Node: Bounding a run130107
-Node: A file the scope names but cannot open135786
-Node: Limitations of the prefilter138659
-Node: Views141356
-Node: Choosing a view143258
-Node: The children view145010
-Node: The alias contract147105
-Node: The list view151161
-Node: The table view152521
-Node: Formats155262
-Node: Sorting and limiting157200
-Node: Limitations of the views160391
-Node: Dynamic blocks162290
-Node: Inserting a block163414
-Node: Block parameters164397
-Node: Several blocks under one agent167951
-Node: Limitations of dynamic blocks171669
-Node: Updating174449
-Node: By hand176324
-Node: Looking before you write179847
-Node: org-agents-mode181099
-Node: global-org-agents-mode183909
-Node: The three refusals on the save path185884
-Node: What writing AGENT_MATCHED costs188737
-Node: Limitations of updating190594
-Node: The attribute registry192233
-Node: Why declare attributes193653
-Node: The registry file195943
-Node: The declaration197837
-Node: The six types199756
-Node: It is pure data202965
-Node: Checking a corpus204670
-Node: Completing declared values208866
-Node: A corpus-wide column view210681
-Node: Limitations of the registry212873
-Node: Prototypes214430
-Node: What a prototype is215684
-Node: Declaring masters216787
-Node: Naming a master217897
-Node: The resolution order219645
-Node: Why outline inheritance is not in that order222472
-Node: Reads are virtual223823
-Node: Names that never travel225735
-Node: The two diagnostics227283
-Node: Limitations of prototypes228619
-Node: Appearance229421
-Node: Faces from attribute values230715
-Node: The ATTR_FACES syntax231652
-Node: From declaration to headline232522
-Node: It changes no bytes234420
-Node: Faces in every Org buffer235358
-Node: Precedence and following an edit236865
-Node: The two refusals238226
-Node: Action code239221
-Node: The three refusals240662
-Node: Writing an action242840
-Node: The nine verbs244244
-Node: Value keywords248026
-Node: The dry run249377
-Node: The blast radius251791
-Node: How much one run may edit252766
-Node: Destructive verbs and batch254355
-Node: The same command over a selection255939
-Node: The trust model257192
-Node: Writing a verb of your own258383
-Node: Limitations of action code259730
-Node: Reference261391
-Node: Commands262427
-Node: Minor modes266949
-Node: User options268322
-Node: Agent properties275344
-Node: Registry properties278766
-Node: Action verbs280958
-Node: Functions for Lisp callers284404
-Node: History and Acknowledgments286964
-Node: Tinderbox288569
-Node: What org-agents took290617
-Node: What it changed293780
-Node: What was deliberately not ported and why298610
-Node: Org and org-ql304725
-Node: Trademarks and non-affiliation307447
-Node: The example corpus308582
-Node: GNU General Public License313070
-Node: Concept Index313943
-Node: Key Index347783
-Node: Command Function and Name Index350185
-Node: Variable Index361149
+Node: Which scopes get narrowed and why116389
+Node: What the prefilter can and cannot do118677
+Node: The push-down rules121199
+Node: Inheritance and pushability126916
+Node: Bounding a run130339
+Node: A file the scope names but cannot open136018
+Node: Limitations of the prefilter138891
+Node: Views142713
+Node: Choosing a view144615
+Node: The children view146367
+Node: The alias contract148462
+Node: The list view152518
+Node: The table view153878
+Node: Formats156619
+Node: Sorting and limiting158557
+Node: Limitations of the views161748
+Node: Dynamic blocks163647
+Node: Inserting a block164771
+Node: Block parameters165754
+Node: Several blocks under one agent169308
+Node: Limitations of dynamic blocks173026
+Node: Updating175806
+Node: By hand177681
+Node: Looking before you write181204
+Node: org-agents-mode182456
+Node: global-org-agents-mode185266
+Node: The three refusals on the save path187241
+Node: What writing AGENT_MATCHED costs190094
+Node: Limitations of updating191951
+Node: The attribute registry193590
+Node: Why declare attributes195010
+Node: The registry file197300
+Node: The declaration199194
+Node: The six types201113
+Node: It is pure data204322
+Node: Checking a corpus206027
+Node: Completing declared values210223
+Node: A corpus-wide column view212038
+Node: Limitations of the registry214230
+Node: Prototypes215787
+Node: What a prototype is217041
+Node: Declaring masters218144
+Node: Naming a master219254
+Node: The resolution order221002
+Node: Why outline inheritance is not in that order223829
+Node: Reads are virtual225180
+Node: Names that never travel227092
+Node: The two diagnostics228640
+Node: Limitations of prototypes229976
+Node: Appearance230778
+Node: Faces from attribute values232072
+Node: The ATTR_FACES syntax233009
+Node: From declaration to headline233879
+Node: It changes no bytes235777
+Node: Faces in every Org buffer236715
+Node: Precedence and following an edit238222
+Node: The two refusals239583
+Node: Action code240578
+Node: The three refusals242019
+Node: Writing an action244197
+Node: The nine verbs245601
+Node: Value keywords249845
+Node: The dry run251196
+Node: The blast radius253610
+Node: How much one run may edit256537
+Node: Destructive verbs and batch258126
+Node: The same command over a selection259710
+Node: The trust model260963
+Node: Writing a verb of your own262154
+Node: Limitations of action code263501
+Node: Reference265162
+Node: Commands266198
+Node: Minor modes270720
+Node: User options272093
+Node: Agent properties279115
+Node: Registry properties282537
+Node: Action verbs284729
+Node: Functions for Lisp callers288347
+Node: History and Acknowledgments290907
+Node: Tinderbox292512
+Node: What org-agents took294560
+Node: What it changed297723
+Node: What was deliberately not ported and why302553
+Node: Org and org-ql308668
+Node: Trademarks and non-affiliation311390
+Node: The example corpus312525
+Node: GNU General Public License317013
+Node: Concept Index317886
+Node: Key Index351950
+Node: Command Function and Name Index354352
+Node: Variable Index365460
 
 End Tag Table
 
