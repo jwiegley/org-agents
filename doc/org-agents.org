@@ -361,7 +361,6 @@ written bare.
 #+findex: org-dynamic-block-insert-dblock
 #+findex: org-agents-insert-dblock
 *This package binds no keys.*  The one keymap it defines is local to the
-*This package binds no keys.*  The one keymap it defines is local to the
 buffer =org-agents-list-approvals= pops up (see
 [[*Reviewing what you approved]]).  Every command in this manual is
 therefore shown as {{{kbd(M-x org-agents-update)}}} and the like.  Three
@@ -514,7 +513,6 @@ semi-colon delimited lists.
 #+end_quote
 
 *What org-agents made of it.*  Org's own drawer properties are the system
-*What org-agents made of it.*  Org's own drawer properties are the system
 attributes: they exist on every entry, Org gives several of them meaning,
 and you may read and write any of them.  What Org has no notion of is the
 other half.  A property drawer is untyped and undeclared: =:REVIEWS: lots=
@@ -586,7 +584,6 @@ note's prototype is not necessarily its container.
 #+findex: property-resolved
 #+findex: org-agents-resolve-property
 *What org-agents made of it.*  =:PROTOTYPE:= on any entry names a master,
-*What org-agents made of it.*  =:PROTOTYPE:= on any entry names a master,
 either by name out of a reserved =Prototypes= section of the registry
 file (the same name Tinderbox gives the same container) or as =id:UUID=
 anywhere in the corpus.  The resolution order is Tinderbox's checklist,
@@ -640,7 +637,6 @@ alias of any note that matches the agent's query.
 --- /Agents/, =tbxman920:2538--2545=
 #+end_quote
 
-*What org-agents made of it.*  An ordinary Org entry carrying
 *What org-agents made of it.*  An ordinary Org entry carrying
 =:AGENT_QUERY:=; the property is what makes the entry an agent, exactly
 as =$AgentQuery= is what makes a Tinderbox note one.  =:AGENT_ACTION:= is
@@ -699,7 +695,6 @@ result discarded.  For example, the action runCommand("open
 
 #+cindex: @samp{AGENT_ACTION}, agent property
 #+findex: org-agents-apply-actions
-*What org-agents made of it.*  =:AGENT_ACTION:= holds a declarative
 *What org-agents made of it.*  =:AGENT_ACTION:= holds a declarative
 sentence over a *fixed vocabulary of nine verbs* --- =set-property!=,
 =delete-property!=, =tag!=, =todo!=, =priority!=, =scheduled!=,
