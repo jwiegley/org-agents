@@ -176,7 +176,7 @@
 ;; a bad type costs its entry, a bad anything-else costs only that field.
 ;; The file is read lazily and at most once per edit, including an edit
 ;; not yet saved.  See `org-agents-attribute' for the declaration a
-;; reader gets back, and docs/attributes-example.org for a whole file.
+;; reader gets back, and doc/attributes-example.org for a whole file.
 ;;
 ;; Prototypes:
 ;;
@@ -414,9 +414,9 @@
 ;; lines here, then compiles this one and fails on any warning at all.
 ;;
 ;; For the evaluation gate as it stands, see the `;;;; Gate' section below
-;; and README.md's "The query language": docs/design.md's own §Safety is
+;; and README.md's "The query language": doc/design.md's own §Safety is
 ;; superseded in part, and says at its head which four statements no
-;; longer describe the code.  See docs/design.md for the renderers.  Do
+;; longer describe the code.  See doc/design.md for the renderers.  Do
 ;; NOT read its push-down table: that table describes the PostgreSQL
 ;; prefilter this package used to have, and its per-row justifications
 ;; are facts about SQL operators that no longer run -- a heading literal
@@ -1328,7 +1328,7 @@ refuse one, or lift a refusal.  See `org-agents-approvals-mode'."
 ;;
 ;; Soundness evidence: the `org-agents-test-rg-covers-*' tests, each of
 ;; which names the fixture file it loses under the mutation it guards
-;; against, and README.md's push-down table.  Not docs/design.md's
+;; against, and README.md's push-down table.  Not doc/design.md's
 ;; table, which is the removed database's -- see the Commentary.
 
 (defun org-agents--heading-literals-p (strings)
@@ -7064,7 +7064,7 @@ for a user who asked for it by name."
 ;; NO WRITES, of any kind, from an appearance declaration.  Setting a tag
 ;; or a TODO state from a resolved value is action code arriving through
 ;; another door: it would be INHERITABLE behaviour, which part 3 of
-;; docs/research/action-code-safety.md is about -- a master's declaration
+;; doc/research/action-code-safety.md is about -- a master's declaration
 ;; running in every follower's file makes per-file trust meaningless.  Any
 ;; such thing goes through the action-code trust model or not at all.
 
@@ -7429,7 +7429,7 @@ refusals."
     ;; IDEMPOTENT, and it has to be.  `define-minor-mode' runs this body on
     ;; every `(mode 1)' however often the mode is already on, and two
     ;; enables reach one buffer through the two configurations
-    ;; docs/init-snippet.org recommends side by side: the globalized mode
+    ;; doc/init-snippet.org recommends side by side: the globalized mode
     ;; arms the buffer from `after-change-major-mode-hook', and
     ;; `hack-local-variables' then honours a file-local
     ;; `mode: org-agents-faces' and asks for it again.  Recorded

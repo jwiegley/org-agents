@@ -4789,7 +4789,7 @@ second section."
 
 (ert-deftest org-agents-test-prototype-shipped-example-reads-cleanly ()
   "The registry the package SHIPS reads with no diagnostic at all.
-`docs/attributes-example.org' is the file the README and the init snippet
+`doc/attributes-example.org' is the file the README and the init snippet
 both send a reader to, so it has to be a file this reader accepts -- and
 the mistake it guards against is a real one, made while writing it: a
 top-level heading of PROSE in that file is not prose, it is an attribute
@@ -4800,7 +4800,7 @@ says so.
 Guarded on the file rather than assumed: `make test' runs with the
 repository root as `default-directory', and a suite run from elsewhere
 should skip this rather than fail it."
-  (let ((example (expand-file-name "docs/attributes-example.org")))
+  (let ((example (expand-file-name "doc/attributes-example.org")))
     (skip-unless (file-readable-p example))
     (let* ((org-agents-attributes-file example)
            (org-agents--attributes-cache nil)
@@ -4822,7 +4822,7 @@ should skip this rather than fail it."
 They claimed `(and (todo) $STATUS^)' was
 `(and (todo) (property-resolved \"STATUS\" \"wip\"))' \"written short\".  It is
 not, and the difference is not academic: MEASURED against the shipped
-`docs/attributes-example.org' as a live registry, the value form selected
+`doc/attributes-example.org' as a live registry, the value form selected
 the two followers the file prints and the caret form selected those two
 AND an unrelated TODO carrying no `:STATUS:' and no `:PROTOTYPE:' at all --
 because that file declares `:ATTR_DEFAULT: open', and a declared default
@@ -8510,7 +8510,7 @@ message about a file that is not there."
 The epic's headline claim, and the guard against action code arriving
 through the appearance door: an appearance declaration that could set a
 tag or a TODO state would be inheritable behaviour, which is what
-`docs/research/action-code-safety.md' part 3 says makes per-file trust
+`doc/research/action-code-safety.md' part 3 says makes per-file trust
 meaningless.
 So the writers are watched by name, and every other way of noticing a
 write is asserted beside them -- the modification flag, the character
@@ -8637,7 +8637,7 @@ rather than merely recording it."
   "Enabling the mode twice leaves one wrap, and fontification still works.
 `define-minor-mode' runs the enable body on every `(mode 1)', and two
 enables reach one buffer through the two configurations
-docs/init-snippet.org recommends side by side: `global-org-agents-faces-mode'
+doc/init-snippet.org recommends side by side: `global-org-agents-faces-mode'
 arms the buffer, and a file-local `mode: org-agents-faces' then asks for
 it again.  MEASURED before the guard: the second pass found
 `font-lock-fontify-region-function' local BECAUSE THE FIRST MADE IT LOCAL

@@ -256,7 +256,7 @@ the package can complete it, lint it, and put it in a column.
 It is optional. `org-agents-attributes-file` defaults to
 `~/org/attributes.org`, and a file that is not there declares nothing and
 says nothing about it: the package never creates it and never assumes it
-exists. `docs/attributes-example.org` is a whole one, written out.
+exists. `doc/attributes-example.org` is a whole one, written out.
 
 ### The file
 
@@ -926,7 +926,7 @@ TODO state or a property from a resolved value is action code arriving
 through another door. What makes it different in kind from facing a headline
 is that it would be *inheritable behaviour*: a master's declaration running
 in every follower's file, in files you never opened, is what part 3 of
-`docs/research/action-code-safety.md` says makes per-file trust
+`doc/research/action-code-safety.md` says makes per-file trust
 meaningless. Any such thing goes through the action-code trust model or not
 at all.
 
@@ -1856,7 +1856,7 @@ is somebody else's live Emacs configuration.
 A full run takes about five seconds, or ten if the script has to search
 the nix store for an Emacs. An earlier note in this repository claimed two
 and a half minutes; that is not reproducible and should not be budgeted
-for — see `docs/measured-facts.md` E9, which was written to kill exactly
+for — see `doc/measured-facts.md` E9, which was written to kill exactly
 that belief. Do not skip the gate on the assumption it is slow: it is the
 only thing enforcing the zero-warning invariant.
 

@@ -24,7 +24,7 @@ adding itself to a user's hook at load time, so the =:init= =add-hook= in
 the block below is what arms it. Point =org-agents-attributes-file= at the
 Org file that declares your attributes — the default is
 =~/org/attributes.org=, and one that is not there declares nothing and says
-nothing about it. =docs/attributes-example.org= is a whole one, written out.
+nothing about it. =doc/attributes-example.org= is a whole one, written out.
 
 That same file carries the prototypes. A reserved top-level =* Prototypes=
 section holds master entries, and any entry in the corpus reads through one
@@ -120,7 +120,7 @@ to the position it appears in.
   ;; `:PROTOTYPE:' names.  Pure data; nothing in it is ever evaluated.
   ;; Optional: one that is not there declares nothing, names no prototype,
   ;; and says nothing about either, and the package never creates it.
-  ;; docs/attributes-example.org is a whole one, written out.  Named here
+  ;; doc/attributes-example.org is a whole one, written out.  Named here
   ;; rather than left at the default only because ~/org is where it
   ;; belongs on this machine and `org-file' is what spells that.
   (org-agents-attributes-file (org-file "attributes.org"))

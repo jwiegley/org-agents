@@ -28,7 +28,7 @@
 
 **Tech Stack:** Emacs Lisp (org-ql 20250421.133, Org 9.8.7, ERT), one small Haskell change in `~/src/org-jw` (tasty/HUnit test).
 
-**Spec:** `docs/superpowers/specs/2026-08-18-org-agents-design.md` (revision 2). Review that produced it: `docs/superpowers/specs/2026-08-18-org-agents-design-review.md`.
+**Spec:** `doc/superpowers/specs/2026-08-18-org-agents-design.md` (revision 2). Review that produced it: `doc/superpowers/specs/2026-08-18-org-agents-design-review.md`.
 
 ## Global Constraints
 
@@ -784,7 +784,7 @@ skipped instead of prompting."
 ;; Each classifier returns the CLI conjunct to push (a sexp), or nil.
 ;; A row may only push a conjunct that is a SUPERSET of the org-ql
 ;; predicate's matches — the prefilter narrows files; org-ql decides.
-;; Divergence evidence: docs/superpowers/specs/2026-08-18-org-agents-design-review.md C1.
+;; Divergence evidence: doc/superpowers/specs/2026-08-18-org-agents-design-review.md C1.
 (defconst org-agents--literal-regexp "[][*+?^$\\.{}|]"
   "Characters that make a string a regexp rather than a literal.")
 

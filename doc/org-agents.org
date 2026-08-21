@@ -2646,7 +2646,7 @@ literals of one ~heading~ are emitted as several patterns and
 
 The authority for all of this is ~org-agents--pushdown-fns~ in the source,
 whose every row states its own superset argument.  One warning is owed to
-anyone reading the repository's design notes.  The file =docs/design.md=
+anyone reading the repository's design notes.  The file =doc/design.md=
 carries a push-down table describing a PostgreSQL prefilter this package
 no longer has, and its per-row justifications are facts about SQL
 operators that no longer run.  Extending the rules on those arguments can

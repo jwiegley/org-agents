@@ -23,7 +23,7 @@ LOAD     := -L . -L "$(DEPS_DIR)"
 LOADTESTS := -l org-agents-test.el
 
 # The manual.  `doc/' is the Emacs and Org convention for a shipped manual
-# and is where `install-info' expects to find one; the repository's `docs/'
+# and is where `install-info' expects to find one; the repository's `doc/'
 # beside it holds design and working notes, which are a different thing
 # with a different lifetime.  The two names nearly collide: mind which one
 # you are in.

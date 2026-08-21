@@ -8,7 +8,7 @@
 > what makes the requirement credible rather than decorative.
 
 **Date:** 2026-08-18
-**Scope:** frozen snapshot of `docs/superpowers/specs/2026-08-18-org-agents-design.md` (225 lines) at dot-emacs `b869cdacc`, org-jw `4047166`
+**Scope:** frozen snapshot of `doc/superpowers/specs/2026-08-18-org-agents-design.md` (225 lines) at dot-emacs `b869cdacc`, org-jw `4047166`
 **Process:** seven concurrent, independent, read-only passes, each in a no-history subagent (isolation proven by sentinel probe, verified with `verify-history-isolation.py`). 119 raw findings, deduplicated below. Line numbers cite the snapshot, which is identical to the canonical spec at review time.
 
 | Pass | Result | Findings (by severity) |
