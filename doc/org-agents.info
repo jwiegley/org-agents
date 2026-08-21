@@ -575,13 +575,15 @@ File: org-agents.info,  Node: Agents in the Tinderbox tradition,  Next: Tutorial
 ***********************************
 
 Nothing in the model this package implements is its own invention.
-Agents, prototypes, action code and user-defined attributes are
-Tinderbox's: a Macintosh application for notes, published by Eastgate
-Systems, Inc., and designed by Mark Bernstein, where those ideas have
-been in continuous use since 2002.  org-agents is an independent Emacs
-implementation of five of them over Org outlines.  It is not affiliated
-with, endorsed by, or connected to Eastgate Systems in any way, and
-nothing in it derives from Tinderbox's code.
+Agents, prototypes, action code, user-defined attributes and appearance
+driven from an attribute's value are Tinderbox's: a Macintosh
+application for notes, published by Eastgate Systems, Inc., and designed
+by Mark Bernstein, whose copyright notice reads "Tinderbox is ©
+Copyright 2002-2021 by Eastgate Systems, Inc."  (‘tbxman920:5626’).
+org-agents is an independent Emacs implementation of those five ideas
+over Org outlines.  It is not affiliated with, endorsed by, or connected
+to Eastgate Systems in any way, and nothing in it derives from
+Tinderbox's code.
 
    This chapter is here rather than in an appendix because the ideas are
 easier to learn in the order Tinderbox arrived at them than in the order
@@ -675,7 +677,7 @@ carries more than a name:
      choice included number, string, URL, or list -- and set the default
      value that the attribute should use.  A text field labeled
      "Description" invites you to write a brief explanation of the way
-     you intend to use the new attribute.
+     you intend to use the new attribute...
 
      -- _User Attributes_, ‘tbxman920:1534--1536’
 
@@ -723,7 +725,11 @@ File: org-agents.info,  Node: Prototypes in Tinderbox,  Next: Agents in Tinderbo
      the prototype of the second: it shares all the properties of the
      prototype, except where we specify otherwise.
 
-     -- _Prototypes_, ‘tbxman920:1682--1683’
+     -- _Prototypes_, ‘tbxman920:1682--1685’
+
+   The plain-text edition of that passage has its clauses out of order,
+an artifact of the extraction; the sentence above is those four lines
+put back in the order the words require.
 
    The lookup rule is a short checklist:
 
@@ -748,11 +754,11 @@ File: org-agents.info,  Node: Prototypes in Tinderbox,  Next: Agents in Tinderbo
 master, either by name out of a reserved ‘Prototypes’ section of the
 registry file -- the same name Tinderbox gives the same container -- or
 as ‘id:UUID’ anywhere in the corpus.  The resolution order is
-Tinderbox's checklist item for item: the entry's own drawer, then the
-chain nearest hop first, then the registry's ‘:ATTR_DEFAULT:’, then
-nothing.  Reads are virtual, so a master may be changed once and every
-follower changes with it.  See *note Prototypes:: and *note The
-resolution order::.
+Tinderbox's checklist, with its two prototype steps written as one walk
+of the chain: the entry's own drawer, then the chain nearest hop first,
+then the registry's ‘:ATTR_DEFAULT:’, then nothing.  Reads are virtual,
+so a master may be changed once and every follower changes with it.  See
+*note Prototypes:: and *note The resolution order::.
 
    Org does have an inheritance of its own --
 ‘org-use-property-inheritance’ makes a property visible to an entry's
@@ -777,7 +783,7 @@ File: org-agents.info,  Node: Agents in Tinderbox,  Next: Action code in Tinderb
      represent overdue library books and automatically set their color
      to red.
 
-     -- _Notes and Containers_, ‘tbxman920:1015--1017’
+     -- _Anatomy Of A Note_, ‘tbxman920:1015--1017’
 
    The property that makes a note an agent, and the one that gives it
 something to do:
@@ -4299,10 +4305,15 @@ File: org-agents.info,  Node: The six types,  Next: It is pure data,  Prev: The 
      Whitespace-separated members, every one admitted by the vocabulary.
      Duplicates are fine and order is significant.
 
-   ‘set’ and ‘list’ are Tinderbox's, with Tinderbox's meanings kept
-exactly: unordered-unique and ordered.  Only the separator changed.  See
-*note Attributes in Tinderbox:: for the correspondence, and *note What
-it changed:: for why.
+   ‘set’ and ‘list’ are Tinderbox's distinction -- a set's members are
+unique, a list's may repeat and are ordered -- but the correspondence
+stops at the distinction.  Tinderbox *coerces*: "passing a List with
+duplicate values to a Set will remove duplicates"
+(‘tbxman920:1439--1440’).  This package *validates*: a repeated member
+makes the value invalid and the lint says so, and nothing here
+canonicalises order or compares two sets order-insensitively.  The
+separator is whitespace rather than semicolons.  See *note Attributes in
+Tinderbox:: for the correspondence, and *note What it changed:: for why.
 
    The predicate behind all six is available to Lisp as
 ‘org-agents-attribute-valid-p’.  Some measured answers:
@@ -4686,7 +4697,11 @@ and stops at the first that answers:
   3. *the registry's* ‘:ATTR_DEFAULT:’ for that name;
   4. *nil*.
 
-   This is Tinderbox's own checklist, item for item; see *note
+   This is Tinderbox's own checklist, with its two prototype steps --
+the prototype's value, then the prototype's prototype's -- written as
+one walk of the chain, and with one step Tinderbox does not need: an
+undeclared property has no default to fall back to, where every
+Tinderbox attribute is typed and therefore always has one.  See *note
 Prototypes in Tinderbox:: for the passage it comes from.  The chain is
 bounded at a thousand hops, which is a guard against a malformed corpus
 and not a budget.
@@ -4884,9 +4899,9 @@ File: org-agents.info,  Node: Appearance,  Next: Action code,  Prev: Prototypes,
 
 In Tinderbox a note's colour is an attribute, and a rule or an agent
 action assigns it: "an agent that contains 'urgent tasks' can
-automatically change their color in order to draw your attention."  The
-idea is that a document's appearance should follow from its data rather
-than from a separate act of formatting.
+automatically change their color in order to draw your attention"
+(‘tbxman920:2792’).  The idea is that a document's appearance should
+follow from its data rather than from a separate act of formatting.
 
    org-agents keeps the idea and changes the mechanism completely, for
 one reason: in Tinderbox, setting ‘$Color’ is a *write* to a note, and
@@ -6106,21 +6121,25 @@ File: org-agents.info,  Node: Tinderbox,  Next: What org-agents took,  Up: Histo
 ==============
 
 Tinderbox is a Macintosh application for notes, published by Eastgate
-Systems, Inc.  of Watertown, Massachusetts, and designed by Mark
-Bernstein.  Its own manual describes _The Tinderbox Way_ as "a book
-about the design and philosophy of Tinderbox written by Tinderbox
-designer Mark Bernstein" (‘tbxman920:1171’).  The application has been
-shipping since 2002; its copyright notice reads "Tinderbox is ©
-Copyright 2002-2021 by Eastgate Systems, Inc."  (‘tbxman920:5626’).
+Systems, Inc.  and designed by Mark Bernstein.  Its own manual describes
+_The Tinderbox Way_ as "a book about the design and philosophy of
+Tinderbox written by Tinderbox designer Mark Bernstein"
+(‘tbxman920:1171’).  Its copyright notice reads "Tinderbox is ©
+Copyright 2002-2021 by Eastgate Systems, Inc."  (‘tbxman920:5626’),
+which is the whole of what this manual knows about how long these ideas
+have been in use.
 
    A Tinderbox document holds notes, each with a large space of named,
 typed attributes; those attributes drive everything else, including what
 a note looks like, what inherits from what, which notes an agent
 gathers, and what an action does.  Every claim this manual makes about
-Tinderbox is supported by a quotation from the *v9.2* manual, cited by
-line number in its plain-text edition as ‘tbxman920:LINE’.  The version
-matters: later releases may differ, and nothing here should be read as a
-description of any version but that one.
+how Tinderbox _behaves_ is supported by a quotation from the *v9.2*
+manual, cited by line number in its plain-text edition as
+‘tbxman920:LINE’.  The version matters: later releases may differ, and
+nothing here should be read as a description of any version but that
+one.  Where this manual describes Eastgate or its product rather than
+the software's behaviour, and carries no citation, the statement is the
+author's own and Eastgate's site is the authority.
 
    What makes the model worth borrowing into Emacs is not any one of its
 features but the shape of the whole.  Tinderbox treats a query as a
@@ -6162,7 +6181,7 @@ User Attributes
      ‘1472--1475’).  Here: the registry file, one top-level entry per
      attribute.  See *note The attribute registry::.
 Prototypes
-     "It shares all the properties of the prototype, except where we
+     "[I]t shares all the properties of the prototype, except where we
      specify otherwise" (‘tbxman920:1683’), by a checklist that consults
      the note, then its chain, then the default
      (‘tbxman920:1739--1746’), and independently of the outline:
@@ -6186,10 +6205,12 @@ Appearance from attribute values
 respectively: "Lists are strings separated by semicolons"
 (‘tbxman920:1428’), and "Sets are best though of as a special form of
 List.  Sets only hold one instance of any given value"
-(‘tbxman920:1439’).  And the relative date words ‘today’ and ‘now’ that
-the action verbs accept are Tinderbox's too: for a date value "you can
-also use the terms yesterday, today, and tomorrow, and add or subtract
-units of time" (‘tbxman920:1398--1399’).
+(‘tbxman920:1439’).  The distinction is taken; the coercion Tinderbox
+performs with it is not, and *note What it changed:: says so.  And the
+relative date words ‘today’ and ‘now’ that the action verbs accept are
+Tinderbox's too: for a date value "you can also use the terms yesterday,
+today, and tomorrow, and add or subtract units of time"
+(‘tbxman920:1398--1399’).
 
    *note The vocabulary map:: gives the whole correspondence as one
 table, with a pointer for each row.
@@ -6262,15 +6283,17 @@ The action language became a vocabulary
    Three smaller changes, for completeness.  ‘set’ and ‘list’ members
 are separated by whitespace rather than semicolons, because whitespace
 is what Org's own ‘NAME_ALL’ convention uses and therefore what
-‘org-property-get-allowed-values’ already reads; the semantics are
-Tinderbox's exactly.  Tinderbox's boolean coercions -- "the number 0,
-the empty string, and the date ‘never’ are considered to be false"
-(‘tbxman920:1391--1392’) -- are not ported: here those are values that
-fail to be booleans, and the lint says so, rather than values silently
-read as false.  And a number may not carry an exponent, though Tinderbox
-allows "either an integer or a floating point (decimal) number, positive
-or negative" (‘tbxman920:1426’), because ‘1e3’ in an Org drawer is far
-more likely to be a product code than a thousand.
+‘org-property-get-allowed-values’ already reads; and the uniqueness a
+set means is *validated* here where Tinderbox coerces it, so a repeated
+member is a lint finding rather than a silently dropped duplicate.
+Tinderbox's boolean coercions -- "the number 0, the empty string, and
+the date ‘never’ are considered to be false" (‘tbxman920:1391--1392’) --
+are not ported: here those are values that fail to be booleans, and the
+lint says so, rather than values silently read as false.  And a number
+may not carry an exponent, though Tinderbox allows "either an integer or
+a floating point (decimal) number, positive or negative"
+(‘tbxman920:1426’), because ‘1e3’ in an Org drawer is far more likely to
+be a product code than a thousand.
 
 
 File: org-agents.info,  Node: What was deliberately not ported and why,  Next: Org and org-ql,  Prev: What it changed,  Up: History and Acknowledgments
@@ -6312,13 +6335,17 @@ the alias/original live proxy, and the ‘original’ designator, ‘tbxman920:1
      property.
 ‘$AgentPriority’, ‘tbxman920:2549’
      It exists to schedule a timer, and there is no timer.
-the ‘Action’ attribute type, ‘tbxman920:1455’
-     Its values are evaluated when used.  The registry is pure data; a
-     type like this is precisely what could not be ported without giving
-     that up.
-the ‘color’, ‘file’, ‘interval’, ‘URL’ and ‘dictionary’ types, ‘tbxman920:1375--1456’
+the ‘Action’ attribute type, ‘tbxman920:1454--1456’
+     Its values "are evaluated as such when used".  The registry is pure
+     data; a type like this is precisely what could not be ported
+     without giving that up.
+the ‘color’, ‘file’, ‘interval’ and ‘URL’ types, ‘tbxman920:1375--1453’
      Not implemented.  ‘URL’ in particular would be an Org link, which
      Org already has.
+the ‘dictionary’ type, ‘tbxman920:3172’, ‘4141--4147’
+     Not implemented.  "A dictionary collects pairs of strings separated
+     by a colon", which an Org property value holding one line could
+     carry and nothing in this package would understand.
 
    Three of those deserve their reasoning spelled out, because they are
 the ones a Tinderbox reader will miss most.
@@ -6404,6 +6431,24 @@ means, org-ql's own manual is the place to look.
 ‘property-ts’ predicate that several examples here rely on comes from
 the first of them.
 
+   org-edna is Ian Dunn's, and the shape of *note Action code:: is its
+debt.  A vocabulary of verbs whose names end in ‘!’ to mark that they
+write, and a verb resolved by constructing ‘PREFIX-action/NAME’ and
+asking whether it is ‘fboundp’ -- which is what makes *note Writing a
+verb of your own:: possible -- are both org-edna's design, and so is the
+idiom this package's lexer uses.  What differs is what the two are for:
+org-edna's vocabulary is open and its arguments are read as Lisp,
+because an entry's own trigger is something you wrote; org-agents' is
+nine verbs, closed, taking strings, never evaluated, applied only by an
+explicit command and only after a dry run, because the text comes out of
+a corpus of files any of which may have arrived from somewhere else.
+The divergence that will surprise an org-edna user is named where it
+arises: this ‘tag!’ is additive and never sets a tag list.  There is
+also one thing this package deliberately does not extend:
+‘org-trigger-hook’, which is org-edna's own mechanism, is bound off
+during an apply pass, so a corpus with ‘org-edna-mode’ on gets no
+triggers from a run here.  See *note The blast radius::.
+
 
 File: org-agents.info,  Node: Trademarks and non-affiliation,  Prev: Org and org-ql,  Up: History and Acknowledgments
 
@@ -6415,7 +6460,7 @@ The Tinderbox manual's own notices read:
      Tinderbox is © Copyright 2002-2021 by Eastgate Systems, Inc.  All
      Rights Reserved.
 
-     Tinderbox™ is a trademark of Eastgate Systems, Inc.
+     Tinderbox™ is a trademark of Eastgate Systems, Inc...
 
      -- ‘tbxman920:5626--5627’
 
@@ -6783,6 +6828,7 @@ C Concept Index
 * divergences from Tinderbox:            What it changed.     (line   6)
 * Dominik, Carsten:                      Org and org-ql.      (line   6)
 * dry run:                               The dry run.         (line   6)
+* Dunn, Ian:                             Org and org-ql.      (line  30)
 * dynamic block:                         The same matches as a table.
                                                               (line   6)
 * dynamic block <1>:                     Dynamic blocks.      (line   6)
@@ -6830,7 +6876,7 @@ C Concept Index
 * ID, and readable link targets:         A corpus to work with.
                                                               (line  12)
 * inheritable action, and why there is none: What was deliberately not ported and why.
-                                                              (line  64)
+                                                              (line  68)
 * inheritance, outline versus prototype: The two axes.        (line   6)
 * inheritance, prototype:                Prototypes in Tinderbox.
                                                               (line   6)
@@ -6872,7 +6918,7 @@ C Concept Index
                                                               (line  66)
 * master, prototype:                     What a prototype is. (line   6)
 * materialised inheritance, and why there is none: What was deliberately not ported and why.
-                                                              (line  73)
+                                                              (line  77)
 * measurement, of a prefiltered scope:   Which scopes get narrowed and why.
                                                               (line   6)
 * minor mode, for faces:                 Faces from attribute values.
@@ -6895,6 +6941,7 @@ C Concept Index
 * numeric position:                      The four positions.  (line   6)
 * org-agents dynamic block:              Dynamic blocks.      (line   6)
 * org-agents, overview of:               Introduction.        (line   6)
+* org-edna, acknowledgment of:           Org and org-ql.      (line  30)
 * org-ext:                               What you need.       (line  18)
 * org-ql-ext:                            What you need.       (line  18)
 * org-ql, acknowledgment of:             Org and org-ql.      (line   6)
@@ -6907,7 +6954,7 @@ C Concept Index
 * outline inheritance, contrasted:       Why outline inheritance is not in that order.
                                                               (line   6)
 * outline inheritance, versus prototypes: Prototypes in Tinderbox.
-                                                              (line  42)
+                                                              (line  46)
 * overriding an agent property:          Block parameters.    (line   6)
 * package archives, and why org-agents is not on one: What you need.
                                                               (line  31)
@@ -6938,7 +6985,7 @@ C Concept Index
 * prototype, as a Tinderbox concept:     What org-agents took.
                                                               (line  27)
 * PROTOTYPE, entry property:             Prototypes in Tinderbox.
-                                                              (line  32)
+                                                              (line  36)
 * PROTOTYPE, naming a master:            Naming a master.     (line   6)
 * PROTOTYPE, property:                   Prototypes.          (line   6)
 * prototype, Tinderbox:                  Prototypes in Tinderbox.
@@ -7025,7 +7072,7 @@ C Concept Index
 * tag!, action verb:                     Action verbs.        (line  28)
 * timer, an idle:                        Bounding a run.      (line  71)
 * timer, and why there is none:          What was deliberately not ported and why.
-                                                              (line  51)
+                                                              (line  55)
 * Tinderbox:                             Agents in the Tinderbox tradition.
                                                               (line   6)
 * Tinderbox, what it is:                 Tinderbox.           (line   6)
@@ -7171,7 +7218,7 @@ E Command, Function and Name Index
 * org-agents-attribute-columns:          A corpus-wide column view.
                                                                (line  6)
 * org-agents-attribute-columns <1>:      Commands.             (line 40)
-* org-agents-attribute-valid-p:          The six types.        (line 44)
+* org-agents-attribute-valid-p:          The six types.        (line 49)
 * org-agents-attribute-valid-p <1>:      Functions for Lisp callers.
                                                                (line 35)
 * org-agents-attributes:                 Functions for Lisp callers.
@@ -7209,7 +7256,7 @@ E Command, Function and Name Index
 * org-agents-preview <3>:                Commands.             (line 21)
 * org-agents-preview <4>:                Org and org-ql.       (line 16)
 * org-agents-resolve-property:           Prototypes in Tinderbox.
-                                                               (line 32)
+                                                               (line 36)
 * org-agents-resolve-property <1>:       The property-resolved predicate.
                                                                (line  6)
 * org-agents-resolve-property <2>:       Reads are virtual.    (line 22)
@@ -7246,7 +7293,7 @@ E Command, Function and Name Index
 * org-ql-search:                         What Org already had. (line 34)
 * priority!:                             Action verbs.         (line 40)
 * property-resolved:                     Prototypes in Tinderbox.
-                                                               (line 32)
+                                                               (line 36)
 * property-resolved <1>:                 Reads are virtual.    (line 22)
 * property-resolved <2>:                 Functions for Lisp callers.
                                                                (line  6)
@@ -7333,7 +7380,7 @@ F Variable Index
                                                               (line   6)
 * org-ql-ask-unsafe-queries:             The structural gate. (line  55)
 * org-use-property-inheritance:          Prototypes in Tinderbox.
-                                                              (line  42)
+                                                              (line  46)
 * org-use-property-inheritance <1>:      Inheritance and pushability.
                                                               (line   6)
 
@@ -7348,132 +7395,132 @@ Node: Installation21813
 Node: Activation24320
 Node: Conventions used in this manual26605
 Node: Agents in the Tinderbox tradition29171
-Node: The five ideas31267
-Node: Attributes in Tinderbox33332
-Node: Prototypes in Tinderbox36473
-Node: Agents in Tinderbox38867
-Node: Action code in Tinderbox41047
-Node: Appearance in Tinderbox43588
-Node: What Org already had45243
-Node: The vocabulary map47133
-Node: Tutorial49754
-Node: A corpus to work with50930
-Node: Your first agent52730
-Node: What the update wrote54603
-Node: Showing properties beside the link57330
-Node: The same matches as a table58874
-Node: Narrowing what the agent reads61601
-Node: Refreshing on save64641
-Node: Where to go next66893
-Node: The query language68706
-Node: org-ql is the base language70171
-Node: Property references72867
-Node: The four positions74727
-Node: The two axes80039
-Node: Entry specials83747
-Node: The property-resolved predicate86366
-Node: Putting a query in a property drawer89638
-Node: Limitations of the query layer92048
-Node: What is evaluated and what is refused94104
-Node: Why a gate exists95476
-Node: The structural gate96773
-Node: Remembered approvals100550
-Node: Refused heads103794
-Node: Refused queries105995
-Node: Reviewing what you approved107907
-Node: Scope and the ripgrep prefilter112031
-Node: Scopes113461
-Node: Which scopes get narrowed and why115817
-Node: What the prefilter can and cannot do118105
-Node: The push-down rules120627
-Node: Inheritance and pushability126344
-Node: Bounding a run129767
-Node: A file the scope names but cannot open135446
-Node: Limitations of the prefilter138319
-Node: Views141016
-Node: Choosing a view142918
-Node: The children view144670
-Node: The alias contract146765
-Node: The list view150821
-Node: The table view152181
-Node: Formats154922
-Node: Sorting and limiting156860
-Node: Limitations of the views160051
-Node: Dynamic blocks161950
-Node: Inserting a block163074
-Node: Block parameters164057
-Node: Several blocks under one agent167611
-Node: Limitations of dynamic blocks171329
-Node: Updating174109
-Node: By hand175984
-Node: Looking before you write179507
-Node: org-agents-mode180759
-Node: global-org-agents-mode183569
-Node: The three refusals on the save path185544
-Node: What writing AGENT_MATCHED costs188397
-Node: Limitations of updating190254
-Node: The attribute registry191893
-Node: Why declare attributes193313
-Node: The registry file195603
-Node: The declaration197497
-Node: The six types199416
-Node: It is pure data202248
-Node: Checking a corpus203953
-Node: Completing declared values208149
-Node: A corpus-wide column view209964
-Node: Limitations of the registry212156
-Node: Prototypes213713
-Node: What a prototype is214967
-Node: Declaring masters216070
-Node: Naming a master217180
-Node: The resolution order218928
-Node: Why outline inheritance is not in that order221475
-Node: Reads are virtual222826
-Node: Names that never travel224738
-Node: The two diagnostics226286
-Node: Limitations of prototypes227622
-Node: Appearance228424
-Node: Faces from attribute values229695
-Node: The ATTR_FACES syntax230632
-Node: From declaration to headline231502
-Node: It changes no bytes233400
-Node: Faces in every Org buffer234338
-Node: Precedence and following an edit235845
-Node: The two refusals237206
-Node: Action code238201
-Node: The three refusals239642
-Node: Writing an action241820
-Node: The nine verbs243224
-Node: Value keywords247006
-Node: The dry run248357
-Node: The blast radius250771
-Node: How much one run may edit251746
-Node: Destructive verbs and batch253335
-Node: The same command over a selection254919
-Node: The trust model256172
-Node: Writing a verb of your own257363
-Node: Limitations of action code258710
-Node: Reference260371
-Node: Commands261407
-Node: Minor modes265929
-Node: User options267302
-Node: Agent properties274324
-Node: Registry properties277746
-Node: Action verbs279938
-Node: Functions for Lisp callers283384
-Node: History and Acknowledgments285944
-Node: Tinderbox287549
-Node: What org-agents took289380
-Node: What it changed292429
-Node: What was deliberately not ported and why297139
-Node: Org and org-ql302991
-Node: Trademarks and non-affiliation304527
-Node: The example corpus305660
-Node: GNU General Public License310148
-Node: Concept Index311021
-Node: Key Index344715
-Node: Command Function and Name Index347117
-Node: Variable Index358081
+Node: The five ideas31375
+Node: Attributes in Tinderbox33440
+Node: Prototypes in Tinderbox36583
+Node: Agents in Tinderbox39210
+Node: Action code in Tinderbox41387
+Node: Appearance in Tinderbox43928
+Node: What Org already had45583
+Node: The vocabulary map47473
+Node: Tutorial50094
+Node: A corpus to work with51270
+Node: Your first agent53070
+Node: What the update wrote54943
+Node: Showing properties beside the link57670
+Node: The same matches as a table59214
+Node: Narrowing what the agent reads61941
+Node: Refreshing on save64981
+Node: Where to go next67233
+Node: The query language69046
+Node: org-ql is the base language70511
+Node: Property references73207
+Node: The four positions75067
+Node: The two axes80379
+Node: Entry specials84087
+Node: The property-resolved predicate86706
+Node: Putting a query in a property drawer89978
+Node: Limitations of the query layer92388
+Node: What is evaluated and what is refused94444
+Node: Why a gate exists95816
+Node: The structural gate97113
+Node: Remembered approvals100890
+Node: Refused heads104134
+Node: Refused queries106335
+Node: Reviewing what you approved108247
+Node: Scope and the ripgrep prefilter112371
+Node: Scopes113801
+Node: Which scopes get narrowed and why116157
+Node: What the prefilter can and cannot do118445
+Node: The push-down rules120967
+Node: Inheritance and pushability126684
+Node: Bounding a run130107
+Node: A file the scope names but cannot open135786
+Node: Limitations of the prefilter138659
+Node: Views141356
+Node: Choosing a view143258
+Node: The children view145010
+Node: The alias contract147105
+Node: The list view151161
+Node: The table view152521
+Node: Formats155262
+Node: Sorting and limiting157200
+Node: Limitations of the views160391
+Node: Dynamic blocks162290
+Node: Inserting a block163414
+Node: Block parameters164397
+Node: Several blocks under one agent167951
+Node: Limitations of dynamic blocks171669
+Node: Updating174449
+Node: By hand176324
+Node: Looking before you write179847
+Node: org-agents-mode181099
+Node: global-org-agents-mode183909
+Node: The three refusals on the save path185884
+Node: What writing AGENT_MATCHED costs188737
+Node: Limitations of updating190594
+Node: The attribute registry192233
+Node: Why declare attributes193653
+Node: The registry file195943
+Node: The declaration197837
+Node: The six types199756
+Node: It is pure data202965
+Node: Checking a corpus204670
+Node: Completing declared values208866
+Node: A corpus-wide column view210681
+Node: Limitations of the registry212873
+Node: Prototypes214430
+Node: What a prototype is215684
+Node: Declaring masters216787
+Node: Naming a master217897
+Node: The resolution order219645
+Node: Why outline inheritance is not in that order222472
+Node: Reads are virtual223823
+Node: Names that never travel225735
+Node: The two diagnostics227283
+Node: Limitations of prototypes228619
+Node: Appearance229421
+Node: Faces from attribute values230715
+Node: The ATTR_FACES syntax231652
+Node: From declaration to headline232522
+Node: It changes no bytes234420
+Node: Faces in every Org buffer235358
+Node: Precedence and following an edit236865
+Node: The two refusals238226
+Node: Action code239221
+Node: The three refusals240662
+Node: Writing an action242840
+Node: The nine verbs244244
+Node: Value keywords248026
+Node: The dry run249377
+Node: The blast radius251791
+Node: How much one run may edit252766
+Node: Destructive verbs and batch254355
+Node: The same command over a selection255939
+Node: The trust model257192
+Node: Writing a verb of your own258383
+Node: Limitations of action code259730
+Node: Reference261391
+Node: Commands262427
+Node: Minor modes266949
+Node: User options268322
+Node: Agent properties275344
+Node: Registry properties278766
+Node: Action verbs280958
+Node: Functions for Lisp callers284404
+Node: History and Acknowledgments286964
+Node: Tinderbox288569
+Node: What org-agents took290617
+Node: What it changed293780
+Node: What was deliberately not ported and why298610
+Node: Org and org-ql304725
+Node: Trademarks and non-affiliation307447
+Node: The example corpus308582
+Node: GNU General Public License313070
+Node: Concept Index313943
+Node: Key Index347783
+Node: Command Function and Name Index350185
+Node: Variable Index361149
 
 End Tag Table
 

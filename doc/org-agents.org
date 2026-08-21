@@ -385,13 +385,15 @@ options and variables.
 #+cindex: Bernstein, Mark
 
 Nothing in the model this package implements is its own invention.
-Agents, prototypes, action code and user-defined attributes are
-Tinderbox's: a Macintosh application for notes, published by Eastgate
-Systems, Inc., and designed by Mark Bernstein, where those ideas have
-been in continuous use since 2002.  org-agents is an independent Emacs
-implementation of five of them over Org outlines.  It is not affiliated
-with, endorsed by, or connected to Eastgate Systems in any way, and
-nothing in it derives from Tinderbox's code.
+Agents, prototypes, action code, user-defined attributes and appearance
+driven from an attribute's value are Tinderbox's: a Macintosh application
+for notes, published by Eastgate Systems, Inc., and designed by Mark
+Bernstein, whose copyright notice reads
+"Tinderbox is © Copyright 2002-2021 by Eastgate Systems, Inc."
+(=tbxman920:5626=).  org-agents is an independent Emacs implementation of
+those five ideas over Org outlines.  It is not affiliated with, endorsed
+by, or connected to Eastgate Systems in any way, and nothing in it derives
+from Tinderbox's code.
 
 This chapter is here rather than in an appendix because the ideas are
 easier to learn in the order Tinderbox arrived at them than in the order
@@ -477,7 +479,7 @@ The inspector lets you choose to type of attribute --- some of the choice
 included number, string, URL, or list --- and set the default value that
 the attribute should use.  A text field labeled "Description" invites you
 to write a brief explanation of the way you intend to use the new
-attribute.
+attribute...
 
 --- /User Attributes/, =tbxman920:1534--1536=
 #+end_quote
@@ -533,8 +535,12 @@ from another note.  We say that the first note serves as the prototype of
 the second: it shares all the properties of the prototype, except where
 we specify otherwise.
 
---- /Prototypes/, =tbxman920:1682--1683=
+--- /Prototypes/, =tbxman920:1682--1685=
 #+end_quote
+
+The plain-text edition of that passage has its clauses out of order, an
+artifact of the extraction; the sentence above is those four lines put
+back in the order the words require.
 
 The lookup rule is a short checklist:
 
@@ -564,9 +570,10 @@ note's prototype is not necessarily its container.
 *What org-agents made of it.*  =:PROTOTYPE:= on any entry names a master,
 either by name out of a reserved =Prototypes= section of the registry file
 --- the same name Tinderbox gives the same container --- or as =id:UUID=
-anywhere in the corpus.  The resolution order is Tinderbox's checklist
-item for item: the entry's own drawer, then the chain nearest hop first,
-then the registry's =:ATTR_DEFAULT:=, then nothing.  Reads are virtual, so
+anywhere in the corpus.  The resolution order is Tinderbox's checklist,
+with its two prototype steps written as one walk of the chain: the entry's
+own drawer, then the chain nearest hop first, then the registry's
+=:ATTR_DEFAULT:=, then nothing.  Reads are virtual, so
 a master may be changed once and every follower changes with it.  See
 [[*Prototypes]] and [[*The resolution order]].
 
@@ -595,7 +602,7 @@ inside the agent.  The agent can also apply an action to notes it finds.
 For example, one agent might find notes that represent overdue library
 books and automatically set their color to red.
 
---- /Notes and Containers/, =tbxman920:1015--1017=
+--- /Anatomy Of A Note/, =tbxman920:1015--1017=
 #+end_quote
 
 The property that makes a note an agent, and the one that gives it
@@ -4348,9 +4355,14 @@ way to see what the reader made of your file:
   Whitespace-separated members, every one admitted by the vocabulary.
   Duplicates are fine and order is significant.
 
-=set= and =list= are Tinderbox's, with Tinderbox's meanings kept exactly:
-unordered-unique and ordered.  Only the separator changed.  See
-[[*Attributes in Tinderbox]] for the correspondence, and
+=set= and =list= are Tinderbox's distinction --- a set's members are
+unique, a list's may repeat and are ordered --- but the correspondence
+stops at the distinction.  Tinderbox *coerces*: "passing a List with
+duplicate values to a Set will remove duplicates" (=tbxman920:1439--1440=).
+This package *validates*: a repeated member makes the value invalid and the
+lint says so, and nothing here canonicalises order or compares two sets
+order-insensitively.  The separator is whitespace rather than semicolons.
+See [[*Attributes in Tinderbox]] for the correspondence, and
 [[*What it changed]] for why.
 
 #+findex: org-agents-attribute-valid-p
@@ -4753,7 +4765,11 @@ and stops at the first that answers:
 3. *the registry's* =:ATTR_DEFAULT:= for that name;
 4. *nil*.
 
-This is Tinderbox's own checklist, item for item; see
+This is Tinderbox's own checklist, with its two prototype steps --- the
+prototype's value, then the prototype's prototype's --- written as one
+walk of the chain, and with one step Tinderbox does not need: an
+undeclared property has no default to fall back to, where every Tinderbox
+attribute is typed and therefore always has one.  See
 [[*Prototypes in Tinderbox]] for the passage it comes from.  The chain is
 bounded at a thousand hops, which is a guard against a malformed corpus
 and not a budget.
@@ -4968,7 +4984,8 @@ cost candidate files and never an answer.  See
 
 In Tinderbox a note's colour is an attribute, and a rule or an agent
 action assigns it: "an agent that contains 'urgent tasks' can
-automatically change their color in order to draw your attention." The
+automatically change their color in order to draw your attention"
+(=tbxman920:2792=).  The
 idea is that a document's appearance should follow from its data rather
 than from a separate act of formatting.
 
@@ -6234,21 +6251,25 @@ responsibility and not Tinderbox's.
 #+cindex: Bernstein, Mark
 
 Tinderbox is a Macintosh application for notes, published by Eastgate
-Systems, Inc. of Watertown, Massachusetts, and designed by Mark
-Bernstein.  Its own manual describes /The Tinderbox Way/ as "a book about
-the design and philosophy of Tinderbox written by Tinderbox designer Mark
-Bernstein" (=tbxman920:1171=).  The application has been shipping since
-2002; its copyright notice reads "Tinderbox is © Copyright
-2002-2021 by Eastgate Systems, Inc." (=tbxman920:5626=).
+Systems, Inc. and designed by Mark Bernstein.  Its own manual describes
+/The Tinderbox Way/ as "a book about the design and philosophy of
+Tinderbox written by Tinderbox designer Mark Bernstein"
+(=tbxman920:1171=).  Its copyright notice reads "Tinderbox is © Copyright
+2002-2021 by Eastgate Systems, Inc." (=tbxman920:5626=), which is the
+whole of what this manual knows about how long these ideas have been in
+use.
 
 A Tinderbox document holds notes, each with a large space of named, typed
 attributes; those attributes drive everything else, including what a note
 looks like, what inherits from what, which notes an agent gathers, and
-what an action does.  Every claim this manual makes about Tinderbox is
-supported by a quotation from the *v9.2* manual, cited by line number in
-its plain-text edition as =tbxman920:LINE=.  The version matters: later
-releases may differ, and nothing here should be read as a description of
-any version but that one.
+what an action does.  Every claim this manual makes about how Tinderbox
+/behaves/ is supported by a quotation from the *v9.2* manual, cited by
+line number in its plain-text edition as =tbxman920:LINE=.  The version
+matters: later releases may differ, and nothing here should be read as a
+description of any version but that one.  Where this manual describes
+Eastgate or its product rather than the software's behaviour, and carries
+no citation, the statement is the author's own and Eastgate's site is the
+authority.
 
 What makes the model worth borrowing into Emacs is not any one of its
 features but the shape of the whole.  Tinderbox treats a query as a thing
@@ -6292,8 +6313,8 @@ quotations that describe it; this section is the summary and the map.
   [[*The attribute registry]].
 - Prototypes ::
   #+cindex: prototype, as a Tinderbox concept
-  "It shares all the properties of the prototype, except where we specify
-  otherwise" (=tbxman920:1683=), by a checklist that consults the note,
+  "[I]t shares all the properties of the prototype, except where we
+  specify otherwise" (=tbxman920:1683=), by a checklist that consults the note,
   then its chain, then the default (=tbxman920:1739--1746=), and
   independently of the outline: "inheritance has nothing to do with the
   document hierarchy" (=tbxman920:1751=).  Here: =:PROTOTYPE:=, resolved
@@ -6316,7 +6337,9 @@ attribute types are Tinderbox's, unordered-unique and ordered
 respectively: "Lists are strings separated by semicolons"
 (=tbxman920:1428=), and "Sets are best though of as a special form of
 List.  Sets only hold one instance of any given value"
-(=tbxman920:1439=).  And the relative date words =today= and =now= that
+(=tbxman920:1439=).  The distinction is taken; the coercion Tinderbox
+performs with it is not, and [[*What it changed]] says so.  And the
+relative date words =today= and =now= that
 the action verbs accept are Tinderbox's too: for a date value "you can
 also use the terms yesterday, today, and tomorrow, and add or subtract
 units of time" (=tbxman920:1398--1399=).
@@ -6396,8 +6419,10 @@ plain-text files under version control that other tools also write.
 Three smaller changes, for completeness.  =set= and =list= members are
 separated by whitespace rather than semicolons, because whitespace is
 what Org's own =NAME_ALL= convention uses and therefore what
-=org-property-get-allowed-values= already reads; the semantics are
-Tinderbox's exactly.  Tinderbox's boolean coercions --- "the number 0,
+=org-property-get-allowed-values= already reads; and the uniqueness a set
+means is *validated* here where Tinderbox coerces it, so a repeated member
+is a lint finding rather than a silently dropped duplicate.  Tinderbox's
+boolean coercions --- "the number 0,
 the empty string, and the date =never= are considered to be false"
 (=tbxman920:1391--1392=) --- are not ported: here those are values that
 fail to be booleans, and the lint says so, rather than values silently
@@ -6449,13 +6474,17 @@ manual describes the thing that is not being ported.
   property.
 - =$AgentPriority=, =tbxman920:2549= ::
   It exists to schedule a timer, and there is no timer.
-- the =Action= attribute type, =tbxman920:1455= ::
-  Its values are evaluated when used.  The registry is pure data; a type
-  like this is precisely what could not be ported without giving that
-  up.
-- the =color=, =file=, =interval=, =URL= and =dictionary= types, =tbxman920:1375--1456= ::
+- the =Action= attribute type, =tbxman920:1454--1456= ::
+  Its values "are evaluated as such when used".  The registry is pure
+  data; a type like this is precisely what could not be ported without
+  giving that up.
+- the =color=, =file=, =interval= and =URL= types, =tbxman920:1375--1453= ::
   Not implemented.  =URL= in particular would be an Org link, which Org
   already has.
+- the =dictionary= type, =tbxman920:3172=, =4141--4147= ::
+  Not implemented.  "A dictionary collects pairs of strings separated by a
+  colon", which an Org property value holding one line could carry and
+  nothing in this package would understand.
 
 Three of those deserve their reasoning spelled out, because they are
 the ones a Tinderbox reader will miss most.
@@ -6550,6 +6579,25 @@ Two single-file modules from the author's Emacs configuration,
 predicate that several examples here rely on comes from the first of
 them.
 
+#+cindex: org-edna, acknowledgment of
+#+cindex: Dunn, Ian
+org-edna is Ian Dunn's, and the shape of [[*Action code]] is its debt.  A
+vocabulary of verbs whose names end in =!= to mark that they write, and a
+verb resolved by constructing =PREFIX-action/NAME= and asking whether it is
+~fboundp~ --- which is what makes [[*Writing a verb of your own]] possible
+--- are both org-edna's design, and so is the idiom this package's lexer
+uses.  What differs is what the two are for: org-edna's vocabulary is open
+and its arguments are read as Lisp, because an entry's own trigger is
+something you wrote; org-agents' is nine verbs, closed, taking strings,
+never evaluated, applied only by an explicit command and only after a dry
+run, because the text comes out of a corpus of files any of which may have
+arrived from somewhere else.  The divergence that will surprise an
+org-edna user is named where it arises: this ~tag!~ is additive and never
+sets a tag list.  There is also one thing this package deliberately does
+not extend: ~org-trigger-hook~, which is org-edna's own mechanism, is
+bound off during an apply pass, so a corpus with =org-edna-mode= on gets
+no triggers from a run here.  See [[*The blast radius]].
+
 ** Trademarks and non-affiliation
 :PROPERTIES:
 :DESCRIPTION: Whose trademark Tinderbox is, and what this package is not.
@@ -6563,7 +6611,7 @@ The Tinderbox manual's own notices read:
 Tinderbox is © Copyright 2002-2021 by Eastgate Systems, Inc.  All
 Rights Reserved.
 
-Tinderbox™ is a trademark of Eastgate Systems, Inc.
+Tinderbox™ is a trademark of Eastgate Systems, Inc...
 
 --- =tbxman920:5626--5627=
 #+end_quote
