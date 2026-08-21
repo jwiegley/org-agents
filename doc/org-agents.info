@@ -63,6 +63,7 @@ This manual is for org-agents version 0.1.0.
 * Action code::                  Doing something to the entries an agent matched.
 * Reference::                    Every command, mode, option, property, verb and function.
 * History and Acknowledgments::  Whose ideas these are, what changed, and what was left out.
+* The example corpus::           The two files every example after the tutorial was run over.
 * GNU General Public License::   The terms this package and this manual are distributed under.
 * Concept Index::                An index of concepts, features and diagnostics.
 * Key Index::                    Key sequences, and where each is described.
@@ -550,9 +551,16 @@ the block types it can insert.
 run.  Where the output of a run is shown, it is the text the buffer
 actually held afterwards, and where an echo-area message is quoted it is
 the message the package actually printed.  An absolute path that would
-otherwise be a page wide is elided to ‘…’.  Timestamps and ID values are
-of course whatever your own corpus produces; the tutorial uses short,
-readable ‘:ID:’ values so that the rendered links fit on a line.
+otherwise be a page wide is elided to ‘…’.  Timestamps are whatever your
+own run produces.
+
+   Two corpora are printed in full, and every example is run over one of
+them, so you can reproduce any of them.  *note Tutorial:: uses the two
+small files of *note A corpus to work with:: and nothing else.  Every
+other chapter uses the corpus and registry of *note The example
+corpus::, which is the tutorial's corpus with more properties on it.
+Both use short, readable ‘:ID:’ values so that the rendered links fit on
+a line; in your own corpus they will be the UUIDs ‘org-id’ generates.
 
    The manual carries four indices.  *note Concept Index:: is the
 subject-matter route in and is the one to try first.  *note Key Index::
@@ -1454,6 +1462,10 @@ that language, and the two axes along which a property may be read.
    Nothing here says anything about what an agent _does_ with its
 matches.  For that see *note Views:: and *note Updating::.
 
+   Every query in this chapter was run over the corpus and registry of
+*note The example corpus::, which are printed there in full, and the
+output shown after each is what the agent rendered.
+
 * Menu:
 
 * org-ql is the base language::  What org-agents adds, and what it leaves alone.
@@ -1614,8 +1626,8 @@ it becomes a predicate: ‘(property NAME)’ for a bare reference,
 
    renders
 
-     - [[id:e100…001][Rewrite the exporter]]
-     - [[id:e100…004][Renew the passport]]
+     - [[id:rewrite-exporter][Rewrite the exporter]]
+     - [[id:renew-passport][Renew the passport]]
 
    ‘Tinderbox notes’ has a ‘:URL:’ but no TODO keyword, so it does not
 match.  Nothing was asked about this query: ‘$URL’ became a plain org-ql
@@ -1639,7 +1651,7 @@ neighbours cannot signal at an entry that has no such property.
 
    renders
 
-     - [[id:e100…001][Rewrite the exporter]] https://github.com/example/exporter
+     - [[id:rewrite-exporter][Rewrite the exporter]] https://github.com/example/exporter
 
    This one is residual Lisp, so it reaches the gate: the first update
 asks once, and remembers the answer.  See *note Remembered approvals::.
@@ -1664,8 +1676,8 @@ therefore reads as zero rather than as an error.
 
    renders
 
-     - [[id:e100…001][Rewrite the exporter]] 5
-     - [[id:e100…003][Ship 0.1]] 9
+     - [[id:rewrite-exporter][Rewrite the exporter]] 5
+     - [[id:ship-0-1][Ship 0.1]] 9
 
 Name position
 -------------
@@ -1687,9 +1699,9 @@ arguments.
 
    renders
 
-     - [[id:e100…001][Rewrite the exporter]] 2026-09-01
-     - [[id:e100…002][Audit the prefilter]] 2026-08-25
-     - [[id:e100…004][Renew the passport]] 2026-08-21
+     - [[id:rewrite-exporter][Rewrite the exporter]] 2026-09-01
+     - [[id:audit-prefilter][Audit the prefilter]] 2026-08-25
+     - [[id:renew-passport][Renew the passport]] 2026-08-21
 
    Only the _first_ argument of those three predicates is a name
 position.  ‘(property $OWNER "johnw")’ is ‘(property "OWNER" "johnw")’,
@@ -1741,8 +1753,8 @@ I own, where ownership is written once on the project.
        :AGENT_VIEW:   list
        :END:
 
-     - [[id:e100…001][Rewrite the exporter]]
-     - [[id:e100…002][Audit the prefilter]]
+     - [[id:rewrite-exporter][Rewrite the exporter]]
+     - [[id:audit-prefilter][Audit the prefilter]]
 
    The two entries under ‘Projects’, which is where ‘:OWNER:’ is
 written.
@@ -1756,8 +1768,8 @@ written.
        :END:
 
      - [[file:…/corpus.org::*Projects][Projects]]
-     - [[id:e100…002][Audit the prefilter]]
-     - [[id:e100…005][Collect the print]]
+     - [[id:audit-prefilter][Audit the prefilter]]
+     - [[id:collect-print][Collect the print]]
 
    Three matches, and not one of them is in the first answer's set of
 two.  ‘Projects’ spells ‘:OWNER:’ in its own drawer.  The other two
@@ -1845,7 +1857,7 @@ special passes the structural gate unremarked.
        :AGENT_VIEW:   list
        :END:
 
-     - [[id:e100…006][Tinderbox notes]]
+     - [[id:tinderbox-notes][Tinderbox notes]]
 
    Here too, prefer org-ql where org-ql has an answer.  ‘heading’,
 ‘todo’, ‘tags’, ‘level’, ‘priority’ and ‘category’ are all predicates,
@@ -1885,7 +1897,7 @@ entry spells nothing at all.
        :AGENT_VIEW:   list
        :END:
 
-     - [[id:e100…002][Audit the prefilter]]
+     - [[id:audit-prefilter][Audit the prefilter]]
 
    ‘Audit the prefilter’ spells no ‘:STATUS:’ at all.  Its ‘:PROTOTYPE:
 Blocked Task’ resolves to ‘blocked’ through the chain.  ‘(property
@@ -2950,6 +2962,9 @@ the inside of its block, and can be dropped into the middle of prose.
 question of the same engine and get the same matches; only the writing
 down differs.
 
+   The examples in this chapter, and in *note Dynamic blocks:: after it,
+were run over the corpus and registry of *note The example corpus::.
+
 * Menu:
 
 * Choosing a view::              :AGENT_VIEW:, and the three values it takes.
@@ -3106,8 +3121,9 @@ annotate the second alias:
      :AGENT_MATCH: t
      :END:
 
-   Now narrow the query to ‘(and (todo "TODO") (property "URL"))’, so
-that ‘Audit the prefilter’ no longer matches, and update again:
+   Now narrow the query to ‘(and (todo "TODO") (property "URL"))’.  Over
+this corpus that drops ‘Audit the prefilter’, which has no ‘:URL:’, and
+keeps the other two, which have one.  Update again:
 
      * Up for review
        :PROPERTIES:
@@ -3273,12 +3289,11 @@ read a value without opening the entry it belongs to.  It is a
 whitespace-separated list of property names, and it applies to the
 ‘children’ and ‘list’ views only.
 
-     * Up for review, in date order
+     * Up for review
        :PROPERTIES:
        :AGENT_QUERY:  (and (todo "TODO") (property "NEXT_REVIEW"))
-       :AGENT_SORT:   date
        :AGENT_FORMAT: NEXT_REVIEW
-       :AGENT_MATCHED: 3 [2026-08-20 Thu 17:50]
+       :AGENT_MATCHED: 3 [2026-08-20 Thu 19:32]
        :END:
      ** [[id:rewrite-exporter][Rewrite the exporter]] 2026-09-01
      :PROPERTIES:
@@ -3327,6 +3342,15 @@ is this package's.
 a list of those.  Those are org-ql's own sorting methods, applied to the
 matched entries before anything is rendered, and they work in every
 view.
+
+   One thing about ‘date’ is worth saying plainly, because the name
+invites the wrong reading: it sorts on *Org's own planning timestamps*
+-- a ‘SCHEDULED:’, a ‘DEADLINE:’, a plain timestamp in the entry -- and
+knows nothing about a date you keep in a property.  Over a corpus whose
+review dates live in ‘:NEXT_REVIEW:’ it is therefore inert, and the
+matches come out in the order org-ql found them, which is file order.
+To order by a property date, use the ‘table’ view and ‘(ts-column N)’ on
+the column that renders it, as the example below does.
 
    ‘:AGENT_SORT:’ also takes ‘(column N)’ and ‘(ts-column N)’, which
 order the rows of a table: ‘(column N)’ compares the rendered cells as
@@ -4320,8 +4344,10 @@ takes, and it *reports*.  Nothing is edited, ever.
   2. is a value one that does not parse as its ‘:ATTR_TYPE:’?
   3. is a value one that is outside its ‘:ATTR_VALUES:’?
 
-   Given a registry declaring ‘STATUS’, ‘NEXT_REVIEW’, ‘REVIEWS’ and
-‘TOPICS’, and this file in scope:
+   Given the registry of *note The example corpus:: with a ‘TOPICS’
+declaration added -- so four declarations, ‘STATUS’, ‘NEXT_REVIEW’,
+‘REVIEWS’ and ‘TOPICS’, the last of them a ‘set’ admitting ‘emacs org
+tinderbox’ -- and this file in scope:
 
      * One
        :PROPERTIES:
@@ -4333,22 +4359,24 @@ takes, and it *reports*.  Nothing is edited, ever.
        :END:
 
    the echo area says ‘org-agents: 5 findings over 1 file’ and
-‘*org-agents attributes*’, in ‘compilation-mode’, holds:
+‘*org-agents attributes*’, in ‘compilation-mode’, holds -- every path
+absolute, and elided here:
 
-     lint.org:3: STATUS: `wedged' is not one of active paused blocked done
-     lint.org:4: NEXT_REVIEW: `2026-02-30' is not a date
-     lint.org:5: REVIEWS: `lots' is not a number
-     lint.org:6: WIDGET is not declared in …/attributes.org (1 use)
-     lint.org:7: TOPICS: `emacs emacs' is not a set
+     …/lint.org:3: STATUS: `wedged' is not one of active paused blocked done
+     …/lint.org:4: NEXT_REVIEW: `2026-02-30' is not a date
+     …/lint.org:5: REVIEWS: `lots' is not a number
+     …/lint.org:6: WIDGET is not declared in …/attributes.org (1 use)
+     …/lint.org:7: TOPICS: `emacs emacs' is not a set
 
    All five kinds in one report: a value outside its vocabulary; a date
 that parses but names no day; a value not of its type; an undeclared
 name, with a *site count*; and a ‘set’ with a repeated member.  Each
 line begins ‘FILE:LINE:’, so ‘<RET>’ and ‘next-error’ walk them.  A
-clean run says so with its counts rather than popping an empty buffer:
+clean run writes this into the buffer rather than popping an empty one,
+while the echo area says ‘org-agents: 0 findings over 1 file’:
 
      org-agents: no findings; every property in scope is declared and valid
-     (1 file in scope, 1 read, 1 entry, 7 declarations)
+     (1 file in scope, 1 read, 1 entry, 4 declarations)
 
    Read ‘read’ as it is written: how many files the run actually opened,
 which on the fast path is fewer than the files in scope.
@@ -4630,7 +4658,9 @@ and not a budget.
 the empty string, which org-ql's own ‘property’ predicate matches, so
 resolution must match it too.
 
-   With the registry and masters above, and this corpus:
+   With the registry and masters above, and the first four entries of
+*note The example corpus:: -- whose properties that bear on this are
+these, and which carry others the resolution does not consult:
 
      * Projects
        :PROPERTIES:
@@ -4708,10 +4738,11 @@ mechanism and is Tinderbox's own promise about it.
 discover it at an inconvenient moment.
 
    *Grep does not see an inherited value.*  Nor does ‘org-entry-get’,
-nor a column view, nor org-ql's own ‘property’ predicate.  Over the
-corpus above, ‘grep blocked’ finds one line, in the registry file, and
-finds nothing in ‘corpus.org’ at all, even though one entry there
-resolves to ‘blocked’.
+nor a column view, nor org-ql's own ‘property’ predicate.  Over *note
+The example corpus::, ‘grep blocked’ finds three lines, all of them in
+the registry file and all of them declarations -- the vocabulary, the
+face map, and the master's own drawer -- and it finds nothing in
+‘corpus.org’ at all, even though one entry there resolves to ‘blocked’.
 
    What *does* see it is:
 
@@ -4887,7 +4918,7 @@ File: org-agents.info,  Node: From declaration to headline,  Next: It changes no
 
 Take the registry's ‘STATUS’ declaration from *note The registry file::,
 whose ‘:ATTR_FACES:’ is the line above and whose ‘:ATTR_DEFAULT:’ is
-‘active’, and the corpus from *note The resolution order::.  Turn the
+‘active’, and all nine entries of *note The example corpus::.  Turn the
 mode on and fontify.  Measured, headline by headline, with the resolved
 value beside the ‘face’ text property actually on the line:
 
@@ -5238,17 +5269,17 @@ is called in its ‘plan’ phase at every match, which writes nothing and
 is caught if it does, and the result is a report in ‘*Org Agents
 Actions*’, one line per intended edit.
 
-   For the agent in *note Writing an action::, over the corpus of *note
-A corpus to work with:::
+   For the agent in *note Writing an action::, over *note The example
+corpus:::
 
      org-agents: 6 edits at 3 entries in 1 file (1 not open before this ran).
        Nothing written yet.
-     …/corpus.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-     …/corpus.org:5: tag!(+reviewed)  "" -> :reviewed:
-     …/corpus.org:14: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-     …/corpus.org:14: tag!(+reviewed)  "" -> :reviewed:
-     …/corpus.org:28: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-     …/corpus.org:28: tag!(+reviewed)  "" -> :reviewed:
+     …/corpus.org:7: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+     …/corpus.org:7: tag!(+reviewed)  "" -> :reviewed:
+     …/corpus.org:15: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+     …/corpus.org:15: tag!(+reviewed)  "" -> :reviewed:
+     …/corpus.org:29: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+     …/corpus.org:29: tag!(+reviewed)  "" -> :reviewed:
 
    Read the report before answering anything.  ‘FILE:LINE:’ comes first
 on every line so ‘next-error’ walks them; the arrow shows old and new;
@@ -5985,7 +6016,7 @@ File: org-agents.info,  Node: Functions for Lisp callers,  Prev: Action verbs,  
      or no and says nothing about why.  See *note The six types::.
 
 
-File: org-agents.info,  Node: History and Acknowledgments,  Next: GNU General Public License,  Prev: Reference,  Up: Top
+File: org-agents.info,  Node: History and Acknowledgments,  Next: The example corpus,  Prev: Reference,  Up: Top
 
 15 History and Acknowledgments
 ******************************
@@ -6345,9 +6376,139 @@ published v9.2 manual, and where it is wrong the error is this manual's;
 Eastgate's own documentation is authoritative about Tinderbox.
 
 
-File: org-agents.info,  Node: GNU General Public License,  Next: Concept Index,  Prev: History and Acknowledgments,  Up: Top
+File: org-agents.info,  Node: The example corpus,  Next: GNU General Public License,  Prev: History and Acknowledgments,  Up: Top
 
-Appendix A GNU General Public License
+Appendix A The example corpus
+*****************************
+
+Every worked example in this manual after *note Tutorial:: was run over
+the two files printed here.  They are given in full so that you can
+build them and check any example for yourself; where an example needs
+anything else -- a second file, a prototype that dangles, a registry
+with a mistake in it -- the node says so and prints what it added.
+
+   ‘corpus.org’ is the tutorial's ‘work.org’ with more properties on its
+entries, a ‘:OWNER:’ worth querying for, and one more subtree, so that
+there is something for ‘:URL:’, ‘:REVIEWS:’, ‘:LOCATION:’, ‘:TOPICS:’
+and a prototype chain to be read from.  Nine entries, and the ‘:ID:’
+values are short and readable only so that the links the examples write
+fit on a printed line:
+
+     #+title: Corpus
+
+     * Projects
+       :PROPERTIES:
+       :OWNER: johnw
+       :END:
+     ** TODO Rewrite the exporter
+        :PROPERTIES:
+        :ID:          rewrite-exporter
+        :NEXT_REVIEW: 2026-09-01
+        :URL:         https://github.com/example/exporter
+        :REVIEWS:     5
+        :STATUS:      active
+        :END:
+     ** TODO Audit the prefilter
+        :PROPERTIES:
+        :ID:          audit-prefilter
+        :NEXT_REVIEW: 2026-08-25
+        :REVIEWS:     2
+        :PROTOTYPE:   Blocked Task
+        :END:
+     ** DONE Ship 0.1
+        :PROPERTIES:
+        :ID:          ship-0-1
+        :REVIEWS:     9
+        :STATUS:      done
+        :END:
+     * Errands
+     ** TODO Renew the passport
+        :PROPERTIES:
+        :ID:          renew-passport
+        :NEXT_REVIEW: 2026-08-21
+        :URL:         https://travel.state.gov/passport
+        :LOCATION:    Pasadena
+        :END:
+     ** TODO Collect the print
+        :PROPERTIES:
+        :ID:          collect-print
+        :LOCATION:    Altadena
+        :PROTOTYPE:   Task
+        :END:
+     * Reading
+     ** Tinderbox notes
+        :PROPERTIES:
+        :ID:          tinderbox-notes
+        :URL:         https://www.eastgate.com/Tinderbox/
+        :TOPICS:      tinderbox hypertext
+        :END:
+
+   ‘attributes.org’ is the registry, and it is the file *note The
+registry file:: and *note Declaring masters:: print in pieces.  Three
+declarations and two masters:
+
+     #+title: Attributes
+
+     * STATUS
+       :PROPERTIES:
+       :ATTR_TYPE:    string
+       :ATTR_VALUES:  active paused blocked done
+       :ATTR_DEFAULT: active
+       :ATTR_FACES:   blocked error | paused shadow | done success
+       :END:
+       The state of a piece of work, independent of its TODO keyword.
+
+     * NEXT_REVIEW
+       :PROPERTIES:
+       :ATTR_TYPE: date
+       :END:
+       The day this entry should next be looked at.
+
+     * REVIEWS
+       :PROPERTIES:
+       :ATTR_TYPE:    number
+       :ATTR_DEFAULT: 0
+       :END:
+       How many times this entry has been reviewed.
+
+     * Prototypes
+     ** Task
+        :PROPERTIES:
+        :STATUS: active
+        :OWNER:  johnw
+        :END:
+     ** Blocked Task
+        :PROPERTIES:
+        :PROTOTYPE: Task
+        :STATUS:    blocked
+        :END:
+
+   Put both in a directory, add ‘corpus.org’ to ‘org-agenda-files’,
+point ‘org-agents-attributes-file’ at ‘attributes.org’, and point
+‘org-directory’ at the directory.  Agents go in a third file of their
+own; the examples print the agent as they use it, so any file will do.
+‘corpus.org’ is not itself an agent file and needs no entry in
+‘org-agents-files’.
+
+   Two things about this corpus are deliberate, because several examples
+turn on them.  ‘Projects’ carries no ‘:ID:’, which is why an example
+that matches it renders a ‘file:’ link rather than an ‘id:’ one.  And
+‘Audit the prefilter’ and ‘Collect the print’ reach ‘:OWNER: johnw’
+through the prototype chain while spelling nothing themselves, which is
+what makes the difference between the two axes visible: see *note The
+two axes:: and *note The resolution order::.
+
+   Every example was run on 2026-08-20, which is what the
+‘:AGENT_MATCHED:’ stamps and the relative-date queries in this manual
+are relative to.  A run today will stamp today, and an example whose
+query names a window around the present -- ‘(property-ts $NEXT_REVIEW
+:from -7 :to 30)’ is the one -- will answer about today's window and not
+about that one.
+
+
+File: org-agents.info,  Node: GNU General Public License,  Next: Concept Index,  Prev: The example corpus,  Up: Top
+
+Appendix B GNU General Public License
 *************************************
 
 org-agents is free software: you can redistribute it and modify it under
@@ -6370,460 +6531,481 @@ reached you with the program.
 
 File: org-agents.info,  Node: Concept Index,  Next: Key Index,  Prev: GNU General Public License,  Up: Top
 
-B Concept Index
+C Concept Index
 ***************
 
  [index ]
 * Menu:
 
-* (stale):                               The alias contract.   (line  6)
-* *Org Agents Actions* buffer:           The dry run.          (line  6)
-* $CATEGORY, entry special:              Entry specials.       (line  6)
-* $FILE, entry special:                  Entry specials.       (line  6)
-* $ITEM, entry special:                  Entry specials.       (line  6)
-* $LEVEL, entry special:                 Entry specials.       (line  6)
-* $NAME, property reference:             Property references.  (line  6)
-* $NAME*, outline axis:                  The two axes.         (line  6)
-* $NAME^, prototype axis:                The two axes.         (line  6)
-* $PRIORITY, entry special:              Entry specials.       (line  6)
-* $PROP, property reference:             Property references.  (line  6)
-* $TAGS, entry special:                  Entry specials.       (line  6)
-* $TODO, entry special:                  Entry specials.       (line  6)
+* (stale):                               The alias contract.  (line   6)
+* *Org Agents Actions* buffer:           The dry run.         (line   6)
+* $CATEGORY, entry special:              Entry specials.      (line   6)
+* $FILE, entry special:                  Entry specials.      (line   6)
+* $ITEM, entry special:                  Entry specials.      (line   6)
+* $LEVEL, entry special:                 Entry specials.      (line   6)
+* $NAME, property reference:             Property references. (line   6)
+* $NAME*, outline axis:                  The two axes.        (line   6)
+* $NAME^, prototype axis:                The two axes.        (line   6)
+* $PRIORITY, entry special:              Entry specials.      (line   6)
+* $PROP, property reference:             Property references. (line   6)
+* $TAGS, entry special:                  Entry specials.      (line   6)
+* $TODO, entry special:                  Entry specials.      (line   6)
 * acknowledgments:                       History and Acknowledgments.
-                                                               (line  6)
-* action code:                           Action code.          (line  6)
-* action code, as a Tinderbox concept:   What org-agents took. (line 36)
+                                                              (line   6)
+* action code:                           Action code.         (line   6)
+* action code, as a Tinderbox concept:   What org-agents took.
+                                                              (line  36)
 * action code, Tinderbox:                Action code in Tinderbox.
-                                                               (line  6)
+                                                              (line   6)
 * action verb, defining:                 Writing a verb of your own.
-                                                               (line  6)
-* action verbs, the nine:                The nine verbs.       (line  6)
-* action, syntax:                        Writing an action.    (line  6)
-* activation:                            Activation.           (line  6)
-* active, agent scope:                   Scopes.               (line 12)
-* agenda, agent scope:                   Scopes.               (line  9)
-* agent:                                 Summary.              (line  6)
+                                                              (line   6)
+* action verbs, the nine:                The nine verbs.      (line   6)
+* action, syntax:                        Writing an action.   (line   6)
+* activation:                            Activation.          (line   6)
+* active, agent scope:                   Scopes.              (line  12)
+* agenda, agent scope:                   Scopes.              (line   9)
+* agent:                                 Summary.             (line   6)
 * AGENT_ properties, never inherited:    Names that never travel.
-                                                               (line  6)
+                                                              (line   6)
 * AGENT_ACTION, agent property:          Action code in Tinderbox.
-                                                               (line 32)
-* AGENT_ACTION, agent property <1>:      Where to go next.     (line 34)
-* AGENT_ACTION, agent property <2>:      Agent properties.     (line 57)
-* AGENT_ACTION, property:                Action code.          (line  6)
+                                                              (line  32)
+* AGENT_ACTION, agent property <1>:      Where to go next.    (line  34)
+* AGENT_ACTION, agent property <2>:      Agent properties.    (line  57)
+* AGENT_ACTION, property:                Action code.         (line   6)
 * AGENT_COLUMNS, agent property:         The same matches as a table.
-                                                               (line  6)
-* AGENT_COLUMNS, agent property <1>:     The table view.       (line  6)
-* AGENT_COLUMNS, agent property <2>:     Agent properties.     (line 45)
+                                                              (line   6)
+* AGENT_COLUMNS, agent property <1>:     The table view.      (line   6)
+* AGENT_COLUMNS, agent property <2>:     Agent properties.    (line  45)
 * AGENT_FORMAT, agent property:          Showing properties beside the link.
-                                                               (line  6)
-* AGENT_FORMAT, agent property <1>:      Formats.              (line  6)
-* AGENT_FORMAT, agent property <2>:      Agent properties.     (line 52)
+                                                              (line   6)
+* AGENT_FORMAT, agent property <1>:      Formats.             (line   6)
+* AGENT_FORMAT, agent property <2>:      Agent properties.    (line  52)
 * AGENT_LIMIT, agent property:           Narrowing what the agent reads.
-                                                               (line  6)
-* AGENT_LIMIT, agent property <1>:       Sorting and limiting. (line  6)
-* AGENT_LIMIT, agent property <2>:       Agent properties.     (line 40)
-* AGENT_MATCH, agent property:           What an agent is.     (line 46)
+                                                              (line   6)
+* AGENT_LIMIT, agent property <1>:       Sorting and limiting.
+                                                              (line   6)
+* AGENT_LIMIT, agent property <2>:       Agent properties.    (line  40)
+* AGENT_MATCH, agent property:           What an agent is.    (line  46)
 * AGENT_MATCH, agent property <1>:       What the update wrote.
-                                                               (line  9)
-* AGENT_MATCH, agent property <2>:       The children view.    (line  6)
-* AGENT_MATCH, agent property <3>:       Agent properties.     (line 63)
-* AGENT_MATCHED, agent property:         What an agent is.     (line 46)
+                                                              (line   9)
+* AGENT_MATCH, agent property <2>:       The children view.   (line   6)
+* AGENT_MATCH, agent property <3>:       Agent properties.    (line  63)
+* AGENT_MATCHED, agent property:         What an agent is.    (line  46)
 * AGENT_MATCHED, agent property <1>:     What the update wrote.
-                                                               (line  6)
+                                                              (line   6)
 * AGENT_MATCHED, agent property <2>:     What writing AGENT_MATCHED costs.
-                                                               (line  6)
-* AGENT_MATCHED, agent property <3>:     Agent properties.     (line 68)
-* AGENT_QUERY, agent property:           What an agent is.     (line  6)
+                                                              (line   6)
+* AGENT_MATCHED, agent property <3>:     Agent properties.    (line  68)
+* AGENT_QUERY, agent property:           What an agent is.    (line   6)
 * AGENT_QUERY, agent property <1>:       Putting a query in a property drawer.
-                                                               (line  6)
-* AGENT_QUERY, agent property <2>:       Agent properties.     (line 14)
+                                                              (line   6)
+* AGENT_QUERY, agent property <2>:       Agent properties.    (line  14)
 * AGENT_SCOPE, agent property:           Narrowing what the agent reads.
-                                                               (line  6)
-* AGENT_SCOPE, agent property <1>:       Scopes.               (line  6)
-* AGENT_SCOPE, agent property <2>:       Agent properties.     (line 26)
+                                                              (line   6)
+* AGENT_SCOPE, agent property <1>:       Scopes.              (line   6)
+* AGENT_SCOPE, agent property <2>:       Agent properties.    (line  26)
 * AGENT_SORT, agent property:            The same matches as a table.
-                                                               (line 42)
-* AGENT_SORT, agent property <1>:        Sorting and limiting. (line  6)
-* AGENT_SORT, agent property <2>:        Agent properties.     (line 33)
+                                                              (line  42)
+* AGENT_SORT, agent property <1>:        Sorting and limiting.
+                                                              (line   6)
+* AGENT_SORT, agent property <2>:        Agent properties.    (line  33)
 * AGENT_VIEW, agent property:            The same matches as a table.
-                                                               (line  6)
-* AGENT_VIEW, agent property <1>:        Choosing a view.      (line  6)
-* AGENT_VIEW, agent property <2>:        Agent properties.     (line 22)
-* agent, as a Tinderbox concept:         What org-agents took. (line 12)
-* agent, definition of:                  What an agent is.     (line  6)
-* agent, Tinderbox:                      Agents in Tinderbox.  (line  6)
-* agent, writing one:                    Your first agent.     (line  6)
-* alias:                                 What an agent is.     (line  6)
+                                                              (line   6)
+* AGENT_VIEW, agent property <1>:        Choosing a view.     (line   6)
+* AGENT_VIEW, agent property <2>:        Agent properties.    (line  22)
+* agent, as a Tinderbox concept:         What org-agents took.
+                                                              (line  12)
+* agent, definition of:                  What an agent is.    (line   6)
+* agent, Tinderbox:                      Agents in Tinderbox. (line   6)
+* agent, writing one:                    Your first agent.    (line   6)
+* alias:                                 What an agent is.    (line   6)
 * alias <1>:                             What the update wrote.
-                                                               (line  6)
-* alias <2>:                             The children view.    (line  6)
-* alias contract:                        The alias contract.   (line  6)
-* alias, and why it is not a proxy:      What it changed.      (line 31)
+                                                              (line   6)
+* alias <2>:                             The children view.   (line   6)
+* alias contract:                        The alias contract.  (line   6)
+* alias, and why it is not a proxy:      What it changed.     (line  31)
 * alias, annotating one:                 What the update wrote.
-                                                               (line 35)
+                                                              (line  35)
 * alias, excluded from an agent's matches: org-ql is the base language.
-                                                               (line 40)
-* alias, Tinderbox:                      Agents in Tinderbox.  (line  6)
-* all, agent scope:                      Scopes.               (line 15)
-* appearance:                            Appearance.           (line  6)
-* appearance, as a Tinderbox concept:    What org-agents took. (line 41)
+                                                              (line  40)
+* alias, Tinderbox:                      Agents in Tinderbox. (line   6)
+* all, agent scope:                      Scopes.              (line  15)
+* appearance:                            Appearance.          (line   6)
+* appearance, as a Tinderbox concept:    What org-agents took.
+                                                              (line  41)
 * appearance, Tinderbox:                 Appearance in Tinderbox.
-                                                               (line  6)
-* approval, of a query:                  Remembered approvals. (line  6)
+                                                              (line   6)
+* approval, of a query:                  Remembered approvals.
+                                                              (line   6)
 * approvals listing:                     Reviewing what you approved.
-                                                               (line  6)
+                                                              (line   6)
 * arbitrary Lisp in a query:             What is evaluated and what is refused.
-                                                               (line  6)
-* archive!, action verb:                 Action verbs.         (line 62)
+                                                              (line   6)
+* archive!, action verb:                 Action verbs.        (line  62)
 * ATTR_DEFAULT, and the prefilter:       Inheritance and pushability.
-                                                               (line 44)
-* ATTR_DEFAULT, in resolution:           The resolution order. (line  6)
-* ATTR_DEFAULT, registry property:       The declaration.      (line  6)
-* ATTR_DEFAULT, registry property <1>:   Registry properties.  (line 28)
+                                                              (line  44)
+* ATTR_DEFAULT, in resolution:           The resolution order.
+                                                              (line   6)
+* ATTR_DEFAULT, registry property:       The declaration.     (line   6)
+* ATTR_DEFAULT, registry property <1>:   Registry properties. (line  28)
 * ATTR_FACES, registry property:         Appearance in Tinderbox.
-                                                               (line 21)
-* ATTR_FACES, registry property <1>:     The declaration.      (line  6)
-* ATTR_FACES, registry property <2>:     Registry properties.  (line 36)
+                                                              (line  21)
+* ATTR_FACES, registry property <1>:     The declaration.     (line   6)
+* ATTR_FACES, registry property <2>:     Registry properties. (line  36)
 * ATTR_FACES, syntax:                    The ATTR_FACES syntax.
-                                                               (line  6)
-* ATTR_TYPE, registry property:          The declaration.      (line  6)
-* ATTR_TYPE, registry property <1>:      Registry properties.  (line 11)
-* ATTR_VALUES, registry property:        The declaration.      (line  6)
-* ATTR_VALUES, registry property <1>:    Registry properties.  (line 19)
+                                                              (line   6)
+* ATTR_TYPE, registry property:          The declaration.     (line   6)
+* ATTR_TYPE, registry property <1>:      Registry properties. (line  11)
+* ATTR_VALUES, registry property:        The declaration.     (line   6)
+* ATTR_VALUES, registry property <1>:    Registry properties. (line  19)
 * attribute registry:                    Attributes in Tinderbox.
-                                                               (line 49)
+                                                              (line  49)
 * attribute registry <1>:                The attribute registry.
-                                                               (line  6)
-* attribute types:                       The six types.        (line  6)
+                                                              (line   6)
+* attribute types:                       The six types.       (line   6)
 * attribute, Tinderbox:                  Attributes in Tinderbox.
-                                                               (line  6)
+                                                              (line   6)
 * attribution:                           History and Acknowledgments.
-                                                               (line  6)
-* axis, outline:                         The two axes.         (line  6)
-* axis, prototype:                       The two axes.         (line  6)
+                                                              (line   6)
+* axis, outline:                         The two axes.        (line   6)
+* axis, prototype:                       The two axes.        (line   6)
 * batch, and confirmation:               Destructive verbs and batch.
-                                                               (line  6)
+                                                              (line   6)
 * before-save-hook, and unmodified buffers: Refreshing on save.
-                                                               (line 43)
+                                                              (line  43)
 * Bernstein, Mark:                       Agents in the Tinderbox tradition.
-                                                               (line  6)
-* Bernstein, Mark <1>:                   Tinderbox.            (line  6)
-* blast radius:                          The blast radius.     (line  6)
-* block parameters:                      Block parameters.     (line  6)
-* boolean position:                      The four positions.   (line  6)
-* boolean, attribute type:               The six types.        (line 26)
+                                                              (line   6)
+* Bernstein, Mark <1>:                   Tinderbox.           (line   6)
+* blast radius:                          The blast radius.    (line   6)
+* block parameters:                      Block parameters.    (line   6)
+* boolean position:                      The four positions.  (line   6)
+* boolean, attribute type:               The six types.       (line  26)
 * buffer, left modified by an update:    What the update wrote.
-                                                               (line 21)
-* byte-identical save:                   Refreshing on save.   (line 19)
+                                                              (line  21)
+* byte-identical save:                   Refreshing on save.  (line  19)
 * byte-identical save <1>:               The three refusals on the save path.
-                                                               (line  6)
-* children view:                         The children view.    (line  6)
-* children, agent view:                  Choosing a view.      (line 11)
-* choosing a view:                       Choosing a view.      (line  6)
+                                                              (line   6)
+* children view:                         The children view.   (line   6)
+* children, agent view:                  Choosing a view.     (line  11)
+* choosing a view:                       Choosing a view.     (line   6)
 * colour from attribute values:          Appearance in Tinderbox.
-                                                               (line  6)
+                                                              (line   6)
 * column view, corpus-wide:              A corpus-wide column view.
-                                                               (line  6)
+                                                              (line   6)
 * completion, of property values:        Completing declared values.
-                                                               (line  6)
-* configuration, minimum:                Activation.           (line  6)
+                                                              (line   6)
+* configuration, minimum:                Activation.          (line   6)
 * containment is not inheritance:        Prototypes in Tinderbox.
-                                                               (line  6)
+                                                              (line   6)
 * containment, is not inheritance:       Why outline inheritance is not in that order.
-                                                               (line  6)
+                                                              (line   6)
 * continuation, of a property value:     Putting a query in a property drawer.
-                                                               (line 32)
-* continuous evaluation, and its absence: What it changed.     (line 20)
+                                                              (line  32)
+* continuous evaluation, and its absence: What it changed.    (line  20)
 * conventions in this manual:            Conventions used in this manual.
-                                                               (line  6)
+                                                              (line   6)
 * copying:                               GNU General Public License.
-                                                               (line  6)
+                                                              (line   6)
+* corpus, the examples':                 The example corpus.  (line   6)
 * corpus, tutorial:                      A corpus to work with.
-                                                               (line  6)
-* correspondence with Tinderbox:         What org-agents took. (line  6)
-* dangling prototype:                    The two diagnostics.  (line  6)
-* date, attribute type:                  The six types.        (line 20)
-* deadline!, action verb:                Action verbs.         (line 53)
+                                                              (line   6)
+* correspondence with Tinderbox:         What org-agents took.
+                                                              (line   6)
+* dangling prototype:                    The two diagnostics. (line   6)
+* date, attribute type:                  The six types.       (line  20)
+* date, in the examples' output:         The example corpus.  (line 123)
+* deadline!, action verb:                Action verbs.        (line  53)
 * declaring an attribute:                Why declare attributes.
-                                                               (line  6)
-* delete-property!, action verb:         Action verbs.         (line 22)
-* dependencies:                          What you need.        (line  6)
+                                                              (line   6)
+* delete-property!, action verb:         Action verbs.        (line  22)
+* dependencies:                          What you need.       (line   6)
 * destructive verbs:                     Destructive verbs and batch.
-                                                               (line  6)
-* directory, as an agent scope:          Scopes.               (line 18)
+                                                              (line   6)
+* directory, as an agent scope:          Scopes.              (line  18)
 * displayed attributes:                  A corpus-wide column view.
-                                                               (line  6)
-* divergences from Tinderbox:            What it changed.      (line  6)
-* Dominik, Carsten:                      Org and org-ql.       (line  6)
-* dry run:                               The dry run.          (line  6)
+                                                              (line   6)
+* divergences from Tinderbox:            What it changed.     (line   6)
+* Dominik, Carsten:                      Org and org-ql.      (line   6)
+* dry run:                               The dry run.         (line   6)
 * dynamic block:                         The same matches as a table.
-                                                               (line  6)
-* dynamic block <1>:                     Dynamic blocks.       (line  6)
+                                                              (line   6)
+* dynamic block <1>:                     Dynamic blocks.      (line   6)
 * Eastgate Systems:                      Agents in the Tinderbox tradition.
-                                                               (line  6)
-* Eastgate Systems, Inc.:                Tinderbox.            (line  6)
+                                                              (line   6)
+* Eastgate Systems, Inc.:                Tinderbox.           (line   6)
 * edict, and why there is none:          What was deliberately not ported and why.
-                                                               (line  6)
+                                                              (line   6)
 * edict, Tinderbox:                      Action code in Tinderbox.
-                                                               (line  6)
-* effort!, action verb:                  Action verbs.         (line 57)
-* empty, value keyword:                  Value keywords.       (line  6)
+                                                              (line   6)
+* effort!, action verb:                  Action verbs.        (line  57)
+* empty, value keyword:                  Value keywords.      (line   6)
 * encoding, and a pushed literal:        Limitations of the prefilter.
-                                                               (line  9)
-* evaluation engine:                     What an agent is.     (line 59)
+                                                              (line   9)
+* evaluation engine:                     What an agent is.    (line  59)
 * evaluation engine, the one:            What the prefilter can and cannot do.
-                                                               (line  6)
-* evaluation, and the registry:          It is pure data.      (line  6)
-* expansion, of a property reference:    Property references.  (line  6)
-* faces, changes no bytes:               It changes no bytes.  (line  6)
+                                                              (line   6)
+* evaluation, and the registry:          It is pure data.     (line   6)
+* expansion, of a property reference:    Property references. (line   6)
+* faces, changes no bytes:               It changes no bytes. (line   6)
 * faces, following an edit:              Precedence and following an edit.
-                                                               (line  6)
-* faces, from attribute values:          Appearance.           (line  6)
+                                                              (line   6)
+* faces, from attribute values:          Appearance.          (line   6)
 * faces, worked example:                 From declaration to headline.
-                                                               (line  6)
-* file list, as an agent scope:          Scopes.               (line 22)
-* first agent:                           Tutorial.             (line  6)
-* five ideas, the:                       The five ideas.       (line  6)
-* follower, prototype:                   What a prototype is.  (line  6)
+                                                              (line   6)
+* file list, as an agent scope:          Scopes.              (line  22)
+* first agent:                           Tutorial.            (line   6)
+* five ideas, the:                       The five ideas.      (line   6)
+* follower, prototype:                   What a prototype is. (line   6)
 * font-lock precedence:                  Precedence and following an edit.
-                                                               (line  6)
-* format suffix:                         Formats.              (line  6)
+                                                              (line   6)
+* format suffix:                         Formats.             (line   6)
 * gate, the evaluation:                  What is evaluated and what is refused.
-                                                               (line  6)
+                                                              (line   6)
 * geometry attributes, and why there are none: What was deliberately not ported and why.
-                                                               (line  6)
-* geometry, not ported:                  The two refusals.     (line  6)
+                                                              (line   6)
+* geometry, not ported:                  The two refusals.    (line   6)
 * GNU General Public License:            GNU General Public License.
-                                                               (line  6)
-* grep, and inherited values:            Reads are virtual.    (line  6)
-* hash, of a query:                      Remembered approvals. (line  6)
+                                                              (line   6)
+* grep, and inherited values:            Reads are virtual.   (line   6)
+* hash, of a query:                      Remembered approvals.
+                                                              (line   6)
 * history:                               History and Acknowledgments.
-                                                               (line  6)
+                                                              (line   6)
 * ID, and readable link targets:         A corpus to work with.
-                                                               (line 12)
+                                                              (line  12)
 * inheritable action, and why there is none: What was deliberately not ported and why.
-                                                               (line 64)
-* inheritance, outline versus prototype: The two axes.         (line  6)
+                                                              (line  64)
+* inheritance, outline versus prototype: The two axes.        (line   6)
 * inheritance, prototype:                Prototypes in Tinderbox.
-                                                               (line  6)
-* inheritance, prototype <1>:            Prototypes.           (line  6)
-* inherited value, invisible to grep:    Reads are virtual.    (line 15)
-* inserting a dynamic block:             Inserting a block.    (line  6)
-* installation:                          Installation.         (line  6)
-* introduction:                          Introduction.         (line  6)
-* ITEM_BY_ID:                            The table view.       (line  6)
+                                                              (line   6)
+* inheritance, prototype <1>:            Prototypes.          (line   6)
+* inherited value, invisible to grep:    Reads are virtual.   (line  15)
+* inserting a dynamic block:             Inserting a block.   (line   6)
+* installation:                          Installation.        (line   6)
+* introduction:                          Introduction.        (line   6)
+* ITEM_BY_ID:                            The table view.      (line   6)
 * ITEM_BY_ID, agent column:              The same matches as a table.
-                                                               (line 34)
+                                                              (line  34)
 * key bindings, and the absence of any:  Conventions used in this manual.
-                                                               (line 21)
+                                                              (line  21)
 * latin-1:                               Limitations of the prefilter.
-                                                               (line  9)
+                                                              (line   9)
 * license:                               GNU General Public License.
-                                                               (line  6)
+                                                              (line   6)
 * limit, on an action run:               How much one run may edit.
-                                                               (line  6)
+                                                              (line   6)
 * limitations, of action code:           Limitations of action code.
-                                                               (line  6)
+                                                              (line   6)
 * limitations, of dynamic blocks:        Limitations of dynamic blocks.
-                                                               (line  6)
+                                                              (line   6)
 * limitations, of prototypes:            Limitations of prototypes.
-                                                               (line  6)
+                                                              (line   6)
 * limitations, of the registry:          Limitations of the registry.
-                                                               (line  6)
+                                                              (line   6)
 * limitations, of the views:             Limitations of the views.
-                                                               (line  6)
+                                                              (line   6)
 * limitations, of updating:              Limitations of updating.
-                                                               (line  6)
-* limiting an agent's matches:           Sorting and limiting. (line  6)
-* lint, attribute:                       Checking a corpus.    (line  6)
-* list view:                             The list view.        (line  6)
-* list, agent view:                      Choosing a view.      (line 16)
-* list, attribute type:                  The six types.        (line  6)
+                                                              (line   6)
+* limiting an agent's matches:           Sorting and limiting.
+                                                              (line   6)
+* lint, attribute:                       Checking a corpus.   (line   6)
+* list view:                             The list view.       (line   6)
+* list, agent view:                      Choosing a view.     (line  16)
+* list, attribute type:                  The six types.       (line   6)
 * Local Variables block:                 Reviewing what you approved.
-                                                               (line 65)
-* master, prototype:                     What a prototype is.  (line  6)
+                                                              (line  65)
+* master, prototype:                     What a prototype is. (line   6)
 * materialised inheritance, and why there is none: What was deliberately not ported and why.
-                                                               (line 73)
+                                                              (line  73)
 * measurement, of a prefiltered scope:   Which scopes get narrowed and why.
-                                                               (line  6)
+                                                              (line   6)
 * minor mode, for faces:                 Faces from attribute values.
-                                                               (line  6)
+                                                              (line   6)
 * minor mode, global-org-agents-mode:    global-org-agents-mode.
-                                                               (line  6)
-* minor mode, org-agents-mode:           org-agents-mode.      (line  6)
+                                                              (line   6)
+* minor mode, org-agents-mode:           org-agents-mode.     (line   6)
 * multi-block agent:                     Several blocks under one agent.
-                                                               (line  6)
-* name position:                         The four positions.   (line  6)
+                                                              (line   6)
+* name position:                         The four positions.  (line   6)
 * non-affiliation:                       Trademarks and non-affiliation.
-                                                               (line  6)
+                                                              (line   6)
 * non-inherited properties:              Names that never travel.
-                                                               (line  6)
+                                                              (line   6)
 * non-ports, deliberate:                 What was deliberately not ported and why.
-                                                               (line  6)
-* normalizer, org-ql:                    Refused heads.        (line  6)
-* now, value keyword:                    Value keywords.       (line  6)
-* number, attribute type:                The six types.        (line 12)
-* numeric position:                      The four positions.   (line  6)
-* org-agents dynamic block:              Dynamic blocks.       (line  6)
-* org-agents, overview of:               Introduction.         (line  6)
-* org-ext:                               What you need.        (line 18)
-* org-ql-ext:                            What you need.        (line 18)
-* org-ql, acknowledgment of:             Org and org-ql.       (line  6)
+                                                              (line   6)
+* normalizer, org-ql:                    Refused heads.       (line   6)
+* now, value keyword:                    Value keywords.      (line   6)
+* number, attribute type:                The six types.       (line  12)
+* numeric position:                      The four positions.  (line   6)
+* org-agents dynamic block:              Dynamic blocks.      (line   6)
+* org-agents, overview of:               Introduction.        (line   6)
+* org-ext:                               What you need.       (line  18)
+* org-ql-ext:                            What you need.       (line  18)
+* org-ql, acknowledgment of:             Org and org-ql.      (line   6)
 * org-ql, as the base language:          org-ql is the base language.
-                                                               (line  6)
-* org-ql, as the evaluation engine:      What an agent is.     (line 59)
-* Org, acknowledgment of:                Org and org-ql.       (line  6)
-* Org, what it already provides:         What Org already had. (line  6)
+                                                              (line   6)
+* org-ql, as the evaluation engine:      What an agent is.    (line  59)
+* Org, acknowledgment of:                Org and org-ql.      (line   6)
+* Org, what it already provides:         What Org already had.
+                                                              (line   6)
 * outline inheritance, contrasted:       Why outline inheritance is not in that order.
-                                                               (line  6)
+                                                              (line   6)
 * outline inheritance, versus prototypes: Prototypes in Tinderbox.
-                                                               (line 42)
-* overriding an agent property:          Block parameters.     (line  6)
+                                                              (line  42)
+* overriding an agent property:          Block parameters.    (line   6)
 * package archives, and why org-agents is not on one: What you need.
-                                                               (line 31)
-* Porter, Adam:                          Org and org-ql.       (line  6)
-* position, of a property reference:     The four positions.   (line  6)
+                                                              (line  31)
+* Porter, Adam:                          Org and org-ql.      (line   6)
+* position, of a property reference:     The four positions.  (line   6)
 * predicate, org-ql:                     org-ql is the base language.
-                                                               (line  6)
-* prefilter:                             What an agent is.     (line 59)
+                                                              (line   6)
+* prefilter:                             What an agent is.    (line  59)
 * prefilter, ripgrep:                    Scope and the ripgrep prefilter.
-                                                               (line  6)
+                                                              (line   6)
 * previewing a query:                    Looking before you write.
-                                                               (line  6)
-* priority!, action verb:                Action verbs.         (line 41)
-* pristine alias:                        The alias contract.   (line  6)
+                                                              (line   6)
+* priority!, action verb:                Action verbs.        (line  41)
+* pristine alias:                        The alias contract.  (line   6)
 * property drawer, a query in a:         Putting a query in a property drawer.
-                                                               (line  6)
+                                                              (line   6)
 * property drawer, untyped:              Why declare attributes.
-                                                               (line  6)
-* property reference:                    Property references.  (line  6)
+                                                              (line   6)
+* property reference:                    Property references. (line   6)
 * property-resolved, and the prefilter:  Inheritance and pushability.
-                                                               (line 27)
+                                                              (line  27)
 * property-resolved, predicate:          Functions for Lisp callers.
-                                                               (line  7)
+                                                              (line   7)
 * property-resolved, query predicate:    The property-resolved predicate.
-                                                               (line  6)
-* prototype:                             Prototypes.           (line  6)
-* prototype cycle:                       The two diagnostics.  (line  6)
-* prototype, as a Tinderbox concept:     What org-agents took. (line 27)
+                                                              (line   6)
+* prototype:                             Prototypes.          (line   6)
+* prototype cycle:                       The two diagnostics. (line   6)
+* prototype, as a Tinderbox concept:     What org-agents took.
+                                                              (line  27)
 * PROTOTYPE, entry property:             Prototypes in Tinderbox.
-                                                               (line 32)
-* PROTOTYPE, naming a master:            Naming a master.      (line  6)
-* PROTOTYPE, property:                   Prototypes.           (line  6)
+                                                              (line  32)
+* PROTOTYPE, naming a master:            Naming a master.     (line   6)
+* PROTOTYPE, property:                   Prototypes.          (line   6)
 * prototype, Tinderbox:                  Prototypes in Tinderbox.
-                                                               (line  6)
-* Prototypes section:                    Declaring masters.    (line  6)
-* push-down, of a conjunct:              The push-down rules.  (line  6)
-* query:                                 What an agent is.     (line  6)
-* query language:                        The query language.   (line  6)
-* query, an agent's:                     The query language.   (line  6)
+                                                              (line   6)
+* Prototypes section:                    Declaring masters.   (line   6)
+* push-down, of a conjunct:              The push-down rules. (line   6)
+* query:                                 What an agent is.    (line   6)
+* query language:                        The query language.  (line   6)
+* query, an agent's:                     The query language.  (line   6)
 * recording what an agent found:         What writing AGENT_MATCHED costs.
-                                                               (line  6)
-* reentrancy, during a prefilter:        Bounding a run.       (line 71)
-* reference:                             Reference.            (line  6)
-* refreshing an agent:                   Updating.             (line  6)
-* refusal, of a query:                   Refused queries.      (line  6)
+                                                              (line   6)
+* reentrancy, during a prefilter:        Bounding a run.      (line  71)
+* reference:                             Reference.           (line   6)
+* refreshing an agent:                   Updating.            (line   6)
+* refusal, of a query:                   Refused queries.     (line   6)
 * refusals on the save path:             The three refusals on the save path.
-                                                               (line  6)
-* refusals, action code:                 The three refusals.   (line  6)
-* refusals, appearance:                  The two refusals.     (line  6)
-* refused head:                          Refused heads.        (line  6)
+                                                              (line   6)
+* refusals, action code:                 The three refusals.  (line   6)
+* refusals, appearance:                  The two refusals.    (line   6)
+* refused head:                          Refused heads.       (line   6)
 * region, acting on:                     The same command over a selection.
-                                                               (line  6)
+                                                              (line   6)
 * registry file:                         The attribute registry.
-                                                               (line  6)
-* registry file, drawer placement:       The registry file.    (line 40)
-* registry file, where it lives:         The registry file.    (line  6)
-* registry, pure data:                   It is pure data.      (line  6)
-* rendering an agent:                    Views.                (line  6)
-* requirements:                          What you need.        (line  6)
+                                                              (line   6)
+* registry file, drawer placement:       The registry file.   (line  40)
+* registry file, the examples':          The example corpus.  (line   6)
+* registry file, where it lives:         The registry file.   (line   6)
+* registry, pure data:                   It is pure data.     (line   6)
+* rendering an agent:                    Views.               (line   6)
+* reproducing the examples:              The example corpus.  (line   6)
+* requirements:                          What you need.       (line   6)
 * residual Lisp:                         What is evaluated and what is refused.
-                                                               (line  6)
-* resolution order:                      The resolution order. (line  6)
-* ripgrep:                               What an agent is.     (line 59)
+                                                              (line   6)
+* resolution order:                      The resolution order.
+                                                              (line   6)
+* ripgrep:                               What an agent is.    (line  59)
 * ripgrep <1>:                           Which scopes get narrowed and why.
-                                                               (line  6)
+                                                              (line   6)
 * risky variable:                        Reviewing what you approved.
-                                                               (line 65)
+                                                              (line  65)
 * rule, and why there is none:           What was deliberately not ported and why.
-                                                               (line  6)
+                                                              (line   6)
 * rule, Tinderbox:                       Action code in Tinderbox.
-                                                               (line  6)
+                                                              (line   6)
 * safety:                                What is evaluated and what is refused.
-                                                               (line  6)
-* scheduled!, action verb:               Action verbs.         (line 46)
+                                                              (line   6)
+* scheduled!, action verb:               Action verbs.        (line  46)
 * scope:                                 Narrowing what the agent reads.
-                                                               (line  6)
+                                                              (line   6)
 * scope <1>:                             Scope and the ripgrep prefilter.
-                                                               (line  6)
-* seeding a registry:                    Checking a corpus.    (line  6)
-* seeding a registry, first run:         Checking a corpus.    (line 62)
-* session approval:                      Remembered approvals. (line  6)
-* set-property!, action verb:            Action verbs.         (line 13)
-* set, attribute type:                   The six types.        (line  6)
-* SHA-1:                                 Remembered approvals. (line  6)
-* sorting an agent's matches:            Sorting and limiting. (line  6)
-* special, entry:                        Entry specials.       (line  6)
-* stale alias:                           The alias contract.   (line  6)
+                                                              (line   6)
+* seeding a registry:                    Checking a corpus.   (line   6)
+* seeding a registry, first run:         Checking a corpus.   (line  66)
+* session approval:                      Remembered approvals.
+                                                              (line   6)
+* set-property!, action verb:            Action verbs.        (line  13)
+* set, attribute type:                   The six types.       (line   6)
+* SHA-1:                                 Remembered approvals.
+                                                              (line   6)
+* sorting an agent's matches:            Sorting and limiting.
+                                                              (line   6)
+* special, entry:                        Entry specials.      (line   6)
+* stale alias:                           The alias contract.  (line   6)
 * stamp, over a selection:               The same command over a selection.
-                                                               (line  6)
+                                                              (line   6)
 * standalone dynamic block:              Several blocks under one agent.
-                                                               (line  6)
-* string, attribute type:                The six types.        (line  7)
-* structurally safe query:               The structural gate.  (line  6)
-* suffix, on a property reference:       The two axes.         (line 65)
-* sugar, the property-reference:         Property references.  (line  6)
+                                                              (line   6)
+* string, attribute type:                The six types.       (line   7)
+* structurally safe query:               The structural gate. (line   6)
+* suffix, on a property reference:       The two axes.        (line  65)
+* sugar, the property-reference:         Property references. (line   6)
 * suggested values:                      Attributes in Tinderbox.
-                                                               (line  6)
-* summary:                               Summary.              (line  6)
-* superset argument:                     The push-down rules.  (line  6)
+                                                              (line   6)
+* summary:                               Summary.             (line   6)
+* superset argument:                     The push-down rules. (line   6)
 * symlink loop:                          Limitations of the prefilter.
-                                                               (line 30)
+                                                              (line  30)
 * system attribute:                      Attributes in Tinderbox.
-                                                               (line  6)
+                                                              (line   6)
 * table view:                            The same matches as a table.
-                                                               (line  6)
-* table view <1>:                        The table view.       (line  6)
-* table, agent view:                     Choosing a view.      (line 20)
-* tag!, action verb:                     Action verbs.         (line 28)
-* timer, an idle:                        Bounding a run.       (line 71)
+                                                              (line   6)
+* table view <1>:                        The table view.      (line   6)
+* table, agent view:                     Choosing a view.     (line  20)
+* tag!, action verb:                     Action verbs.        (line  28)
+* timer, an idle:                        Bounding a run.      (line  71)
 * timer, and why there is none:          What was deliberately not ported and why.
-                                                               (line 51)
+                                                              (line  51)
 * Tinderbox:                             Agents in the Tinderbox tradition.
-                                                               (line  6)
-* Tinderbox, what it is:                 Tinderbox.            (line  6)
-* today, value keyword:                  Value keywords.       (line  6)
-* todo!, action verb:                    Action verbs.         (line 34)
+                                                              (line   6)
+* Tinderbox, what it is:                 Tinderbox.           (line   6)
+* today, value keyword:                  Value keywords.      (line   6)
+* todo!, action verb:                    Action verbs.        (line  34)
 * trademarks:                            Trademarks and non-affiliation.
-                                                               (line  6)
+                                                              (line   6)
 * trust:                                 What is evaluated and what is refused.
-                                                               (line  6)
-* trust model, action code:              The trust model.      (line  6)
-* tutorial:                              Tutorial.             (line  6)
+                                                              (line   6)
+* trust model, action code:              The trust model.     (line   6)
+* tutorial:                              Tutorial.            (line   6)
 * typographic conventions:               Conventions used in this manual.
-                                                               (line  6)
+                                                              (line   6)
 * unreadable file:                       A file the scope names but cannot open.
-                                                               (line  6)
-* updating:                              Updating.             (line  6)
-* updating by hand:                      By hand.              (line  6)
-* updating on save:                      Refreshing on save.   (line  6)
-* updating on save <1>:                  org-agents-mode.      (line  6)
-* use-package, and org-agents:           Installation.         (line 14)
+                                                              (line   6)
+* updating:                              Updating.            (line   6)
+* updating by hand:                      By hand.             (line   6)
+* updating on save:                      Refreshing on save.  (line   6)
+* updating on save <1>:                  org-agents-mode.     (line   6)
+* use-package, and org-agents:           Installation.        (line  14)
 * user attribute:                        Attributes in Tinderbox.
-                                                               (line  6)
+                                                              (line   6)
 * user attribute, as a Tinderbox concept: What org-agents took.
-                                                               (line 21)
+                                                              (line  21)
 * user attributes:                       The attribute registry.
-                                                               (line  6)
-* value position:                        The four positions.   (line  6)
-* view:                                  Views.                (line  6)
-* virtual resolution:                    Reads are virtual.    (line  6)
-* vocabulary map, Tinderbox to org-agents: The vocabulary map. (line  6)
+                                                              (line   6)
+* value position:                        The four positions.  (line   6)
+* view:                                  Views.               (line   6)
+* virtual resolution:                    Reads are virtual.   (line   6)
+* vocabulary map, Tinderbox to org-agents: The vocabulary map.
+                                                              (line   6)
 
 
 File: org-agents.info,  Node: Key Index,  Next: Command Function and Name Index,  Prev: Concept Index,  Up: Top
 
-C Key Index
+D Key Index
 ***********
 
  [index ]
@@ -6864,7 +7046,7 @@ C Key Index
 
 File: org-agents.info,  Node: Command Function and Name Index,  Next: Variable Index,  Prev: Key Index,  Up: Top
 
-D Command, Function and Name Index
+E Command, Function and Name Index
 **********************************
 
  [index ]
@@ -6974,7 +7156,7 @@ D Command, Function and Name Index
                                                                (line 32)
 * org-agents-resolve-property <1>:       The property-resolved predicate.
                                                                (line  6)
-* org-agents-resolve-property <2>:       Reads are virtual.    (line 21)
+* org-agents-resolve-property <2>:       Reads are virtual.    (line 22)
 * org-agents-resolve-property <3>:       Functions for Lisp callers.
                                                                (line 16)
 * org-agents-resolve-property-quietly:   The two diagnostics.  (line 22)
@@ -7004,7 +7186,7 @@ D Command, Function and Name Index
 * priority!:                             Action verbs.         (line 40)
 * property-resolved:                     Prototypes in Tinderbox.
                                                                (line 32)
-* property-resolved <1>:                 Reads are virtual.    (line 21)
+* property-resolved <1>:                 Reads are virtual.    (line 22)
 * property-resolved <2>:                 Functions for Lisp callers.
                                                                (line  6)
 * property-resolved <3>:                 Org and org-ql.       (line 16)
@@ -7018,7 +7200,7 @@ D Command, Function and Name Index
 
 File: org-agents.info,  Node: Variable Index,  Prev: Command Function and Name Index,  Up: Top
 
-E Variable Index
+F Variable Index
 ****************
 
  [index ]
@@ -7031,6 +7213,7 @@ E Variable Index
 * org-agenda-files:                      A corpus to work with.
                                                               (line   6)
 * org-agenda-files <1>:                  Scopes.              (line   6)
+* org-agenda-files <2>:                  The example corpus.  (line 108)
 * org-agents-action-limit:               How much one run may edit.
                                                               (line   6)
 * org-agents-action-limit <1>:           User options.        (line 126)
@@ -7039,6 +7222,7 @@ E Variable Index
                                                               (line  49)
 * org-agents-attributes-file <2>:        The registry file.   (line   6)
 * org-agents-attributes-file <3>:        User options.        (line  95)
+* org-agents-attributes-file <4>:        The example corpus.  (line 108)
 * org-agents-exclude:                    org-ql is the base language.
                                                               (line  40)
 * org-agents-exclude <1>:                The structural gate. (line  28)
@@ -7057,7 +7241,7 @@ E Variable Index
 * org-agents-prefilter <3>:              Which scopes get narrowed and why.
                                                               (line   6)
 * org-agents-prefilter <4>:              Bounding a run.      (line   6)
-* org-agents-prefilter <5>:              Checking a corpus.   (line  58)
+* org-agents-prefilter <5>:              Checking a corpus.   (line  62)
 * org-agents-prefilter <6>:              User options.        (line  28)
 * org-agents-refused-heads:              Refused heads.       (line   6)
 * org-agents-refused-heads <1>:          User options.        (line 119)
@@ -7079,6 +7263,7 @@ E Variable Index
 * org-directory <1>:                     Narrowing what the agent reads.
                                                               (line   6)
 * org-directory <2>:                     Scopes.              (line   6)
+* org-directory <3>:                     The example corpus.  (line 108)
 * org-id-locations:                      Naming a master.     (line   6)
 * org-property-allowed-value-functions:  Activation.          (line  28)
 * org-property-allowed-value-functions <1>: What Org already had.
@@ -7094,139 +7279,140 @@ E Variable Index
 
 Tag Table:
 Node: Top969
-Node: Introduction13269
-Node: Summary13934
-Node: What an agent is16247
-Node: What you need19988
-Node: Installation21719
-Node: Activation24226
-Node: Conventions used in this manual26511
-Node: Agents in the Tinderbox tradition28699
-Node: The five ideas30795
-Node: Attributes in Tinderbox32860
-Node: Prototypes in Tinderbox36001
-Node: Agents in Tinderbox38395
-Node: Action code in Tinderbox40575
-Node: Appearance in Tinderbox43116
-Node: What Org already had44771
-Node: The vocabulary map46661
-Node: Tutorial49282
-Node: A corpus to work with50458
-Node: Your first agent52258
-Node: What the update wrote54131
-Node: Showing properties beside the link56858
-Node: The same matches as a table58402
-Node: Narrowing what the agent reads61129
-Node: Refreshing on save64169
-Node: Where to go next66421
-Node: The query language68234
-Node: org-ql is the base language69506
-Node: Property references72202
-Node: The four positions74062
-Node: The two axes79339
-Node: Entry specials83028
-Node: The property-resolved predicate85642
-Node: Putting a query in a property drawer88909
-Node: Limitations of the query layer91319
-Node: What is evaluated and what is refused93375
-Node: Why a gate exists94747
-Node: The structural gate96044
-Node: Remembered approvals99821
-Node: Refused heads103065
-Node: Refused queries105266
-Node: Reviewing what you approved107178
-Node: Scope and the ripgrep prefilter111193
-Node: Scopes112623
-Node: Which scopes get narrowed and why114979
-Node: What the prefilter can and cannot do117267
-Node: The push-down rules119789
-Node: Inheritance and pushability125506
-Node: Bounding a run128929
-Node: A file the scope names but cannot open134608
-Node: Limitations of the prefilter137481
-Node: Views140178
-Node: Choosing a view141937
-Node: The children view143689
-Node: The alias contract145784
-Node: The list view149773
-Node: The table view151133
-Node: Formats153874
-Node: Sorting and limiting155854
-Node: Limitations of the views158471
-Node: Dynamic blocks160370
-Node: Inserting a block161494
-Node: Block parameters162477
-Node: Several blocks under one agent165207
-Node: Limitations of dynamic blocks168925
-Node: Updating170895
-Node: By hand172770
-Node: Looking before you write176293
-Node: org-agents-mode177545
-Node: global-org-agents-mode180355
-Node: The three refusals on the save path182330
-Node: What writing AGENT_MATCHED costs185183
-Node: Limitations of updating187040
-Node: The attribute registry188679
-Node: Why declare attributes190099
-Node: The registry file192389
-Node: The declaration194283
-Node: The six types196202
-Node: It is pure data199034
-Node: Checking a corpus200739
-Node: Completing declared values204654
-Node: A corpus-wide column view206469
-Node: Limitations of the registry208661
-Node: Prototypes210218
-Node: What a prototype is211472
-Node: Declaring masters212575
-Node: Naming a master213685
-Node: The resolution order214712
-Node: Why outline inheritance is not in that order217114
-Node: Reads are virtual218465
-Node: Names that never travel220257
-Node: The two diagnostics221805
-Node: Limitations of prototypes223121
-Node: Appearance223923
-Node: Faces from attribute values225194
-Node: The ATTR_FACES syntax226131
-Node: From declaration to headline227001
-Node: It changes no bytes228897
-Node: Faces in every Org buffer229835
-Node: Precedence and following an edit231342
-Node: The two refusals232703
-Node: Action code233698
-Node: The three refusals235139
-Node: Writing an action237317
-Node: The nine verbs238721
-Node: Value keywords242503
-Node: The dry run243854
-Node: The blast radius246285
-Node: How much one run may edit247260
-Node: Destructive verbs and batch248849
-Node: The same command over a selection250014
-Node: The trust model251267
-Node: Writing a verb of your own252458
-Node: Limitations of action code253805
-Node: Reference255466
-Node: Commands256502
-Node: Minor modes261024
-Node: User options262397
-Node: Agent properties269419
-Node: Registry properties272841
-Node: Action verbs275033
-Node: Functions for Lisp callers278479
-Node: History and Acknowledgments280424
-Node: Tinderbox282037
-Node: What org-agents took283868
-Node: What it changed286917
-Node: What was deliberately not ported and why291627
-Node: Org and org-ql297479
-Node: Trademarks and non-affiliation299015
-Node: GNU General Public License300148
-Node: Concept Index301030
-Node: Key Index333361
-Node: Command Function and Name Index335763
-Node: Variable Index346370
+Node: Introduction13363
+Node: Summary14028
+Node: What an agent is16341
+Node: What you need20082
+Node: Installation21813
+Node: Activation24320
+Node: Conventions used in this manual26605
+Node: Agents in the Tinderbox tradition29171
+Node: The five ideas31267
+Node: Attributes in Tinderbox33332
+Node: Prototypes in Tinderbox36473
+Node: Agents in Tinderbox38867
+Node: Action code in Tinderbox41047
+Node: Appearance in Tinderbox43588
+Node: What Org already had45243
+Node: The vocabulary map47133
+Node: Tutorial49754
+Node: A corpus to work with50930
+Node: Your first agent52730
+Node: What the update wrote54603
+Node: Showing properties beside the link57330
+Node: The same matches as a table58874
+Node: Narrowing what the agent reads61601
+Node: Refreshing on save64641
+Node: Where to go next66893
+Node: The query language68706
+Node: org-ql is the base language70171
+Node: Property references72867
+Node: The four positions74727
+Node: The two axes80039
+Node: Entry specials83747
+Node: The property-resolved predicate86366
+Node: Putting a query in a property drawer89638
+Node: Limitations of the query layer92048
+Node: What is evaluated and what is refused94104
+Node: Why a gate exists95476
+Node: The structural gate96773
+Node: Remembered approvals100550
+Node: Refused heads103794
+Node: Refused queries105995
+Node: Reviewing what you approved107907
+Node: Scope and the ripgrep prefilter111922
+Node: Scopes113352
+Node: Which scopes get narrowed and why115708
+Node: What the prefilter can and cannot do117996
+Node: The push-down rules120518
+Node: Inheritance and pushability126235
+Node: Bounding a run129658
+Node: A file the scope names but cannot open135337
+Node: Limitations of the prefilter138210
+Node: Views140907
+Node: Choosing a view142809
+Node: The children view144561
+Node: The alias contract146656
+Node: The list view150712
+Node: The table view152072
+Node: Formats154813
+Node: Sorting and limiting156751
+Node: Limitations of the views159942
+Node: Dynamic blocks161841
+Node: Inserting a block162965
+Node: Block parameters163948
+Node: Several blocks under one agent166678
+Node: Limitations of dynamic blocks170396
+Node: Updating172366
+Node: By hand174241
+Node: Looking before you write177764
+Node: org-agents-mode179016
+Node: global-org-agents-mode181826
+Node: The three refusals on the save path183801
+Node: What writing AGENT_MATCHED costs186654
+Node: Limitations of updating188511
+Node: The attribute registry190150
+Node: Why declare attributes191570
+Node: The registry file193860
+Node: The declaration195754
+Node: The six types197673
+Node: It is pure data200505
+Node: Checking a corpus202210
+Node: Completing declared values206406
+Node: A corpus-wide column view208221
+Node: Limitations of the registry210413
+Node: Prototypes211970
+Node: What a prototype is213224
+Node: Declaring masters214327
+Node: Naming a master215437
+Node: The resolution order216464
+Node: Why outline inheritance is not in that order219011
+Node: Reads are virtual220362
+Node: Names that never travel222274
+Node: The two diagnostics223822
+Node: Limitations of prototypes225138
+Node: Appearance225940
+Node: Faces from attribute values227211
+Node: The ATTR_FACES syntax228148
+Node: From declaration to headline229018
+Node: It changes no bytes230916
+Node: Faces in every Org buffer231854
+Node: Precedence and following an edit233361
+Node: The two refusals234722
+Node: Action code235717
+Node: The three refusals237158
+Node: Writing an action239336
+Node: The nine verbs240740
+Node: Value keywords244522
+Node: The dry run245873
+Node: The blast radius248287
+Node: How much one run may edit249262
+Node: Destructive verbs and batch250851
+Node: The same command over a selection252016
+Node: The trust model253269
+Node: Writing a verb of your own254460
+Node: Limitations of action code255807
+Node: Reference257468
+Node: Commands258504
+Node: Minor modes263026
+Node: User options264399
+Node: Agent properties271421
+Node: Registry properties274843
+Node: Action verbs277035
+Node: Functions for Lisp callers280481
+Node: History and Acknowledgments282426
+Node: Tinderbox284031
+Node: What org-agents took285862
+Node: What it changed288911
+Node: What was deliberately not ported and why293621
+Node: Org and org-ql299473
+Node: Trademarks and non-affiliation301009
+Node: The example corpus302142
+Node: GNU General Public License306630
+Node: Concept Index307503
+Node: Key Index341197
+Node: Command Function and Name Index343599
+Node: Variable Index354206
 
 End Tag Table
 

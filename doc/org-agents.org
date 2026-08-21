@@ -359,9 +359,16 @@ Examples are shown as Org source, and every one in this manual was run.
 Where the output of a run is shown, it is the text the buffer actually
 held afterwards, and where an echo-area message is quoted it is the
 message the package actually printed.  An absolute path that would
-otherwise be a page wide is elided to =…=.  Timestamps and ID values are
-of course whatever your own corpus produces; the tutorial uses short,
-readable =:ID:= values so that the rendered links fit on a line.
+otherwise be a page wide is elided to =…=.  Timestamps are whatever your
+own run produces.
+
+Two corpora are printed in full, and every example is run over one of
+them, so you can reproduce any of them.  [[*Tutorial]] uses the two small
+files of [[*A corpus to work with]] and nothing else.  Every other chapter
+uses the corpus and registry of [[*The example corpus]], which is the
+tutorial's corpus with more properties on it.  Both use short, readable
+=:ID:= values so that the rendered links fit on a line; in your own corpus
+they will be the UUIDs =org-id= generates.
 
 The manual carries four indices.  [[*Concept Index]] is the subject-matter
 route in and is the one to try first.  [[*Key Index]] lists key sequences.
@@ -1343,6 +1350,10 @@ that language, and the two axes along which a property may be read.
 Nothing here says anything about what an agent /does/ with its matches.
 For that see [[*Views]] and [[*Updating]].
 
+Every query in this chapter was run over the corpus and registry of
+[[*The example corpus]], which are printed there in full, and the output
+shown after each is what the agent rendered.
+
 ** org-ql is the base language
 :PROPERTIES:
 :DESCRIPTION: What org-agents adds, and what it leaves alone.
@@ -1505,8 +1516,8 @@ Motivation: anything actionable that has a link.
 renders
 
 #+begin_example
-- [[id:e100…001][Rewrite the exporter]]
-- [[id:e100…004][Renew the passport]]
+- [[id:rewrite-exporter][Rewrite the exporter]]
+- [[id:renew-passport][Renew the passport]]
 #+end_example
 
 =Tinderbox notes= has a =:URL:= but no TODO keyword, so it does not
@@ -1533,7 +1544,7 @@ Motivation: which of these live on GitHub?
 renders
 
 #+begin_example
-- [[id:e100…001][Rewrite the exporter]] https://github.com/example/exporter
+- [[id:rewrite-exporter][Rewrite the exporter]] https://github.com/example/exporter
 #+end_example
 
 This one is residual Lisp, so it reaches the gate: the first update asks
@@ -1561,8 +1572,8 @@ Motivation: what have I been over more than three times?
 renders
 
 #+begin_example
-- [[id:e100…001][Rewrite the exporter]] 5
-- [[id:e100…003][Ship 0.1]] 9
+- [[id:rewrite-exporter][Rewrite the exporter]] 5
+- [[id:ship-0-1][Ship 0.1]] 9
 #+end_example
 
 #+texinfo: @subheading Name position
@@ -1586,9 +1597,9 @@ Motivation: everything whose next review falls in the next month.
 renders
 
 #+begin_example
-- [[id:e100…001][Rewrite the exporter]] 2026-09-01
-- [[id:e100…002][Audit the prefilter]] 2026-08-25
-- [[id:e100…004][Renew the passport]] 2026-08-21
+- [[id:rewrite-exporter][Rewrite the exporter]] 2026-09-01
+- [[id:audit-prefilter][Audit the prefilter]] 2026-08-25
+- [[id:renew-passport][Renew the passport]] 2026-08-21
 #+end_example
 
 Only the /first/ argument of those three predicates is a name position.
@@ -1647,8 +1658,8 @@ own, where ownership is written once on the project.
 #+end_src
 
 #+begin_example
-- [[id:e100…001][Rewrite the exporter]]
-- [[id:e100…002][Audit the prefilter]]
+- [[id:rewrite-exporter][Rewrite the exporter]]
+- [[id:audit-prefilter][Audit the prefilter]]
 #+end_example
 
 The two entries under =Projects=, which is where =:OWNER:= is written.
@@ -1665,8 +1676,8 @@ Now the same question along the other axis, over the same corpus:
 
 #+begin_example
 - [[file:…/corpus.org::*Projects][Projects]]
-- [[id:e100…002][Audit the prefilter]]
-- [[id:e100…005][Collect the print]]
+- [[id:audit-prefilter][Audit the prefilter]]
+- [[id:collect-print][Collect the print]]
 #+end_example
 
 Three matches, and not one of them is in the first answer's set of two.
@@ -1766,7 +1777,7 @@ Motivation: headings that mention Tinderbox, wherever they are.
 #+end_src
 
 #+begin_example
-- [[id:e100…006][Tinderbox notes]]
+- [[id:tinderbox-notes][Tinderbox notes]]
 #+end_example
 
 Here too, prefer org-ql where org-ql has an answer.  ~heading~, ~todo~,
@@ -1813,7 +1824,7 @@ Motivation: everything blocked, however it came to say so.
 #+end_src
 
 #+begin_example
-- [[id:e100…002][Audit the prefilter]]
+- [[id:audit-prefilter][Audit the prefilter]]
 #+end_example
 
 =Audit the prefilter= spells no =:STATUS:= at all.  Its
@@ -2934,6 +2945,9 @@ Evaluation does not change with the view.  All three ask the same
 question of the same engine and get the same matches; only the writing
 down differs.
 
+The examples in this chapter, and in [[*Dynamic blocks]] after it, were
+run over the corpus and registry of [[*The example corpus]].
+
 ** Choosing a view
 :PROPERTIES:
 :DESCRIPTION: :AGENT_VIEW:, and the three values it takes.
@@ -3092,8 +3106,9 @@ Why this one matters: it is the slow one.
 :END:
 #+end_example
 
-Now narrow the query to =(and (todo "TODO") (property "URL"))=, so that
-=Audit the prefilter= no longer matches, and update again:
+Now narrow the query to =(and (todo "TODO") (property "URL"))=.  Over this
+corpus that drops =Audit the prefilter=, which has no =:URL:=, and keeps
+the other two, which have one.  Update again:
 
 #+begin_example
 ,* Up for review
@@ -3268,12 +3283,11 @@ whitespace-separated list of property names, and it applies to the
 =children= and =list= views only.
 
 #+begin_example
-,* Up for review, in date order
+,* Up for review
   :PROPERTIES:
   :AGENT_QUERY:  (and (todo "TODO") (property "NEXT_REVIEW"))
-  :AGENT_SORT:   date
   :AGENT_FORMAT: NEXT_REVIEW
-  :AGENT_MATCHED: 3 [2026-08-20 Thu 17:50]
+  :AGENT_MATCHED: 3 [2026-08-20 Thu 19:32]
   :END:
 ,** [[id:rewrite-exporter][Rewrite the exporter]] 2026-09-01
 :PROPERTIES:
@@ -3324,6 +3338,15 @@ this package's.
 =:AGENT_SORT:= takes one of =date=, =todo=, =priority=, =reverse=, or a
 list of those.  Those are org-ql's own sorting methods, applied to the
 matched entries before anything is rendered, and they work in every view.
+
+One thing about =date= is worth saying plainly, because the name invites
+the wrong reading: it sorts on *Org's own planning timestamps* --- a
+=SCHEDULED:=, a =DEADLINE:=, a plain timestamp in the entry --- and knows
+nothing about a date you keep in a property.  Over a corpus whose review
+dates live in =:NEXT_REVIEW:= it is therefore inert, and the matches come
+out in the order org-ql found them, which is file order.  To order by a
+property date, use the =table= view and =(ts-column N)= on the column that
+renders it, as the example below does.
 
 =:AGENT_SORT:= also takes =(column N)= and =(ts-column N)=, which order
 the rows of a table: =(column N)= compares the rendered cells as strings,
@@ -4374,8 +4397,10 @@ It asks three questions:
 2. is a value one that does not parse as its =:ATTR_TYPE:=?
 3. is a value one that is outside its =:ATTR_VALUES:=?
 
-Given a registry declaring =STATUS=, =NEXT_REVIEW=, =REVIEWS= and
-=TOPICS=, and this file in scope:
+Given the registry of [[*The example corpus]] with a =TOPICS= declaration
+added --- so four declarations, =STATUS=, =NEXT_REVIEW=, =REVIEWS= and
+=TOPICS=, the last of them a =set= admitting =emacs org tinderbox= --- and
+this file in scope:
 
 #+begin_src org
 ,* One
@@ -4389,25 +4414,27 @@ Given a registry declaring =STATUS=, =NEXT_REVIEW=, =REVIEWS= and
 #+end_src
 
 the echo area says =org-agents: 5 findings over 1 file= and
-=*org-agents attributes*=, in ~compilation-mode~, holds:
+=*org-agents attributes*=, in ~compilation-mode~, holds --- every path
+absolute, and elided here:
 
 #+begin_example
-lint.org:3: STATUS: `wedged' is not one of active paused blocked done
-lint.org:4: NEXT_REVIEW: `2026-02-30' is not a date
-lint.org:5: REVIEWS: `lots' is not a number
-lint.org:6: WIDGET is not declared in …/attributes.org (1 use)
-lint.org:7: TOPICS: `emacs emacs' is not a set
+…/lint.org:3: STATUS: `wedged' is not one of active paused blocked done
+…/lint.org:4: NEXT_REVIEW: `2026-02-30' is not a date
+…/lint.org:5: REVIEWS: `lots' is not a number
+…/lint.org:6: WIDGET is not declared in …/attributes.org (1 use)
+…/lint.org:7: TOPICS: `emacs emacs' is not a set
 #+end_example
 
 All five kinds in one report: a value outside its vocabulary; a date that
 parses but names no day; a value not of its type; an undeclared name, with
 a *site count*; and a =set= with a repeated member.  Each line begins
 =FILE:LINE:=, so {{{kbd(RET)}}} and ~next-error~ walk them.  A clean run
-says so with its counts rather than popping an empty buffer:
+writes this into the buffer rather than popping an empty one, while the
+echo area says =org-agents: 0 findings over 1 file=:
 
 #+begin_example
 org-agents: no findings; every property in scope is declared and valid
-(1 file in scope, 1 read, 1 entry, 7 declarations)
+(1 file in scope, 1 read, 1 entry, 4 declarations)
 #+end_example
 
 Read =read= as it is written: how many files the run actually opened,
@@ -4698,7 +4725,9 @@ Step 1 reads the drawer raw.  A present-but-empty =:NAME:= answers the
 empty string, which org-ql's own ~property~ predicate matches, so
 resolution must match it too.
 
-With the registry and masters above, and this corpus:
+With the registry and masters above, and the first four entries of
+[[*The example corpus]] --- whose properties that bear on this are these,
+and which carry others the resolution does not consult:
 
 #+begin_src org
 ,* Projects
@@ -4782,8 +4811,10 @@ discover it at an inconvenient moment.
 #+cindex: inherited value, invisible to grep
 
 *Grep does not see an inherited value.* Nor does ~org-entry-get~, nor a
-column view, nor org-ql's own ~property~ predicate.  Over the corpus above,
-=grep blocked= finds one line, in the registry file, and finds nothing in
+column view, nor org-ql's own ~property~ predicate.  Over
+[[*The example corpus]], =grep blocked= finds three lines, all of them in
+the registry file and all of them declarations --- the vocabulary, the
+face map, and the master's own drawer --- and it finds nothing in
 =corpus.org= at all, even though one entry there resolves to =blocked=.
 
 #+findex: property-resolved
@@ -4963,7 +4994,8 @@ of the declaration.
 
 Take the registry's =STATUS= declaration from [[*The registry file]], whose
 =:ATTR_FACES:= is the line above and whose =:ATTR_DEFAULT:= is =active=,
-and the corpus from [[*The resolution order]].  Turn the mode on and fontify.
+and all nine entries of [[*The example corpus]].  Turn the mode on and
+fontify.
 Measured, headline by headline, with the resolved value beside the ~face~
 text property actually on the line:
 
@@ -5312,18 +5344,17 @@ called in its ~plan~ phase at every match, which writes nothing and is
 caught if it does, and the result is a report in =*Org Agents Actions*=,
 one line per intended edit.
 
-For the agent in [[*Writing an action]], over the corpus of
-[[*A corpus to work with]]:
+For the agent in [[*Writing an action]], over [[*The example corpus]]:
 
 #+begin_example
 org-agents: 6 edits at 3 entries in 1 file (1 not open before this ran).
   Nothing written yet.
-…/corpus.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-…/corpus.org:5: tag!(+reviewed)  "" -> :reviewed:
-…/corpus.org:14: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-…/corpus.org:14: tag!(+reviewed)  "" -> :reviewed:
-…/corpus.org:28: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-…/corpus.org:28: tag!(+reviewed)  "" -> :reviewed:
+…/corpus.org:7: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+…/corpus.org:7: tag!(+reviewed)  "" -> :reviewed:
+…/corpus.org:15: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+…/corpus.org:15: tag!(+reviewed)  "" -> :reviewed:
+…/corpus.org:29: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
+…/corpus.org:29: tag!(+reviewed)  "" -> :reviewed:
 #+end_example
 
 Read the report before answering anything. =FILE:LINE:= comes first on
@@ -6490,6 +6521,146 @@ Tinderbox code, data format or asset is used or reproduced here.  Any
 description of Tinderbox in this manual is one reader's account of the
 published v9.2 manual, and where it is wrong the error is this manual's;
 Eastgate's own documentation is authoritative about Tinderbox.
+
+* The example corpus
+:PROPERTIES:
+:DESCRIPTION: The two files every example after the tutorial was run over.
+:APPENDIX: t
+:END:
+#+cindex: corpus, the examples'
+#+cindex: registry file, the examples'
+#+cindex: reproducing the examples
+
+Every worked example in this manual after [[*Tutorial]] was run over the
+two files printed here.  They are given in full so that you can build
+them and check any example for yourself; where an example needs anything
+else --- a second file, a prototype that dangles, a registry with a
+mistake in it --- the node says so and prints what it added.
+
+=corpus.org= is the tutorial's =work.org= with more properties on its
+entries, a =:OWNER:= worth querying for, and one more subtree, so that
+there is something for =:URL:=, =:REVIEWS:=, =:LOCATION:=, =:TOPICS:= and
+a prototype chain to be read from.  Nine entries, and the =:ID:= values
+are short and readable only so that the links the examples write fit on a
+printed line:
+
+#+begin_example
+,#+title: Corpus
+
+,* Projects
+  :PROPERTIES:
+  :OWNER: johnw
+  :END:
+,** TODO Rewrite the exporter
+   :PROPERTIES:
+   :ID:          rewrite-exporter
+   :NEXT_REVIEW: 2026-09-01
+   :URL:         https://github.com/example/exporter
+   :REVIEWS:     5
+   :STATUS:      active
+   :END:
+,** TODO Audit the prefilter
+   :PROPERTIES:
+   :ID:          audit-prefilter
+   :NEXT_REVIEW: 2026-08-25
+   :REVIEWS:     2
+   :PROTOTYPE:   Blocked Task
+   :END:
+,** DONE Ship 0.1
+   :PROPERTIES:
+   :ID:          ship-0-1
+   :REVIEWS:     9
+   :STATUS:      done
+   :END:
+,* Errands
+,** TODO Renew the passport
+   :PROPERTIES:
+   :ID:          renew-passport
+   :NEXT_REVIEW: 2026-08-21
+   :URL:         https://travel.state.gov/passport
+   :LOCATION:    Pasadena
+   :END:
+,** TODO Collect the print
+   :PROPERTIES:
+   :ID:          collect-print
+   :LOCATION:    Altadena
+   :PROTOTYPE:   Task
+   :END:
+,* Reading
+,** Tinderbox notes
+   :PROPERTIES:
+   :ID:          tinderbox-notes
+   :URL:         https://www.eastgate.com/Tinderbox/
+   :TOPICS:      tinderbox hypertext
+   :END:
+#+end_example
+
+=attributes.org= is the registry, and it is the file
+[[*The registry file]] and [[*Declaring masters]] print in pieces.  Three
+declarations and two masters:
+
+#+begin_example
+,#+title: Attributes
+
+,* STATUS
+  :PROPERTIES:
+  :ATTR_TYPE:    string
+  :ATTR_VALUES:  active paused blocked done
+  :ATTR_DEFAULT: active
+  :ATTR_FACES:   blocked error | paused shadow | done success
+  :END:
+  The state of a piece of work, independent of its TODO keyword.
+
+,* NEXT_REVIEW
+  :PROPERTIES:
+  :ATTR_TYPE: date
+  :END:
+  The day this entry should next be looked at.
+
+,* REVIEWS
+  :PROPERTIES:
+  :ATTR_TYPE:    number
+  :ATTR_DEFAULT: 0
+  :END:
+  How many times this entry has been reviewed.
+
+,* Prototypes
+,** Task
+   :PROPERTIES:
+   :STATUS: active
+   :OWNER:  johnw
+   :END:
+,** Blocked Task
+   :PROPERTIES:
+   :PROTOTYPE: Task
+   :STATUS:    blocked
+   :END:
+#+end_example
+
+#+vindex: org-agents-attributes-file
+#+vindex: org-agenda-files
+#+vindex: org-directory
+Put both in a directory, add =corpus.org= to =org-agenda-files=, point
+~org-agents-attributes-file~ at =attributes.org=, and point
+=org-directory= at the directory.  Agents go in a third file of their own;
+the examples print the agent as they use it, so any file will do.
+=corpus.org= is not itself an agent file and needs no entry in
+~org-agents-files~.
+
+Two things about this corpus are deliberate, because several examples turn
+on them.  =Projects= carries no =:ID:=, which is why an example that
+matches it renders a =file:= link rather than an =id:= one.  And
+=Audit the prefilter= and =Collect the print= reach =:OWNER: johnw=
+through the prototype chain while spelling nothing themselves, which is
+what makes the difference between the two axes visible: see
+[[*The two axes]] and [[*The resolution order]].
+
+#+cindex: date, in the examples' output
+Every example was run on 2026-08-20, which is what the =:AGENT_MATCHED:=
+stamps and the relative-date queries in this manual are relative to.  A
+run today will stamp today, and an example whose query names a window
+around the present --- =(property-ts $NEXT_REVIEW :from -7 :to 30)= is the
+one --- will answer about today's window and not about that one.
 
 * GNU General Public License
 :PROPERTIES:
