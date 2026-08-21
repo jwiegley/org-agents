@@ -124,10 +124,9 @@ in Tinderbox's word --- marked =:AGENT_MATCH: t= so that the next update
 knows it wrote it.  The agent also records what it found and when, in
 =:AGENT_MATCHED:=.  From here the answer is Org text: you can fold the
 agent shut, follow a link, write a paragraph under one of the aliases
-explaining why it matters, and export or commit the lot.  Where you have
+explaining why it matters, and export or commit the lot.  If you have
 written under an alias, the next update treats that alias differently,
-which is worth knowing before you rely on it; see
-[[*The alias contract]].
+which is worth knowing before you rely on it; see [[*The alias contract]].
 
 The same three matches can be rendered as a list or as a table inside an
 =org-agents= dynamic block instead.  See [[*Views]].
@@ -136,9 +135,8 @@ The same three matches can be rendered as a list or as a table inside an
 #+cindex: org-ql, as the evaluation engine
 #+cindex: prefilter
 #+cindex: ripgrep
-Because a reader who misunderstands the next fact will misunderstand
-everything downstream, it belongs here rather than four chapters
-later.
+Because a reader who misunderstands it will misunderstand everything
+downstream, one more fact belongs here rather than four chapters later.
 
 *Evaluation is always performed by org-ql, against live Org buffers.*
 The package holds exactly one evaluation engine, and therefore has exactly
@@ -155,12 +153,12 @@ list of files, org-agents may run ripgrep first to work out which files
 are worth opening at all, and org-ql then opens only those.  A prefilter
 narrows the set of files org-ql reads and does nothing else; it cannot
 change what matches, and it cannot make something match that org-ql would
-not have matched.  Narrowing too little is merely slow; narrowing too
-much would be a wrong answer with no error.  It follows that a condition
-is pushed into ripgrep only where its ripgrep answer is provably a
-superset of org-ql's.  Where ripgrep is absent, or where a query offers
-nothing to push, the scope is read live instead --- slower, and identical
-in what it finds.  See [[*Scope and the ripgrep prefilter]].
+not have matched.  Narrowing too little is merely slow; narrowing too much
+would be a wrong answer with no error.  A condition is pushed into ripgrep
+only where its ripgrep answer is provably a superset of org-ql's.  If
+ripgrep is absent, or if a query offers nothing to push, the scope is read
+live instead --- slower, and identical in what it finds.  See
+[[*Scope and the ripgrep prefilter]].
 
 ** What you need
 :PROPERTIES:
@@ -202,7 +200,7 @@ the constraint the section closes on.
   See [[*Bounding a run]].
 
 #+cindex: package archives, and why org-agents is not on one
-Because =org-ql-ext= and =org-ext= are not on any package archive, they
+Since =org-ql-ext= and =org-ext= are not on any package archive, they
 cannot be declared in =Package-Requires=.  In consequence org-agents
 cannot be installed as a self-contained package until that is resolved.
 What has to be true is only that both files are on =load-path= before
@@ -216,7 +214,7 @@ org-agents is required.  The next section shows how.
 
 No package-archive recipe exists, for the reason the previous section
 gives: two of the required modules are on no archive and cannot be named
-in =Package-Requires=.  Installation is therefore manual.  Clone the
+in =Package-Requires=.  Installation is accordingly manual.  Clone the
 repository, and put its directory and the directory holding those two
 modules on =load-path=:
 
@@ -291,9 +289,9 @@ to use.
 - =org-agents-files= ::
   #+vindex: org-agents-files
   Which files =org-agents-update-all= opens *and writes*.  Defaults to
-  =("~/org/agents.org")=.  Where you keep agents in particular files and
-  want one command to refresh them all, set it; you do not need it to
-  update the agent in front of you.  See [[*By hand]].
+  =("~/org/agents.org")=.  If you keep agents in particular files and want
+  one command to refresh them all, set it; you do not need it to update
+  the agent in front of you.  See [[*By hand]].
 - =org-agents-attributes-file= ::
   #+vindex: org-agents-attributes-file
   The attribute registry.  Defaults to ="~/org/attributes.org"=.  Wholly
@@ -378,13 +376,12 @@ be a page wide is elided to =…=.  Timestamps are whatever your own run
 produces.
 
 Two corpora are printed in full, and every example is run over one of
-them.  Any example in the manual can therefore be reproduced.
-[[*Tutorial]] uses the two small files of [[*A corpus to work with]] and
-nothing else.  Every other chapter uses the corpus and registry of
-[[*The example corpus]], which is the tutorial's corpus with more
-properties on it.  Both use short, readable =:ID:= values so that the
-rendered links fit on a line; in your own corpus they will be the UUIDs
-=org-id= generates.
+them.  Any example in the manual can be reproduced.  [[*Tutorial]] uses
+the two small files of [[*A corpus to work with]] and nothing else.  Every
+other chapter uses the corpus and registry of [[*The example corpus]],
+which is the tutorial's corpus with more properties on it.  Both use
+short, readable =:ID:= values so that the rendered links fit on a line; in
+your own corpus they will be the UUIDs =org-id= generates.
 
 The manual carries four indices.  [[*Concept Index]] is the subject-matter
 route in and is the one to try first.  [[*Key Index]] lists key sequences.
@@ -436,7 +433,7 @@ they can be:
    Some are the application's; the rest are yours to define, with a type,
    a default, a suggested vocabulary and a description.
 2. *Prototypes.*  A note may be described as another note plus its
-   differences.  Where it has no value of its own for an attribute, the
+   differences.  When it has no value of its own for an attribute, the
    value comes from its prototype; that relation has nothing to do with
    where either note sits in the outline.
 3. *Agents.*  A query can itself be a note.  An agent searches the
@@ -445,8 +442,8 @@ they can be:
 4. *Action code.*  A document can act on itself: an action is a sentence
    that changes one or more notes, and an agent can carry one.
 5. *Appearance follows from values.*  How a note looks is itself read out
-   of its attributes: making a set of notes conspicuous is therefore a
-   matter of what they mean rather than of what colour you painted them.
+   of its attributes: making a set of notes conspicuous is a matter of
+   what they mean rather than of what colour you painted them.
 
 Put together, those five say something a search command does not: that
 the answer to a question is a part of the document, that describing a
@@ -584,14 +581,14 @@ note's prototype is not necessarily its container.
 #+findex: property-resolved
 #+findex: org-agents-resolve-property
 *What org-agents made of it.*  =:PROTOTYPE:= on any entry names a master,
-either by name out of a reserved =Prototypes= section of the registry
-file (the same name Tinderbox gives the same container) or as =id:UUID=
+either by name out of a reserved =Prototypes= section of the registry file
+(the same name Tinderbox gives the same container) or as =id:UUID=
 anywhere in the corpus.  The resolution order is Tinderbox's checklist,
-with its two prototype steps written as one walk of the chain: the
-entry's own drawer, then the chain nearest hop first, then the registry's
-=:ATTR_DEFAULT:=, then nothing.  Reads are virtual.  It follows that a
-master may be changed once and every follower changes with it.  See
-[[*Prototypes]] and [[*The resolution order]].
+with its two prototype steps written as one walk of the chain: the entry's
+own drawer, then the chain nearest hop first, then the registry's
+=:ATTR_DEFAULT:=, then nothing.  Reads are virtual: a master may be
+changed once and every follower changes with it.  See [[*Prototypes]] and
+[[*The resolution order]].
 
 #+cindex: outline inheritance, versus prototypes
 #+vindex: org-use-property-inheritance
@@ -638,9 +635,9 @@ alias of any note that matches the agent's query.
 #+end_quote
 
 *What org-agents made of it.*  An ordinary Org entry carrying
-=:AGENT_QUERY:=; the property is what makes the entry an agent, exactly
-as =$AgentQuery= is what makes a Tinderbox note one.  =:AGENT_ACTION:= is
-=$AgentAction=.  Where the default view is in force, each match becomes a
+=:AGENT_QUERY:=; the property is what makes the entry an agent, exactly as
+=$AgentQuery= is what makes a Tinderbox note one.  =:AGENT_ACTION:= is
+=$AgentAction=.  When the default view is in force, each match becomes a
 child alias heading, and a match that no longer satisfies the query loses
 its alias.  One deliberate exception stands.  An alias you have written
 under is marked stale rather than removed.  See [[*Views]] and
@@ -796,11 +793,10 @@ a prefilter, which makes asking a question of a whole corpus affordable.
 
 #+findex: org-ql-search
 #+findex: org-agents-preview
-Where what you want is to /look/ at the answer to a query once, Org and
-org-ql already do that better than an agent does, and
-=org-agents-preview= is the door into it (see
-[[*Looking before you write]]).  An agent is for a question you want to
-keep asking, whose answer you want to keep.
+If what you want is to /look/ at the answer to a query once, Org and
+org-ql already do that better than an agent does, and =org-agents-preview=
+is the door into it (see [[*Looking before you write]]).  An agent is for
+a question you want to keep asking, whose answer you want to keep.
 
 ** The vocabulary map
 :PROPERTIES:
@@ -967,13 +963,13 @@ In =agents.org=, write a heading and give it a query:
 
 That drawer is the whole of an agent.  The =:AGENT_QUERY:= property is
 what makes the entry an agent; every other agent property has a default,
-and the defaults suit this case.  Because the query is a plain org-ql
+and the defaults suit this case.  Since the query is a plain org-ql
 S-expression, built out of =and=, =todo= and =property=, it runs without
-asking for approval; a query built out of anything else is put to the
-reader before it runs, as [[*What is evaluated, and what is refused]]
-sets out.  Now put point anywhere inside that entry (on the heading, in
-the drawer, or in the body) and type {{{kbd(M-x org-agents-update)}}}.
-The echo area says:
+asking for approval; a query built out of anything else is put to you
+before it runs, as [[*What is evaluated, and what is refused]] sets out.
+Now put point anywhere inside that entry (on the heading, in the drawer,
+or in the body) and type {{{kbd(M-x org-agents-update)}}}.  The echo area
+says:
 
 #+begin_example
 org-agents: 3 matches
@@ -1048,11 +1044,11 @@ same holds of =org-agents-update-all= across many files.
 Two consequences of the =:AGENT_MATCHED:= stamp are worth knowing now
 rather than discovering later.  Its timestamp is inactive, and inactive
 timestamps are visible to queries; a =(ts-inactive :from ...)= query over
-a corpus that holds agents will therefore match the agents themselves.
-Because the stamp changes, a version-control diff of a saved update shows
-movement even where the rendered aliases did not move.
-[[*What writing AGENT_MATCHED costs]] sets out the whole cost of
-recording the result on the agent.
+a corpus that holds agents will match the agents themselves.  Since the
+stamp changes, a version-control diff of a saved update shows movement
+even where the rendered aliases did not move.
+[[*What writing AGENT_MATCHED costs]] sets out the whole cost of recording
+the result on the agent.
 
 #+cindex: alias, annotating one
 Now write a line of your own under one of the aliases:
@@ -1065,16 +1061,15 @@ Now write a line of your own under one of the aliases:
 Why this one matters: it is the slow one.
 #+end_example
 
-You have just changed who owns that heading.  An alias holding nothing
-but its drawer is /pristine/, and every update deletes it and writes it
-again.  The moment anything stands under it, no update will delete it.
-Where its match stops matching, the heading is marked =(stale)= and left
-where it is, with your note.  That contract is the one thing to
-understand about the =children= view, and [[*The alias contract]] sets
-out its four sharp edges.  Delete the line again before going on.  The
-steps below print the output of an agent whose three aliases are all
-pristine, and an alias you have adopted is one this package will no
-longer rewrite.
+You have just changed who owns that heading.  An alias holding nothing but
+its drawer is /pristine/, and every update deletes it and writes it again.
+The moment anything stands under it, no update will delete it.  When its
+match stops matching, the heading is marked =(stale)= and left where it
+is, with your note.  That contract is the one thing to understand about
+the =children= view, and [[*The alias contract]] sets out its four sharp
+edges.  Delete the line again before going on.  The steps below print the
+output of an agent whose three aliases are all pristine, and an alias you
+have adopted is one this package will no longer rewrite.
 
 ** Showing properties beside the link
 :PROPERTIES:
@@ -1107,14 +1102,14 @@ properties to show after the link, and update again:
 :END:
 #+end_example
 
-=:AGENT_FORMAT:= takes whitespace-separated property names; =NEXT_REVIEW
-OWNER= would show both.  Two things are worth knowing before that is
-tried.  The values are read from the match's own drawer with *no*
-inheritance, and naming =OWNER= here therefore shows nothing for the two
-matches under =Projects=, even though =Projects= sets it; the outline
-axis has a spelling of its own, =$OWNER*= (see [[*The two axes]]).  A
-named property that a match does not have contributes an empty string,
-which leaves trailing whitespace on the heading.  See [[*Formats]].
+=:AGENT_FORMAT:= takes whitespace-separated property names;
+=NEXT_REVIEW OWNER= would show both.  Two things are worth knowing before
+that is tried.  The values are read from the match's own drawer with *no*
+inheritance, and naming =OWNER= here shows nothing for the two matches
+under =Projects=, even though =Projects= sets it; the outline axis has a
+spelling of its own, =$OWNER*= (see [[*The two axes]]).  A named property
+that a match does not have contributes an empty string, which leaves
+trailing whitespace on the heading.  See [[*Formats]].
 
 ** The same matches as a table
 :PROPERTIES:
@@ -1184,12 +1179,11 @@ and the rows come out in date order:
 ,#+END:
 #+end_example
 
-=(ts-column 2)= sorts the table's rows by reading column 2 as a
-timestamp; the count is one-based over =:AGENT_COLUMNS:=.  The sort is a
-row sort, and therefore applies to a table and is refused in any other
-view.  A =list= view is available too, and a block can be given
-parameters of its own so that one agent carries two views at once.  See
-[[*Views]] and [[*Dynamic blocks]].
+=(ts-column 2)= sorts the table's rows by reading column 2 as a timestamp;
+the count is one-based over =:AGENT_COLUMNS:=.  The sort is a row sort: it
+applies to a table and is refused in any other view.  A =list= view is
+available too, and a block can be given parameters of its own so that one
+agent carries two views at once.  See [[*Views]] and [[*Dynamic blocks]].
 
 ** Narrowing what the agent reads
 :PROPERTIES:
@@ -1386,18 +1380,18 @@ An agent's query is an org-ql sexp query.  This package defines no query
 language of its own, and does not wrap or restrict org-ql's: anything you
 can write in an org-ql sexp query you can write in =:AGENT_QUERY:=.  That
 latitude covers the predicates (~todo~, ~tags~, ~heading~, ~level~,
-~priority~, ~category~, ~ts~, ~scheduled~, ~deadline~, ~closed~, ~src~
-and the rest), the combinators ~and~, ~or~, ~not~, ~when~ and ~unless~,
-the relational predicates ~parent~, ~ancestors~, ~children~ and
-~descendants~, and arbitrary Lisp; the predicate catalogue is org-ql's
-own and is not reproduced here.  See [[info:org-ql::Queries][Queries]] in
-the org-ql manual for the list, the argument shapes, and the aliases.
-Because they surprise people who meet them through an agent, two of
-org-ql's conventions are worth recalling.  A bare string is read as a
-~regexp~ predicate over the entry's text, which makes
-=:AGENT_QUERY: "Tinderbox"= a full-text search rather than a heading
-search; and the comparator symbols ~<~, ~<=~, ~>~, ~>=~ and ~=~ need no
-quoting where a predicate accepts one.
+~priority~, ~category~, ~ts~, ~scheduled~, ~deadline~, ~closed~, ~src~ and
+the rest), the combinators ~and~, ~or~, ~not~, ~when~ and ~unless~, the
+relational predicates ~parent~, ~ancestors~, ~children~ and ~descendants~,
+and arbitrary Lisp; the predicate catalogue is org-ql's own and is not
+reproduced here.  See [[info:org-ql::Queries][Queries]] in the org-ql
+manual for the list, the argument shapes, and the aliases.  Since they
+surprise people who meet them through an agent, two of org-ql's
+conventions are worth recalling.  A bare string is read as a ~regexp~
+predicate over the entry's text, which makes =:AGENT_QUERY: "Tinderbox"= a
+full-text search rather than a heading search; and the comparator symbols
+~<~, ~<=~, ~>~, ~>=~ and ~=~ need no quoting where a predicate accepts
+one.
 
 What this package adds to that language is small and is the subject of
 the rest of this chapter:
@@ -1457,15 +1451,15 @@ rather than in the reader's head.  See [[*The two axes]].
 
 Expansion is a source-to-source rewrite of the form, performed before the
 gate is consulted and before org-ql sees anything.  The expander reads no
-buffer and evaluates nothing; what a reference means therefore never
-depends on where point happens to be.  Two consequences follow.  A query
-can be worked out in the head by expanding it, without opening a buffer.
-The form the gate shows is likewise the expanded one: a prompt about
+buffer and evaluates nothing; what a reference means never depends on
+where point happens to be.  Two consequences follow.  A query can be
+worked out in the head by expanding it, without opening a buffer.  The
+form the gate shows is likewise the expanded one: a prompt about
 =(> $REVIEWS 3)= names ~string-to-number~ and ~org-entry-get~, which is
 what will actually run.  Write the name as the drawer spells it.  Org
 compares property keys case-insensitively, and a drawer key
-=:next_review:= does answer a query for =NEXT_REVIEW=; a reader of your
-query, however, has only what you wrote.
+=:next_review:= does answer a query for =NEXT_REVIEW=.  Yet a reader of
+your query has only what you wrote.
 
 ** The four positions
 :PROPERTIES:
@@ -1541,16 +1535,15 @@ renders
 - [[id:renew-passport][Renew the passport]]
 #+end_example
 
-=Tinderbox notes= has a =:URL:= but no TODO keyword, and therefore does
-not match.  Nothing was asked about this query: ~$URL~ became a plain
-org-ql predicate, and the gate admits it unremarked.
+=Tinderbox notes= has a =:URL:= but no TODO keyword, and does not match.
+Nothing was asked about this query: ~$URL~ became a plain org-ql
+predicate, and the gate admits it unremarked.
 
 #+texinfo: @subheading Value position
 
 A reference in residual Lisp --- Lisp that is not a predicate call ---
-becomes ~(or ACCESSOR "")~.  The accessor is never nil, and
-~string-match~ and its neighbours therefore cannot signal at an entry
-that has no such property.
+becomes ~(or ACCESSOR "")~.  The accessor is never nil, and ~string-match~
+and its neighbours cannot signal at an entry that has no such property.
 
 Motivation: which of these live on GitHub?
 
@@ -1774,16 +1767,16 @@ Three things follow from that table.
 A special manages its own type.  In numeric position it is /not/ wrapped
 in ~string-to-number~, because ~org-current-level~ already answers with a
 number: =(< $LEVEL 3)= expands to =(< (org-current-level) 3)=.  In value
-position it is not wrapped in ~(or … "")~ either, and ~$TAGS~ therefore
-reaches ~member~ as the list it is, while ~$TODO~ can be compared against
-nil.  A suffix on a special is /ignored/, not refused: ~$ITEM~, ~$ITEM*~
-and ~$ITEM^~ all expand to ~(org-get-heading t t t t)~, since there is
-nothing to inherit and nothing for a prototype to carry, and a suffix
-therefore has no reading to be given.  It is dropped silently rather than
-diagnosed, which is the one place in this layer where a spelling that
-means nothing is not named.  Because the seven accessors are a closed set
-of read-only readers of the entry at point, a query is no less safe for
-holding one, and a bare special passes the structural gate unremarked.
+position it is not wrapped in ~(or … "")~ either, and ~$TAGS~ reaches
+~member~ as the list it is, while ~$TODO~ can be compared against nil.  A
+suffix on a special is /ignored/, not refused: ~$ITEM~, ~$ITEM*~ and
+~$ITEM^~ all expand to ~(org-get-heading t t t t)~, since there is nothing
+to inherit and nothing for a prototype to carry, and a suffix has no
+reading to be given.  It is dropped silently rather than diagnosed, which
+is the one place in this layer where a spelling that means nothing is not
+named.  Since the seven accessors are a closed set of read-only readers of
+the entry at point, a query is no less safe for holding one, and a bare
+special passes the structural gate unremarked.
 
 Motivation: headings that mention Tinderbox, wherever they are.
 
@@ -1848,9 +1841,9 @@ Motivation: everything blocked, however it came to say so.
 =:PROTOTYPE: Blocked Task= resolves to =blocked= through the chain.
 =(property "STATUS" "blocked")= matches nothing here, and ~grep~ over the
 corpus for =blocked= finds only the registry.  Two cases call for this
-predicate: a value that arrives through a chain, and one that comes from
-a registry default.  Where the value is in the entry's own drawer,
-~property~ answers and is cheaper.
+predicate: a value that arrives through a chain, and one that comes from a
+registry default.  When the value is in the entry's own drawer, ~property~
+answers and is cheaper.
 
 The sugar covers only half of this predicate.  In boolean position
 ~$STATUS^~ expands to =(property-resolved "STATUS")=, the existence form,
@@ -1907,8 +1900,8 @@ a diagnosis about unreadable text; the same rule applies to every agent
 property, written-but-empty and not-written meaning the same thing.
 
 Org reads the literal value =nil= as no value at all.  An agent whose
-drawer says =:AGENT_VIEW: nil= is therefore an agent with no view, which
-takes the default, rather than an agent whose view is refused.
+drawer says =:AGENT_VIEW: nil= is an agent with no view, which takes the
+default, rather than an agent whose view is refused.
 
 Text that will not read as a Lisp form is diagnosed as itself, naming
 what was read and what ~read-from-string~ said about it:
@@ -1926,15 +1919,15 @@ the practice remains a bad one.  Split anywhere else and the pieces join
 into a different sexp, or into one that will not read at all, with
 nothing in the drawer to say which happened.
 
-Where a query genuinely will not fit on a line, the answer is not to
-continue it but to name it.  Define a predicate of your own with
-~org-ql-defpred~ in your init file, and call it from the drawer.  The
-drawer then holds =(and (todo "TODO") (my-stalled-p))=, the definition
-lives in a file you wrote, and the query stays a predicate call, which is
-what the gate admits without asking; the other half of that bargain is
-worth weighing, since a predicate you define is a predicate the gate now
-admits by name, and org-ql runs its normalizer when it compiles a query.
-See [[*Refused heads]].
+If a query genuinely will not fit on a line, the answer is not to continue
+it but to name it.  Define a predicate of your own with ~org-ql-defpred~
+in your init file, and call it from the drawer.  The drawer then holds
+=(and (todo "TODO") (my-stalled-p))=, the definition lives in a file you
+wrote, and the query stays a predicate call, which is what the gate admits
+without asking; the other half of that bargain is worth weighing, since a
+predicate you define is a predicate the gate now admits by name, and
+org-ql runs its normalizer when it compiles a query.  See
+[[*Refused heads]].
 
 ** Limitations of the query layer
 :PROPERTIES:
@@ -1952,8 +1945,8 @@ there is no spelling for "the property this other property names".
 
 The two axes cannot be composed.  At most one suffix is read; the sugar
 has no way to ask for "an ancestor's resolved value" or "a master's
-inherited value".  Where you want a combination, write the Lisp yourself,
-and write it with ~org-agents-resolve-property-quietly~ rather than the
+inherited value".  If you want a combination, write the Lisp yourself, and
+write it with ~org-agents-resolve-property-quietly~ rather than the
 signalling resolver.  Residual Lisp runs at every candidate entry, and a
 ~user-error~ from inside org-ql's generated matcher aborts the whole
 update.
@@ -1968,9 +1961,9 @@ org-agents: no expansion for ‘$STATUS’ in ‘(property "STATUS" $STATUS)’
 #+end_example
 
 The refusal is deliberate, and it is the safe direction: an argument
-silently read the wrong way is an agent that matches the wrong thing.
-Where you want a property's value as an argument, put the predicate's job
-into Lisp: write =(member "emacs" (split-string $TOPICS))= rather than
+silently read the wrong way is an agent that matches the wrong thing.  If
+you want a property's value as an argument, put the predicate's job into
+Lisp: write =(member "emacs" (split-string $TOPICS))= rather than
 =(tags $TOPICS)=.
 
 A suffix on an entry special is ignored rather than diagnosed.  See
@@ -2014,7 +2007,7 @@ update its agents.
 When org-ql compiles a query into a predicate function, it tests that
 function with point at each candidate heading.  Any part of the query that
 is not a predicate call is compiled in as it stands, and runs once per
-candidate entry with whatever privileges Emacs has.  Where the scope is a
+candidate entry with whatever privileges Emacs has.  When the scope is a
 corpus, that is thousands of files and hundreds of thousands of entries.
 That exposure is what the gate answers to.
 
@@ -2027,10 +2020,10 @@ interrupting you, and to put the second to you before it runs.
 
 The gate is not a sandbox, and does not try to be.  Nothing here analyses
 what a piece of Lisp would do if it ran: the distinction drawn is
-structural, and whatever falls on the wrong side of it is put to the
-reader to decide.  What the gate provides is narrower, and worth having.
-The question is put once, with the form printed in front of the reader;
-the answer is then remembered, and reviewable.
+structural, and whatever falls on the wrong side of it is put to you to
+decide.  What the gate provides is narrower, and worth having.  The
+question is put once, with the form printed in front of you; the answer is
+then remembered, and reviewable.
 
 ** The structural gate
 :PROPERTIES:
@@ -2060,12 +2053,12 @@ Every argument must answer for itself, because org-ql evaluates a
 predicate's arguments as Lisp too.  =(tags (shell-command "x"))= carries a
 predicate's name and does not pass.  A dotted list fails closed.  A list
 whose first element is not a symbol is the data it looks like, which is
-how org-ql's own =(src :regexps ("defun"))= is written.  Where that first
+how org-ql's own =(src :regexps ("defun"))= is written.  If that first
 element is itself callable the list does not pass, since a byte-code
 object reads in from a property drawer like any other text.
 
 #+vindex: org-agents-exclude
-What the gate is shown is the /form/, not the query.  Because
+What the gate is shown is the /form/, not the query.  Since
 ~org-agents-exclude~ is conjoined in first, a query written
 
 #+begin_example
@@ -2110,11 +2103,10 @@ org-agents: skipping unapproved query (and (string-match "github" (or
 (org-entry-get nil "URL") "")) (not (property "AGENT_MATCH")))
 #+end_example
 
-Where org-ql's own ~org-ql-ask-unsafe-queries~ is nil, nothing is asked
-and the form runs.  That variable is org-ql's, and it governs whether you
-are asked at all; setting it to nil turns off the prompting in this
-package as well.  A refusal is not affected by it (see
-[[*Refused heads]]).
+When org-ql's own ~org-ql-ask-unsafe-queries~ is nil, nothing is asked and
+the form runs.  That variable is org-ql's, and it governs whether you are
+asked at all; setting it to nil turns off the prompting in this package as
+well.  A refusal is not affected by it (see [[*Refused heads]]).
 
 The text you are shown is a function of the form and of nothing else.
 While the form is printed, every printer variable that could change it is
@@ -2140,17 +2132,17 @@ Say yes to a prompt and the decision is remembered, keyed on the SHA-1 of
 the printed form.  Two records hold it.  The session table holds it until
 Emacs is restarted.  ~org-agents-safe-queries~ holds it across sessions,
 as a list of =(HASH . TEXT)= conses where TEXT is the very text the hash
-was taken of.  A stored approval can therefore be read afterwards for what
-it is.  Nothing there is taken on trust.
+was taken of.  A stored approval can be read afterwards for what it is.
+Nothing there is taken on trust.
 
 You are offered the permanent record only where customize has a file to
 write.  The file ~customize-save-variable~ writes to is the one
 =(custom-file t)= names, and that form answers nil, and nothing is
-written, unless ~user-init-file~ is set.  Where your real init is an Org file that
-you tangle, ~user-init-file~ is the tangled output, and a saved approval
-is overwritten the next time it is generated.  Set ~custom-file~ to a file
-of its own.  Otherwise every approval you make is a session approval, and
-Emacs says so when it happens:
+written, unless ~user-init-file~ is set.  If your real init is an Org file
+that you tangle, ~user-init-file~ is the tangled output, and a saved
+approval is overwritten the next time it is generated.  Set ~custom-file~
+to a file of its own.  Otherwise every approval you make is a session
+approval, and Emacs says so when it happens:
 
 #+begin_example
 org-agents: ‘org-agents-safe-queries’ changed for this session only;
@@ -2191,10 +2183,10 @@ the same question and hash differently:
 (and (property "URL") (todo))    a5282dd174fe90eeae4ddd8e0f5297cceaae2029
 #+end_example
 
-An approval is therefore narrow, which is the right way for an approval to
-be wrong.  Reordering a query costs you one more prompt.  Where what you
-want to allow or forbid is a /predicate/ rather than a particular query,
-the instrument is ~org-agents-refused-heads~ and not a hash.
+An approval is narrow, which is the right way for an approval to be wrong.
+Reordering a query costs you one more prompt.  Where what you want to
+allow or forbid is a /predicate/ rather than a particular query, the
+instrument is ~org-agents-refused-heads~ and not a hash.
 
 #+vindex: org-agents-safe-queries
 #+vindex: org-agents-refused-queries
@@ -2202,7 +2194,7 @@ Both records are marked risky, and so is the session table.  The marking
 is not hygiene.  Either record /is/ what the gate consults, the default
 exclusion is published, and the hash of a form is computable offline.  It
 follows that a file able to set one of these records could pre-approve its
-own arbitrary Lisp and never be asked about it.  Because they are marked
+own arbitrary Lisp and never be asked about it.  Since they are marked
 risky, Emacs asks you before a file-local value is applied.
 
 ** Refused heads
@@ -2239,14 +2231,13 @@ org-agents: ‘semantic’ is refused by ‘org-agents-refused-heads’
 #+end_example
 
 Three properties of the matching are worth stating.  The match is by
-literal symbol; an alias of an IO-bearing predicate has therefore to be
-listed as well as the predicate.  The match descends every cons cell, and
-so reports a refused head wherever it appears: in argument position, under
-a nested query, and not only as the head of the whole form.  Unlike the
-structural check, it does not exempt quoted data.
-=(quote (semantic "x"))= is refused too.  The rule fails closed.  What
-failing closed costs is a shape nobody writes on purpose; what failing
-open costs is a subprocess.
+literal symbol; an alias of an IO-bearing predicate must be listed as well
+as the predicate.  The match descends every cons cell, and so reports a
+refused head wherever it appears: in argument position, under a nested
+query, and not only as the head of the whole form.  Unlike the structural
+check, it does not exempt quoted data.  =(quote (semantic "x"))= is
+refused too.  The rule fails closed.  What failing closed costs is a shape
+nobody writes on purpose; what failing open costs is a subprocess.
 
 A refused head outranks an approval.  A query you approved last week whose
 head you add to this list today is refused today.  The approval needs no
@@ -2260,8 +2251,8 @@ hunting down.
 #+cindex: refusal, of a query
 #+vindex: org-agents-refused-queries
 ~org-agents-refused-queries~ is the negative twin of the approval record,
-and carries the same =(HASH . TEXT)= shape.  One listing can therefore
-show an approval and a refusal side by side.  A form whose hash is there is
+and carries the same =(HASH . TEXT)= shape.  One listing can show an
+approval and a refusal side by side.  A form whose hash is there is
 refused before the safe list is consulted, and before
 ~org-ql-ask-unsafe-queries~ is looked at.  The refusal outlives the
 session that made it:
@@ -2286,11 +2277,11 @@ default exclusion is still refused after the exclusion has been edited,
 while an approval of the same form is not honoured after the same edit.
 
 A hand-written entry covers only the exact form it names.  A hash covers
-one printed form.  A refusal of =(and (todo) (evil))= does not
-cover =(and (evil) (todo))= or =(and (and (todo) (evil)))=, which print
-differently and hash differently.  Where what you object to is a
-predicate, use ~org-agents-refused-heads~.  That option refuses the
-predicate however the query around it is spelled.
+one printed form.  A refusal of =(and (todo) (evil))= does not cover
+=(and (evil) (todo))= or =(and (and (todo) (evil)))=, which print
+differently and hash differently.  If what you object to is a predicate,
+use ~org-agents-refused-heads~.  That option refuses the predicate however
+the query around it is spelled.
 
 ** Reviewing what you approved
 :PROPERTIES:
@@ -2343,12 +2334,12 @@ The buffer is in ~org-agents-approvals-mode~, derived from
 
 Put together, that is enough to work through a file someone sent you.
 
-Read the drawer first.  A query is one line and you can read it.  Where it
+Read the drawer first.  A query is one line and you can read it.  When it
 is built only out of org-ql predicates and combinators, what it can do is
 what those predicates do, and it runs without asking you: the reading is
 then the whole of your review.  Check the heads.  A name you do not
 recognise may be a predicate someone defined, and admitting a head admits
-its normalizer.  Where you do not know a head, do not update the agent.
+its normalizer.  If you do not know a head, do not update the agent.
 
 #+findex: org-agents-mode
 If the query holds Lisp, you will be asked, once, with the form printed
@@ -2365,9 +2356,9 @@ file can carry.  A =Local Variables= block could try to set
 ~org-agents-safe-queries~ to pre-approve its own Lisp, or empty
 ~org-agents-refused-heads~ to remove the protection for every file read
 afterwards in the session.  Every option this package defines is marked
-risky for exactly that reason, and Emacs therefore asks before applying
-one from a file.  That protection is Emacs's rather than this package's,
-and it depends on your answering those prompts as carefully as this one.
+risky for exactly that reason, and Emacs asks before applying one from a
+file.  That protection is Emacs's rather than this package's, and it
+depends on your answering those prompts as carefully as this one.
 
 #+findex: org-agents-apply-actions
 An =:AGENT_ACTION:= property is a separate question with a separate answer:
@@ -2559,10 +2550,10 @@ Because the slowness should be explained rather than mysterious, the file
 count is in the message.  On the author's corpus that walk is 3,634 files
 and a query of 172 seconds.  Such a wait should not arrive unexplained.
 
-It follows that ~org-agents-prefilter~ changes what an agent costs and
-never what it answers.  Should you suspect it of changing an answer, set
-it to nil and compare: the two runs are expected to agree, and a
-disagreement is a bug in this package rather than a setting to be tuned.
+Hence ~org-agents-prefilter~ changes what an agent costs and never what it
+answers.  Should you suspect it of changing an answer, set it to nil and
+compare: the two runs are expected to agree, and a disagreement is a bug
+in this package rather than a setting to be tuned.
 
 ** The push-down rules
 :PROPERTIES:
@@ -2660,11 +2651,11 @@ have left the parentheses as grouping and demanded the text
 =Ship it finally=.  The splitter refuses one character in a heading
 literal and only one: =]=.  ~org-get-heading~ does not return a slice of
 the line; it reassembles the line from the groups of a regexp.  The only
-substring org-ql can match that the raw line need not spell is therefore
-one crossing the junction between a priority cookie and the title.  Every
-such substring holds the cookie's closing =]=.  The emitter has refusals
-of its own, over any literal; see [[*Limitations of the prefilter]].
-Several literals of one ~heading~ are emitted as several patterns and
+substring org-ql can match that the raw line need not spell is one
+crossing the junction between a priority cookie and the title.  Every such
+substring holds the cookie's closing =]=.  The emitter has refusals of its
+own, over any literal; see [[*Limitations of the prefilter]].  Several
+literals of one ~heading~ are emitted as several patterns and
 /intersected/, because org-ql requires all of them in one heading.
 
 The authority for all of this is ~org-agents--pushdown-fns~ in the source,
@@ -2681,7 +2672,7 @@ push something ripgrep cannot see.  Files are then dropped with no error.
 :END:
 
 #+vindex: org-use-property-inheritance
-Where ~org-use-property-inheritance~ is broad, and ~t~ most of all, no
+When ~org-use-property-inheritance~ is broad, and ~t~ most of all, no
 ~property~ or ~property-ts~ conjunct is pushable at all.  An agent built
 only out of those then falls back to its scope's whole file set.  The
 answer is still correct, and much slower.  Measured, with the option at
@@ -2691,9 +2682,9 @@ answer is still correct, and much slower.  Measured, with the option at
 (and (todo "TODO") (property "NEXT_REVIEW"))    nothing pushed
 #+end_example
 
-The prefilter's value therefore depends on keeping inheritance narrow.
-Where an agent over a corpus scope is unaccountably slow, that option is
-the first thing to look at.
+The prefilter's value depends on keeping inheritance narrow.  If an agent
+over a corpus scope is unaccountably slow, that option is the first thing
+to look at.
 
 Two honest notes are owed about that guard.  The guard is conservative
 rather than required: org-ql applies the ~org-use-property-inheritance~
@@ -2715,16 +2706,15 @@ every setting:
 
 Two things are worth naming there.  The resolver never reads
 ~org-use-property-inheritance~ and never passes an INHERIT argument.  That
-option cannot therefore change what the predicate answers, and keeping the
-guard would be a pure loss of narrowing.  The pattern is also /widened/:
-the local =:NAME:= line OR a =:PROTOTYPE:= line, as one alternation.
-Widening is obligatory here.  An entry that resolves a name through a
-master never spells the value.  The ordinary pattern would therefore drop
-its file with no error, which is the one failure mode this package must
-not have.  The alternation is one pattern rather than two on purpose:
-several patterns of one conjunct are intersected.  Two would mean "spells
-=:NAME:= AND carries =:PROTOTYPE:=", which is catastrophically narrow, and
-silent.
+option cannot change what the predicate answers, and keeping the guard
+would be a pure loss of narrowing.  The pattern is also /widened/: the
+local =:NAME:= line OR a =:PROTOTYPE:= line, as one alternation.  Widening
+is obligatory here.  An entry that resolves a name through a master never
+spells the value.  The ordinary pattern would therefore drop its file with
+no error, which is the one failure mode this package must not have.  The
+alternation is one pattern rather than two on purpose: several patterns of
+one conjunct are intersected.  Two would mean "spells =:NAME:= AND carries
+=:PROTOTYPE:=", which is catastrophically narrow, and silent.
 
 #+cindex: @samp{ATTR_DEFAULT}, and the prefilter
 That widening has an exception of its own.  The exception is where a
@@ -2783,11 +2773,11 @@ expense on your behalf.  See [[*Checking a corpus]].
 
 #+vindex: org-agents-rg-executable
 ~org-agents-rg-executable~ names the program, resolved with
-~executable-find~; a bare name is therefore looked up on ~exec-path~.
-Version 13 of ripgrep or later is wanted: the prefilter passes =--crlf=,
-without which a value pattern cannot match in a file with CRLF line
-endings.  Every flag was verified against 15.2.0 and against no other
-version.  Thirteen is named as a round, safely old floor.
+~executable-find~; a bare name is looked up on ~exec-path~.  Version 13 of
+ripgrep or later is wanted: the prefilter passes =--crlf=, without which a
+value pattern cannot match in a file with CRLF line endings.  Every flag
+was verified against 15.2.0 and against no other version.  Thirteen is
+named as a round, safely old floor.
 
 One thing that program will /not/ see: =RIPGREP_CONFIG_PATH= is unset for
 the child, and the unsetting is a soundness requirement rather than
@@ -2865,7 +2855,7 @@ run and sends every corpus-scope agent down the live whole-corpus walk.
 :END:
 
 #+cindex: unreadable file
-Where a file cannot be opened at all, this package rather than org-ql
+When a file cannot be opened at all, this package rather than org-ql
 reports it.  The two kinds of scope get different answers.
 
 An explicit =:AGENT_SCOPE:= file list is a hard refusal, naming the files:
@@ -2890,9 +2880,9 @@ skipped: …/.#agents.org
 These describe a set rather than enumerating it; ~org-agenda-files~ is a
 list Org maintains and filters, and one stale entry, or one root-owned
 stray in the corpus, must not break every agent in the buffer.  At most
-five names are spelled out and the rest are counted.  The usual case is one
-stale path, and naming it is the whole point.  Conversely, a root-owned
-corpus could put thousands of names in one message.
+five names are spelled out and the rest are counted.  The usual case is
+one stale path, and naming it is the whole point.  Yet a root-owned corpus
+could put thousands of names in one message.
 
 Neither way is silent.  The message is the whole difference between a skip
 and a drop.
@@ -2913,13 +2903,12 @@ and org-ql over it works and returns its match.  The test mirrors org-ql's
 own rule rather than inventing a stricter one.  Its cost, measured over a
 3,639-file =active= scope, is 0.465 seconds, against 0.265 seconds for the
 directory walk that produced the list.  org-ql then spends ten-odd seconds
-opening those files.  The check is therefore roughly twice the walk, and
-negligible against the read it precedes, which is the comparison that
-matters.
+opening those files.  The check is roughly twice the walk, and negligible
+against the read it precedes, which is the comparison that matters.
 
 The check is a fallback-path diagnostic only: ripgrep cannot read an
-unreadable file either, and a narrowed scope therefore never reports one.
-What a narrowed scope does instead is the subject of the next node.
+unreadable file either, and a narrowed scope never reports one.  What a
+narrowed scope does instead is the subject of the next node.
 
 ** Limitations of the prefilter
 :PROPERTIES:
@@ -2964,8 +2953,8 @@ own.
 One unreadable file under the root costs the entire run.  Measured: with
 one unreadable file among two, ripgrep prints the readable match, writes
 =Permission denied= to stderr, /and/ exits 2; a partial answer is exactly
-the unsound direction, and the whole answer is therefore discarded and the
-scope scanned live.  A symlink loop does the same by the same route, since
+the unsound direction, and the whole answer is discarded and the scope
+scanned live.  A symlink loop does the same by the same route, since
 =--follow= over one makes ripgrep exit 2.  Under =auto= every agent over
 that root then falls back to a live scan until the file or the loop is
 dealt with, slow, correct, and reported as =ripgrep failed=; under
@@ -2988,17 +2977,17 @@ something the intersection makes safe.
 #+cindex: symlink, to a file, and an unstable base set
 #+findex: directory-files-recursively
 The Emacs walk has the last word, and on this platform the walk is itself
-not quite stable.  ~directory-files-recursively~ can intermittently drop
-a *symlink to a file* from an =active= or =all= scope's base set:
+not quite stable.  ~directory-files-recursively~ can intermittently drop a
+*symlink to a file* from an =active= or =all= scope's base set:
 ~file-name-all-completions~ sometimes reports such a link with a trailing
 slash, which makes the walk take it for a directory it must not follow.
-In consequence a corpus assembled out of per-file symlinks may see
-matches in the linked files appear and disappear between updates of the
-same agent, with *nothing said either time*; a symlink to a /directory/ is
+In consequence a corpus assembled out of per-file symlinks may see matches
+in the linked files appear and disappear between updates of the same
+agent, with *nothing said either time*; a symlink to a /directory/ is
 unaffected, and so is the prefilter, since ripgrep reports the file either
 way.  The symlink drop is the one place in this chapter where a match can
-go missing quietly.  The fault is not the prefilter's.  Where that
-matters, name the files in an explicit =:AGENT_SCOPE:= list.
+go missing quietly.  The fault is not the prefilter's.  If that matters,
+name the files in an explicit =:AGENT_SCOPE:= list.
 
 * Views
 :PROPERTIES:
@@ -3038,7 +3027,7 @@ run over the corpus and registry of [[*The example corpus]].
 
 Name the view in =:AGENT_VIEW:=.  Where the property is absent, the view
 is =children=; the shortest agent that can be written, one bare
-=:AGENT_QUERY:= line, therefore renders as headings.
+=:AGENT_QUERY:= line, renders as headings.
 
 #+attr_texinfo: :table-type table :indic code
 - children ::
@@ -3066,13 +3055,13 @@ one of children, list, table
 
 The refusal is deliberate, and the reason is worth knowing because it
 explains a whole class of this package's diagnostics.  Every view but
-=table= renders as a list.  It follows that an unrecognized name would
-come out as a list rather than as nothing: =tabel= would quietly render,
-and would render the wrong view.  A view that silently does the wrong
-thing is worse than a view that refuses.
+=table= renders as a list.  An unrecognized name would come out as a list
+rather than as nothing: =tabel= would quietly render, and would render the
+wrong view.  A view that silently does the wrong thing is worse than a
+view that refuses.
 
-Before the value is interned it is compared as text; a misspelling
-therefore leaves no stray symbol behind in your Emacs.
+Before the value is interned it is compared as text; a misspelling leaves
+no stray symbol behind in your Emacs.
 
 One Org rule catches people here.  Org reads the property value =nil= as
 no value at all.  =:AGENT_VIEW: nil= is therefore an agent with no view,
@@ -3117,13 +3106,13 @@ the rendering itself, in full.  An agent and an update produce this:
 
 Three things in that output are worth naming.
 
-Where the match carries an =:ID:=, the link is an =id:= link, and building
+When the match carries an =:ID:=, the link is an =id:= link, and building
 it registers that id in =org-id-locations= so the link resolves later; a
 match with no =:ID:= is linked as =file:PATH::*Heading= instead, using
-Org's own headline-search syntax.  A match with neither an id nor a file to
-link to cannot be linked at all.  Such a match is rendered as its heading
-text, with =(?)= after it.  A link that goes nowhere is worse than text
-saying there is none.
+Org's own headline-search syntax.  A match with neither an id nor a file
+to link to cannot be linked at all.  Such a match is rendered as its
+heading text, with =(?)= after it.  A link that goes nowhere is worse than
+text saying there is none.
 
 The alias's description is the match's heading /as it read when the alias
 was written/.  The description is text, not a live proxy; see
@@ -3132,9 +3121,9 @@ was written/.  The description is text, not a live proxy; see
 =:AGENT_MATCHED:= is the agent's own note of what it last found and when.
 See [[*What writing AGENT_MATCHED costs]].
 
-Because this is the only view that writes outside a dynamic block, it is
-the only one that has to answer for what it deletes.  That answer is the
-alias contract, and it is the next node.
+Since this is the only view that writes outside a dynamic block, it is the
+only one that has to answer for what it deletes.  That answer is the alias
+contract, and it is the next node.
 
 ** The alias contract
 :PROPERTIES:
@@ -3233,20 +3222,19 @@ you rely on it.
 
 2.  A preserved alias keeps the description and the format suffix it was
    written with.  Only the stale mark changes.  An alias whose match has
-   since been renamed therefore goes on showing the old title.
+   since been renamed goes on showing the old title.
 
 3.  An alias is recognized by its target.  A match that *gains an =:ID:=*
    between two updates is therefore a different target: the old alias is
    marked stale and a new one is written beside it.
 
 4.  Two matches with no =:ID:= and identical headings in one file share
-   one =file:...::*Heading= target, and a single alias may therefore stand
-   for both while =:AGENT_MATCHED:= counts two.  Give them ids to tell
-   them apart.
+   one =file:...::*Heading= target, and a single alias may stand for both
+   while =:AGENT_MATCHED:= counts two.  Give them ids to tell them apart.
 
-Where you have edited an alias's link past reading, the alias is left
-alone, and a fresh alias is written beside it.  The result is a duplicate,
-and the duplicate is accepted.  The alternative is guessing which match a
+If you have edited an alias's link past reading, the alias is left alone,
+and a fresh alias is written beside it.  The result is a duplicate, and
+the duplicate is accepted.  The alternative is guessing which match a
 mangled link stood for.
 
 ** The list view
@@ -3501,8 +3489,7 @@ looks exactly like an agent that matched nothing.
 
 The renderers do not preserve everything they find, and what each loss
 costs is set out below.  Every entry names the limit and the reason it
-stands.  The order is by consequence, and the first entry is the one a
-reader is most likely to meet as though it were a bug.
+stands.
 
 *Drawer edits to a pristine alias are discarded.*  The discard is the
 sharp edge of the alias contract, and it is worth restating on its own
@@ -3579,9 +3566,9 @@ separate step: {{{kbd(C-c C-c)}}} inside it, {{{kbd(C-c C-x C-u)}}}, or
 =org-agents-update=.  See [[*By hand]].
 
 Where point is not at the beginning of a line, a fresh line is opened
-first; where the enclosing entry is an agent whose view needs a block
-and has none, an update opens one for you.  Inserting the block by hand
-is therefore a convenience rather than a requirement.
+first; where the enclosing entry is an agent whose view needs a block and
+has none, an update opens one for you.  Inserting the block by hand is a
+convenience rather than a requirement.
 
 ** Block parameters
 :PROPERTIES:
@@ -3649,9 +3636,9 @@ is refused, and the message says exactly what happened:
 org-agents: a block’s ‘:format’ must be a string, not NEXT_REVIEW
 #+end_example
 
-Write =:format "NEXT_REVIEW"=.  Because a property value is already a
-string, =:AGENT_FORMAT: NEXT_REVIEW= needs no quotes in a property
-drawer.  The two spellings look alike and are read by different readers.
+Write =:format "NEXT_REVIEW"=.  Since a property value is already a
+string, =:AGENT_FORMAT: NEXT_REVIEW= needs no quotes in a property drawer.
+The two spellings look alike and are read by different readers.
 
 Where a block has neither a =:query= of its own nor an enclosing agent,
 it has nothing to render, and says so:
@@ -3760,9 +3747,9 @@ not even be asking the same question:
 ,#+END:
 #+end_example
 
-Where a block supplies its own =:query= and sits under no agent, it
-renders standalone, over =org-agenda-files= as a =list= until its own
-parameters say otherwise:
+When a block supplies its own =:query= and sits under no agent, it renders
+standalone, over =org-agenda-files= as a =list= until its own parameters
+say otherwise:
 
 #+begin_example
 ,* Notes
@@ -3791,38 +3778,38 @@ package sent it or not.
 
 *=:AGENT_MATCHED:= records the first block's count, in buffer order.*
 For a multi-block agent no single number is the right one to record.
-Because a block's parameters override the entry's, =:query= included,
-two blocks of one agent may answer different questions, and "the agent's
+Since a block's parameters override the entry's, =:query= included, two
+blocks of one agent may answer different questions, and "the agent's
 count" is not one number.  What is written is the first block's count,
 which is what it says it is rather than a total.  In the =Two questions=
-example above, =:AGENT_MATCHED:= is =3=, the first block's three
-matches, and the second block's two are recorded nowhere.  Likewise an
-agent whose =:AGENT_LIMIT:= is 1 and whose second block clears it with
-=:limit nil= records =1=.  The second block holds three items.
+example above, =:AGENT_MATCHED:= is =3=, the first block's three matches,
+and the second block's two are recorded nowhere.  Likewise an agent whose
+=:AGENT_LIMIT:= is 1 and whose second block clears it with =:limit nil=
+records =1=.  The second block holds three items.
 
 *A =children= agent that owns blocks ignores them silently.*  The
-example above shows it.  Where an =org-agents= block stays empty however
+example above shows it.  If an =org-agents= block stays empty however
 often you update, check the enclosing entry's =:AGENT_VIEW:=.
 
 *A block cannot render =children=, and does not say so.*
 =:view children= is accepted, being one of the three views against which
-the parameter is checked, and is then read as =list=, because a block
-has no way to write a heading.  Measured: the block renders a plain list
-and no diagnostic is issued.  A view that quietly does something else is
-worse than one that refuses, and this is the one place the package does
-it.  The reason is what a refusal would cost.  The writer reads the
-entry's view as well as the block's, and Org reaches that writer for
-every =org-agents= block whether this package sent it or not; measured,
+the parameter is checked, and is then read as =list=, because a block has
+no way to write a heading.  Measured: the block renders a plain list and
+no diagnostic is issued.  A view that quietly does something else is worse
+than one that refuses, and this is the one place the package does it.  The
+reason is what a refusal would cost.  The writer reads the entry's view as
+well as the block's, and Org reaches that writer for every =org-agents=
+block whether this package sent it or not; measured,
 ~org-update-all-dblocks~ in a buffer whose agent names no view renders
-that agent's block as a list.  It follows that a refusal on =children=
-would fire there too.
+that agent's block as a list.  A refusal on =children= would fire there
+too.
 
 *An interrupted or failed render restores the previous body, not the
 buffer.*  Org deletes the old body with =org-prepare-dblock= before the
-writer runs.  Everything a render needs is therefore computed before
-anything is written, and a failure puts the old body back.
-{{{kbd(C-g)}}} is treated the same way: the body goes back, the quit is
-then signalled again, and the interrupt still interrupts.
+writer runs.  Hence everything a render needs is computed before anything
+is written, and a failure puts the old body back.  {{{kbd(C-g)}}} is
+treated the same way: the body goes back, the quit is then signalled
+again, and the interrupt still interrupts.
 
 *An edit landing in the block during a prefilter wait is not protected.*
 A =list= or =table= agent over a corpus scope may wait on a ripgrep
@@ -3892,9 +3879,9 @@ org-agents: no agent and no ‘org-agents’ block at point
 
 #+kindex: C-c C-x Q
 =org-agents-update= is the command that earns a key.  The package binds
-nothing, and the choice is therefore the reader's.  Pick a sequence in
-the Org map, where {{{kbd(C-c C-x Q)}}} is free and the lower-case
-{{{kbd(C-c C-x q)}}} and {{{kbd(C-c C-x a)}}} are both Org's own:
+nothing, and the choice is the reader's.  Pick a sequence in the Org map,
+where {{{kbd(C-c C-x Q)}}} is free and the lower-case {{{kbd(C-c C-x q)}}}
+and {{{kbd(C-c C-x a)}}} are both Org's own:
 
 #+begin_src emacs-lisp
 (with-eval-after-load 'org
@@ -3921,21 +3908,20 @@ org-agents: Broken limit (~/org/agents.org:31): :AGENT_LIMIT: must be a
 count, not ‘many’
 #+end_example
 
-Because the same summary is read over a whole corpus, where several
-agents may share a heading, the failure names the agent's heading and
-its =FILE:LINE=.
+Since the same summary is read over a whole corpus, where several agents
+may share a heading, the failure names the agent's heading and its
+=FILE:LINE=.
 
 *=org-agents-update-all=* updates every agent in the files
-=org-agents-files= names.  That option is a list of files and
-directories, or the symbol =agenda= for =org-agenda-files=; a directory
-contributes the Org files below it, recursively.  Names are winnowed to
-the readable ones and compared as truenames.  A file named twice over,
-by itself and by a directory that holds it, is therefore updated once,
-and one summary does not report the agents in it twice.  A file that is
-readable but that Emacs cannot visit is recorded as a single failure,
-named by its file; the count of the files already updated is not lost
-with it.  Such a file may be one grown past
-=large-file-warning-threshold=, one that changed on disk since it was
+=org-agents-files= names.  That option is a list of files and directories,
+or the symbol =agenda= for =org-agenda-files=; a directory contributes the
+Org files below it, recursively.  Names are winnowed to the readable ones
+and compared as truenames.  A file named twice over, by itself and by a
+directory that holds it, is updated once, and one summary does not report
+the agents in it twice.  A file that is readable but that Emacs cannot
+visit is recorded as a single failure, named by its file; the count of the
+files already updated is not lost with it.  Such a file may be one grown
+past =large-file-warning-threshold=, one that changed on disk since it was
 last visited, or one whose coding system cannot decode it.
 
 =org-agents-files= is worth distinguishing from the scope of an agent.
@@ -3962,9 +3948,8 @@ command is the right way to develop a query, and the right way to find
 out whether one will be approved before you commit it to a drawer.
 
 The query is read, expanded and gated exactly as an agent's is, and
-=org-agents-exclude= is conjoined in before =org-ql-search= sees the
-form.  What is approved here is therefore what runs.  See
-[[*The structural gate]].
+=org-agents-exclude= is conjoined in before =org-ql-search= sees the form.
+What is approved here is what runs.  See [[*The structural gate]].
 
 The scope is always =org-agenda-files=: a scope belongs to an agent, and
 a preview has no agent; agenda files that cannot be read are skipped
@@ -4054,10 +4039,10 @@ Ignoring unknown mode ‘org-agents-mode-mode’
 leaving the mode off in a file you believed you had armed.
 
 *One Emacs behaviour that surprises people.*  =save-buffer= runs
-=before-save-hook= only when the buffer is actually modified.  Visiting
-a file and typing {{{kbd(C-x C-s)}}} without having changed anything
-therefore does not render: no save took place.  The behaviour is Emacs's
-rather than this package's.  Yet it looks exactly like the mode failing.
+=before-save-hook= only when the buffer is actually modified.  Visiting a
+file and typing {{{kbd(C-x C-s)}}} without having changed anything does
+not render: no save took place.  The behaviour is Emacs's rather than this
+package's.  Yet it looks exactly like the mode failing.
 
 ** global-org-agents-mode
 :PROPERTIES:
@@ -4154,8 +4139,8 @@ new to find is byte-for-byte identical to the first.
 Because the buffer is restored with =replace-buffer-contents=, point,
 the mark, and every marker and overlay survive.
 
-Two further behaviours belong here.  Where a failure occurs, it is
-reported and the save then goes on regardless:
+Two further behaviours belong here.  When a failure occurs, it is reported
+and the save then goes on regardless:
 
 #+begin_example
 org-agents: the update on save failed: ...
@@ -4193,21 +4178,20 @@ without being run again.  In a system whose agents update continuously
 the property would matter less.  Three consequences follow, accepted
 rather than avoided.
 
-1. *It modifies the buffer.*  An update therefore always leaves its
-   files modified and unsaved, even where the render itself found
-   nothing new.  [[*By hand]] describes that as a feature: the result
-   can be read over and undone before it is kept.  On the save path the
-   buffer is put back where the render changed nothing, and the stamp
-   does not make every save rewrite the file.
+1. *It modifies the buffer.*  An update always leaves its files modified
+   and unsaved, even where the render itself found nothing new.
+   [[*By hand]] describes that as a feature: the result can be read over
+   and undone before it is kept.  On the save path the buffer is put back
+   where the render changed nothing, and the stamp does not make every
+   save rewrite the file.
 
 2. *Its timestamp is inactive, and therefore visible to a query.*  A
    query written =(ts-inactive :from ...)= over a corpus holding agents
    will match the agents themselves.  The match is not a bug in the
    query; the stamp is a real inactive timestamp in a real drawer.
 
-3. *It leaves a timestamp in the file.*  A version-control diff of a
-   saved update therefore shows the stamp even where the render itself
-   did not move.
+3. *It leaves a timestamp in the file.*  A version-control diff of a saved
+   update shows the stamp even where the render itself did not move.
 
 Where an agent carries several blocks,
 [[*Limitations of dynamic blocks]] says what the count means.
@@ -4218,11 +4202,10 @@ Where an agent carries several blocks,
 :END:
 #+cindex: limitations, of updating
 
-Three things no update will do, whatever is asked of it, are set out here.
-The first is a design position, argued elsewhere and named here so that the
-chapter is complete; the second is the price of a property this chapter has
-already described; and the third is the price of reading a corpus at all.
-Each entry states the limit, and then the reason it stands.
+Three limits bound what an update leaves behind.  The first is a design
+position, argued elsewhere and named here so that the chapter is complete;
+the second is the price of a property this chapter has already described;
+and the third is the price of reading a corpus at all.
 
 *No timer-driven update exists, and none will.*  Nothing in this package
 renders an agent while you are not looking at it.  The reason is the
@@ -4235,20 +4218,19 @@ system these ideas come from;
 the alternatives named.
 
 *The first save of a stale multi-block agent writes the file, and only
-that save.*  A save refreshes every block of a multi-block agent; a
-buffer whose second block was stale therefore reaches disk changed.
-Every save after it is byte-identical again.  The exception is worth
-stating because the byte-identical save is the property you come to rely
-on, and the one save that breaks it looks like the property failing.
+that save.*  A save refreshes every block of a multi-block agent; a buffer
+whose second block was stale reaches disk changed.  Every save after it is
+byte-identical again.  The exception is worth stating because the
+byte-identical save is the property you come to rely on, and the one save
+that breaks it looks like the property failing.
 
 *An update over a corpus scope leaves the files it read visited.*
-org-ql opens a file it has to evaluate against with
-=find-file-noselect=, and nothing here reaps it; an unnarrowed walk of
-=all= can therefore leave thousands of Org buffers behind.  The
-prefilter is what keeps that number down.  A file-count ceiling, above
-which a live walk would be refused and below which it would be allowed,
-is the obvious way to sharpen this, and is not implemented.  See
-[[*Limitations of the prefilter]].
+org-ql opens a file it has to evaluate against with =find-file-noselect=,
+and nothing here reaps it; an unnarrowed walk of =all= can leave thousands
+of Org buffers behind.  The prefilter is what keeps that number down.  A
+file-count ceiling, above which a live walk would be refused and below
+which it would be allowed, is the obvious way to sharpen this, and is not
+implemented.  See [[*Limitations of the prefilter]].
 
 
 * The attribute registry
@@ -4284,11 +4266,11 @@ or which of them you meant.  That openness is why the drawer is useful.
 Equally, it is why a corpus that has grown for years contains =STATUS=,
 =Status=, =STATE= and =PHASE=, three of which were the same idea once.
 
-Because a Tinderbox attribute must be declared before a note can hold
-it, Tinderbox has no such problem: you name the attribute, choose its
-type, give it a default, and optionally list the values it should
-suggest.  See [[*Attributes in Tinderbox]] for what that pane looks like
-and what it is for.
+Since a Tinderbox attribute must be declared before a note can hold it,
+Tinderbox has no such problem: you name the attribute, choose its type,
+give it a default, and optionally list the values it should suggest.  See
+[[*Attributes in Tinderbox]] for what that pane looks like and what it is
+for.
 
 A registry is that declaration, written as Org.  Declaring an attribute
 buys four things, and each of them is a separate feature of this package:
@@ -4386,14 +4368,13 @@ is what makes an entry a declaration at all.  Their exact contracts are in
 =list=. See [[*The six types]].
 
 =:ATTR_VALUES:= is the values the attribute admits, separated by
-whitespace.  Tinderbox calls these *suggested values*, and separates
-them with semicolons; here the separator is whitespace, because
-whitespace is what Org's own =NAME_ALL= convention uses and therefore
-what ~org-property-get-allowed-values~ already reads.  A trailing =:ETC=
-leaves the vocabulary open, which is Org's own spelling of that: the
-values are offered for completion, and a value not among them is still
-admitted.  Org is what reads that marker, and the marker therefore
-reaches Org unfiltered.
+whitespace.  Tinderbox calls these *suggested values*, and separates them
+with semicolons; here the separator is whitespace, because whitespace is
+what Org's own =NAME_ALL= convention uses and therefore what
+~org-property-get-allowed-values~ already reads.  A trailing =:ETC= leaves
+the vocabulary open, which is Org's own spelling of that: the values are
+offered for completion, and a value not among them is still admitted.  Org
+is what reads that marker, and the marker reaches Org unfiltered.
 
 =:ATTR_DEFAULT:= is the default, written as text.  The value is the last
 step of the prototype resolution order.  It stays the trimmed string the
@@ -4468,15 +4449,14 @@ corpus meant, the refusals are where the types earn their keep.
   Whitespace-separated members, every one admitted by the vocabulary.
   Duplicates are fine and order is significant.
 
-=set= and =list= are Tinderbox's distinction, a set's members being
-unique where a list's may repeat and are ordered, and the correspondence
-stops at the distinction.  Tinderbox *coerces*: "passing a List with
-duplicate values to a Set will remove duplicates"
-(=tbxman920:1439--1440=).  Conversely, this package *validates*: a
-repeated member makes the value invalid and the lint says so, and
-nothing here canonicalises order or compares two sets
-order-insensitively.  The separator is whitespace rather than
-semicolons.  See [[*Attributes in Tinderbox]] for the correspondence,
+=set= and =list= are Tinderbox's distinction, a set's members being unique
+where a list's may repeat and are ordered, and the correspondence stops at
+the distinction.  Tinderbox *coerces*: "passing a List with duplicate
+values to a Set will remove duplicates" (=tbxman920:1439--1440=).  Rather
+than coerce, this package *validates*: a repeated member makes the value
+invalid and the lint says so, and nothing here canonicalises order or
+compares two sets order-insensitively.  The separator is whitespace rather
+than semicolons.  See [[*Attributes in Tinderbox]] for the correspondence,
 and [[*What it changed]] for why.
 
 #+findex: org-agents-attribute-valid-p
@@ -4524,10 +4504,9 @@ Two further properties of the reader are worth knowing:
   entry is named once and skipped.  A bad anything else costs only that
   field, warned once, with the rest of the declaration intact.  A missing
   or unreadable registry declares nothing and says nothing about it.
-- *The file is read lazily, and at most once per edit,* including an
-  edit you have not saved.  A correction to a declaration therefore
-  takes effect at the next thing that reads it, without a reload and
-  without a cache to clear.
+- *The file is read lazily, and at most once per edit,* including an edit
+  you have not saved.  A correction to a declaration takes effect at the
+  next thing that reads it, without a reload and without a cache to clear.
 
 Although a name that is one of Org's special properties may be declared,
 the reader warns once that no completion is possible for it.  Org
@@ -4542,11 +4521,10 @@ still worth having: the lint reads it.
 #+cindex: lint, attribute
 #+cindex: seeding a registry
 
-A registry is easiest to write against a corpus that already exists.
-Where yours does, {{{kbd(M-x)}}} ~org-agents-check-attributes~ is how
-you find out what is in it.  It takes a scope, with exactly the
-vocabulary =:AGENT_SCOPE:= takes, and it *reports*. Nothing is edited,
-ever.
+A registry is easiest to write against a corpus that already exists.  If
+yours does, {{{kbd(M-x)}}} ~org-agents-check-attributes~ is how you find
+out what is in it.  It takes a scope, with exactly the vocabulary
+=:AGENT_SCOPE:= takes, and it *reports*. Nothing is edited, ever.
 
 The command asks three questions:
 
@@ -4674,10 +4652,10 @@ declares with a vocabulary.
 #+end_example
 
 A boolean answers ~("true" "false")~ from the two values the reader
-synthesizes.  Completion therefore needs no special case for the type.
-A vocabulary that is =:ETC= and nothing else is declined, because Org
-removes the marker and would be left with nothing after the non-nil
-answer had already shadowed the corpus.
+synthesizes.  Completion needs no special case for the type.  A vocabulary
+that is =:ETC= and nothing else is declined, because Org removes the
+marker and would be left with nothing after the non-nil answer had already
+shadowed the corpus.
 
 ** A corpus-wide column view
 :PROPERTIES:
@@ -4839,14 +4817,13 @@ none is wanted.  What a master lends is exactly what it holds.
    :END:
 #+end_src
 
-Because =Blocked Task= names =Task= in its own =:PROTOTYPE:=, the two
-form a chain: an entry reading through =Blocked Task= gets =blocked= for
-=STATUS= and =johnw= for =OWNER=.
+Since =Blocked Task= names =Task= in its own =:PROTOTYPE:=, the two form a
+chain: an entry reading through =Blocked Task= gets =blocked= for =STATUS=
+and =johnw= for =OWNER=.
 
-Where any other top-level entry with no =:ATTR_TYPE:= would be named,
-this section is skipped silently by the declaration reader.  Tinderbox
-keeps its own built-in prototypes in a top-level container of the same
-name.
+The declaration reader skips that section silently.  Any other top-level
+entry with no =:ATTR_TYPE:= would, by contrast, be named.  Tinderbox keeps
+its own built-in prototypes in a top-level container of the same name.
 
 ** Naming a master
 :PROPERTIES:
@@ -4913,7 +4890,7 @@ corpus and not a budget.
 
 Step 1 reads the drawer raw.  A present-but-empty =:NAME:= answers the
 empty string, which org-ql's own ~property~ predicate matches; resolution
-therefore matches it too.
+matches it too.
 
 Take the registry and masters above, and the first four entries of
 [[*The example corpus]], whose properties bearing on this are the
@@ -4968,15 +4945,15 @@ Look again at =Rewrite the exporter= in the table above.  Its parent
 =Projects= sets =:OWNER: johnw=, and its resolved =OWNER= is *nil*.
 
 The nil is deliberate. *Containment is not inheritance:* a task filed
-under a project is not a kind of project, and a note filed under
-=Reading= is not a kind of reading.  Where a corpus does mean the
-outline, Org's own property inheritance already says so, and the query
-layer spells that axis =$NAME*= (see [[*The two axes]]). =$NAME^= is
-this axis.  The two are orthogonal, and a query has to say which it
-means because the two answer differently: over the corpus above,
-=$OWNER*= finds the two entries under =Projects= and =$OWNER^= finds
-=Projects= itself along with the entries whose chains reach a master
-that sets it.  The two answers share no entries at all.
+under a project is not a kind of project, and a note filed under =Reading=
+is not a kind of reading.  When a corpus does mean the outline, Org's own
+property inheritance already says so, and the query layer spells that axis
+=$NAME*= (see [[*The two axes]]). =$NAME^= is this axis.  The two are
+orthogonal, and a query has to say which it means because the two answer
+differently: over the corpus above, =$OWNER*= finds the two entries under
+=Projects= and =$OWNER^= finds =Projects= itself along with the entries
+whose chains reach a master that sets it.  The two answers share no
+entries at all.
 
 Tinderbox is explicit about this.  Its own words are "inheritance has
 nothing to do with the document hierarchy; a note's prototype is not
@@ -4990,11 +4967,11 @@ agreement is strongest here.
 #+cindex: virtual resolution
 #+cindex: grep, and inherited values
 
-Resolution is a *read*. Nothing is ever written into the inheriting
-entry: no property is copied down, no subtree is materialised, no cache
-is persisted anywhere in your files.  It follows that a master may be
-changed once, and that every follower changes with it.  The mechanism
-has no other point, and Tinderbox makes the same promise about it.
+Resolution is a *read*. Nothing is ever written into the inheriting entry:
+no property is copied down, no subtree is materialised, no cache is
+persisted anywhere in your files, so that a master may be changed once and
+every follower changes with it.  The mechanism has no other point, and
+Tinderbox makes the same promise about it.
 
 Because a reader will otherwise discover it at an inconvenient moment,
 the price is worth stating plainly.
@@ -5013,10 +4990,10 @@ finds nothing at all, even though one entry there resolves to =blocked=.
 
 What *does* see it is:
 
-- ~property-resolved~, the org-ql predicate this package defines, which
-  is what =$NAME^= expands to.  The agent whose query is
-  ~(property-resolved "STATUS" "blocked")~ therefore matches
-  =Audit the prefilter=, which spells no =:STATUS:= anywhere.  See
+- ~property-resolved~, the org-ql predicate this package defines, which is
+  what =$NAME^= expands to.  The agent whose query is
+  ~(property-resolved "STATUS" "blocked")~ matches =Audit the prefilter=,
+  which spells no =:STATUS:= anywhere.  See
   [[*The property-resolved predicate]].
 - ~org-agents-resolve-property~, for a caller in Lisp.
 - ~org-agents-faces-mode~, which reads the resolved value and is the
@@ -5069,7 +5046,7 @@ for a partly different reason and over a different list; see
 #+cindex: prototype cycle
 
 Two things can be wrong with a chain, and each is said *once per update*
-rather than once per entry or once per redisplay.  Where a =:PROTOTYPE:=
+rather than once per entry or once per redisplay.  When a =:PROTOTYPE:=
 names a master that is not there, the *dangling reference* is one message
 naming the entry that made it:
 
@@ -5126,11 +5103,10 @@ change their color in order to draw your attention" (=tbxman920:2792=);
 the idea is that a document's appearance should follow from its data
 rather than from a separate act of formatting.
 
-Setting =$Color= in Tinderbox is a *write* to a note.  Here it would be
-a write to a text file under version control.  Because of that,
-org-agents keeps the idea and changes the mechanism completely.  It
-follows that appearance in org-agents is a *declaration* that is read,
-never an action that is applied.
+Setting =$Color= in Tinderbox is a *write* to a note.  Here it would be a
+write to a text file under version control.  For that reason org-agents
+keeps the idea and changes the mechanism completely: appearance here is a
+*declaration* that is read, never an action that is applied.
 
 ** Faces from attribute values
 :PROPERTIES:
@@ -5173,9 +5149,9 @@ value the declaration does not mention maps to no face.  Such a headline
 is left exactly as Org drew it.
 
 Face names are read with ~intern~ and never with ~read~, because the
-registry is data.  Where a declaration does not split cleanly into
-two-word groups, it yields no faces, warned once.  The fault costs the
-faces.  The rest of the declaration survives.
+registry is data.  If a declaration does not split cleanly into two-word
+groups, it yields no faces, warned once.  The fault costs the faces.  The
+rest of the declaration survives.
 
 ** From declaration to headline
 :PROPERTIES:
@@ -5209,9 +5185,9 @@ spells no =:STATUS:= at all, =Audit the prefilter= is drawn in ~error~:
 the value arrives through its prototype chain, which is exactly why the
 mode reads the resolved value.
 
-=active= maps to no face, and most of the corpus is therefore left as
-Org drew it; the mode is a way of marking the exceptional, not a way of
-colouring everything.
+=active= maps to no face, and most of the corpus is left as Org drew it;
+the mode is a way of marking the exceptional, not a way of colouring
+everything.
 
 The attribute's face is *prepended* to what Org already put there, not
 substituted for it.  Accordingly =Ship 0.1= reads
@@ -5254,10 +5230,10 @@ declared property.
 The difference from ~global-org-agents-mode~, which does scan a buffer's
 text for =:AGENT_QUERY:= before arming it, is considered rather than
 accidental.  The two tests differ because the two features differ.  An
-agent is spelled in the file it lives in, and a text scan therefore
-finds every buffer that has one; *a value arriving through a prototype
-or a registry default is spelled nowhere*, and a text scan would miss
-precisely the entries this mode exists for.
+agent is spelled in the file it lives in, and a text scan finds every
+buffer that has one; *a value arriving through a prototype or a registry
+default is spelled nowhere*, and a text scan would miss precisely the
+entries this mode exists for.
 
 The mode is affordable, for two reasons.  The matcher answers nil before
 resolving anything where nothing declares a face.  It also reads only
@@ -5352,9 +5328,9 @@ it.
 only thing in this package that runs an action is
 ~org-agents-apply-actions~, typed.  The refusal is *structural* rather
 than a promise kept by discipline.  The action text is not part of the
-plist the save path reads, and therefore does not exist as data anywhere
-along it.  The whole package holds one read of =:AGENT_ACTION:=.  It sits
-inside that command.
+plist the save path reads, and does not exist as data anywhere along it.
+The whole package holds one read of =:AGENT_ACTION:=.  It sits inside that
+command.
 
 Tinderbox has =$Rule=, performed at frequent intervals, and =$Edict=,
 performed at startup and roughly hourly.  Neither is ported.  A Tinderbox
@@ -5367,21 +5343,21 @@ accounting, in Tinderbox's own vocabulary.
 
 *An action is not inheritable.* =:AGENT_ACTION:= is read from the entry's
 own drawer, with ~org-entry-get~ and no INHERIT argument, and never
-through ~org-agents-resolve-property~. It follows that no prototype, no
-outline ancestor, no =#+PROPERTY:= line and no ~org-global-properties~
-setting can supply one.  The reason is per-file trust.  Where any of those
-could supply one, the code that edits your corpus when you act on file A
-would be written in file B.  Reading a file before trusting it would then
-mean nothing.  The divergence is deliberate.  Tinderbox's =$Rule= is
-normally inherited, and the Tinderbox manual's own worked example is a rule
-inherited from a =Task= prototype.
+through ~org-agents-resolve-property~. No prototype, no outline ancestor,
+no =#+PROPERTY:= line and no ~org-global-properties~ setting can supply
+one.  The reason is per-file trust.  Where any of those could supply one,
+the code that edits your corpus when you act on file A would be written in
+file B.  Reading a file before trusting it would then mean nothing.  The
+divergence is deliberate.  Tinderbox's =$Rule= is normally inherited, and
+the Tinderbox manual's own worked example is a rule inherited from a
+=Task= prototype.
 
 *Nothing in the property is ever evaluated.* The parser is a regexp lexer;
 a token becomes a function by name construction plus ~fboundp~; arguments
 reach a verb as strings.  The vocabulary offers no expression language, no
 assignment, no conditional, no iteration, and nothing resembling
-Tinderbox's ~runCommand~. It follows that the worst thing expressible in
-an =:AGENT_ACTION:= is a bounded, greppable Org edit.
+Tinderbox's ~runCommand~. The worst thing expressible in an
+=:AGENT_ACTION:= is a bounded, greppable Org edit.
 
 ** Writing an action
 :PROPERTIES:
@@ -5408,7 +5384,7 @@ anything but a comma, a parenthesis or a quotation mark; a quoted argument
 admits backslash escapes.  A verb taking no argument, ~archive!~, is
 written without parentheses.
 
-The parser reads no buffer.  It creates none and writes nothing.  Because
+The parser reads no buffer.  It creates none and writes nothing.  Since
 every diagnostic it can raise fires before the query has run, a typo does
 not even open the corpus:
 
@@ -5506,9 +5482,8 @@ calls ~string-to-number~ at all.
 removes the subtree a later verb would edit.  The parser refuses the
 ordering rather than letting an apply pass discover it.  The destination
 is computed twice.  The first computation archives nothing.  The dry run
-can therefore say where the subtree is about to go.  The second runs
-immediately before archiving.  Where the two disagree, the subtree is left
-alone.
+can say where the subtree is about to go.  The second runs immediately
+before archiving.  If the two disagree, the subtree is left alone.
 
 ** Value keywords
 :PROPERTIES:
@@ -5545,8 +5520,8 @@ letters.  Quoting is the escape hatch, and it is the only one.
 
 The date-taking verbs accept ~today~ and ~now~ too.  Each expands the word
 itself rather than handing it to ~org-read-date~; what is scheduled is
-therefore what the word says.  Their other shapes are an ISO date, an
-ISO date and time, and an Org offset such as =+7d= or =++2w=.
+what the word says.  Their other shapes are an ISO date, an ISO date and
+time, and an Org offset such as =+7d= or =++2w=.
 
 ** The dry run
 :PROPERTIES:
@@ -5579,7 +5554,7 @@ Read the report before answering anything. =FILE:LINE:= comes first on
 every line so ~next-error~ walks them; the arrow shows old and new; the
 header counts both edits and entries, and says how many of the files were
 not already open.  A row that would change nothing says so.  Such a row is
-not counted as an edit.  Where no row would change anything, the command
+not counted as an edit.  When no row would change anything, the command
 says so and asks nothing: "apply 0 edits?" is not informed consent.
 
 After the report, you are asked *once*, about the whole plan:
@@ -5624,13 +5599,12 @@ what make it true.
 The match set is computed exactly as an update computes it: gated,
 prefiltered, with the agent itself dropped from its own match set and
 every generated alias excluded by ~org-agents-exclude~; an agent's action
-therefore never edits the agent, and never edits an alias some other agent
-wrote.
+never edits the agent, and never edits an alias some other agent wrote.
 
 The plan pass writes nothing.  The claim is checked rather than trusted.
-In turn, every live buffer's modification tick is taken before the pass and
-compared after: a promise about one buffer is not a promise about the
-corpus.
+To that end, every live buffer's modification tick is taken before the
+pass and compared after: a promise about one buffer is not a promise about
+the corpus.
 
 The apply pass runs with hooks and logging bound off.  Thus nothing
 arrives in the files that the report did not name.  Thirteen names are
@@ -5654,12 +5628,11 @@ The binding buys that narrowness.  The cost deserves stating as plainly:
 *~todo!~ sets the keyword and nothing else.*  No =CLOSED= stamp is added or
 removed; no statistics cookie in an ancestor is refreshed; no tag trigger
 fires; and no state note is written either, a note being a /prompt/ in the
-middle of a run over a corpus.  ~org-trigger-hook~ is
-org-edna's own mechanism; a corpus with =org-edna-mode= on therefore
-schedules no successors and unblocks nothing on the strength of a run
-here.  Everything in that list is something {{{kbd(C-c C-t)}}} on the same
-entry would have done.  Where an entry needs it, {{{kbd(C-c C-t)}}} is the
-command to use.
+middle of a run over a corpus.  ~org-trigger-hook~ is org-edna's own
+mechanism; a corpus with =org-edna-mode= on schedules no successors and
+unblocks nothing on the strength of a run here.  Everything in that list
+is something {{{kbd(C-c C-t)}}} on the same entry would have done.  Where
+an entry needs it, {{{kbd(C-c C-t)}}} is the command to use.
 
 ~org-blocker-hook~ is deliberately *not* bound off: a blocker is your
 refusal to let an entry change, and binding it off would widen a run past
@@ -5681,9 +5654,8 @@ as what happened rather than as success.
 default is 100, chosen so that a mistake is reviewable rather than for
 performance.
 
-Where a plan covers more entries than the limit, it is *refused* rather
-than truncated, and the refusal names the count, the limit and the
-option:
+When a plan covers more entries than the limit, it is *refused* rather
+than truncated, and the refusal names the count, the limit and the option:
 
 #+begin_example
 org-agents: 2 entries matched and `org-agents-action-limit' is 1, so
@@ -5721,9 +5693,9 @@ set.
 
 Where interaction is impossible, in batch or under ~inhibit-interaction~,
 a confirmation is a *refusal and not a default*: the refusal is the prompt
-it would have asked, with the reason after it, and a log therefore says
-exactly which question went unanswered.
-For a run holding a destructive verb the prompt names the verb:
+it would have asked, with the reason after it, and a log says exactly
+which question went unanswered.  For a run holding a destructive verb the
+prompt names the verb:
 
 #+begin_example
 org-agents: apply 2 edits at 2 entries in 1 file, and 1 with nothing to do,
@@ -5759,11 +5731,11 @@ the links in the *region* name rather than on the agent's whole match set;
 the action text still comes from the agent's own drawer.
 
 A stamp falls out of that prefix argument.  A stamp is this command
-pointed at a selection, and the region is the selection.  Select some of the
-agent's alias headings, or some rows of its table, or some items of its
-list, and only those entries are planned.  The first bracket link on each
-line is read, by the same reading that recognizes an alias; one mechanism
-therefore serves all three views, in order and without repeats.
+pointed at a selection, and the region is the selection.  Select some of
+the agent's alias headings, or some rows of its table, or some items of
+its list, and only those entries are planned.  The first bracket link on
+each line is read, by the same reading that recognizes an alias; one
+mechanism serves all three views, in order and without repeats.
 
 The prefix argument *is* the request.  What has to hold is a mark,
 somewhere other than point.  An empty region, or none at all, is refused
@@ -5808,8 +5780,8 @@ widen it.
 
 A verb is resolved by *name construction plus* ~fboundp~: the token
 =frobnicate!= becomes the function ~org-agents-action/frobnicate!~ if such
-a function is bound, and an error naming both if it is not.  A tenth verb
-is therefore a ~defun~ in your init file with that name.
+a function is bound, and an error naming both if it is not.  Thus a tenth
+verb is a ~defun~ in your init file with that name.
 
 The contract has three parts:
 
@@ -6098,9 +6070,9 @@ The reason is stated in each entry.
   Default ="rg"=.  The program the prefilter runs, resolved with
   =executable-find=.  Because the prefilter passes =--crlf=, ripgrep 13 or
   later is wanted; the flags were verified against 15.2.0 and no other
-  version.  Where no ripgrep is found, the answer is the same as a
-  failed run: the scope is scanned live, with the message that says so.
-  Risky, because it names a program that will be run as a subprocess.
+  version.  If no ripgrep is found, the answer is the same as a failed
+  run: the scope is scanned live, with the message that says so.  Risky,
+  because it names a program that will be run as a subprocess.
 
 - User Option: org-agents-rg-timeout :: Default =30=.  Seconds to wait for
   one prefilter run, or nil for no bound.  A bound is needed because
@@ -6125,13 +6097,12 @@ The reason is stated in each entry.
 
 - User Option: org-agents-safe-queries ::
   Default nil.  The record of queries you have approved, managed the way
-  =safe-local-variable-values= is: each entry pairs the SHA-1 of a
-  printed form with that form's text.  Persisted with
-  =customize-save-variable=, which writes nothing unless
-  =user-init-file= is set.  Where your init is a tangled Org file,
-  =custom-file= must be set to a file of its own or every approval is
-  session-only.  Risky, because it is the record the gate consults.  See
-  [[*Remembered approvals]].
+  =safe-local-variable-values= is: each entry pairs the SHA-1 of a printed
+  form with that form's text.  Persisted with =customize-save-variable=,
+  which writes nothing unless =user-init-file= is set.  If your init is a
+  tangled Org file, =custom-file= must be set to a file of its own or
+  every approval is session-only.  Risky, because it is the record the
+  gate consults.  See [[*Remembered approvals]].
 
 - User Option: org-agents-refused-queries ::
   Default nil.  The record of queries you have refused, in the same
@@ -6143,8 +6114,8 @@ The reason is stated in each entry.
   Default =(semantic)=.  Predicate heads the gate refuses before the safe
   list and before any remembered approval, and which
   =org-ql-ask-unsafe-queries= does not override.  Matching is by literal
-  symbol; an alias of an offending predicate must therefore be listed too.
-  Risky.  See [[*Refused heads]].
+  symbol; an alias of an offending predicate must be listed too.  Risky.
+  See [[*Refused heads]].
 
 - User Option: org-agents-action-limit ::
   Default =100=, or nil for no limit.  How many *entries* one
@@ -6159,12 +6130,12 @@ The reason is stated in each entry.
 :DESCRIPTION: All ten, with their defaults and refusals.
 :END:
 
-All ten are read from the entry's *own* drawer, with no inheritance of
-any kind: not from an ancestor, not from a prototype, not from a
-=#+PROPERTY:= line, not from =org-global-properties=; a property line
-written with nothing after it counts as absent.  Org itself reads the
-value =nil= as no value at all: =:AGENT_VIEW: nil= is therefore an agent
-with no view, and takes the default.
+All ten are read from the entry's *own* drawer, with no inheritance of any
+kind: not from an ancestor, not from a prototype, not from a =#+PROPERTY:=
+line, not from =org-global-properties=; a property line written with
+nothing after it counts as absent.  Org itself reads the value =nil= as no
+value at all: =:AGENT_VIEW: nil= is an agent with no view, and takes the
+default.
 
 #+attr_texinfo: :options {Agent Property} AGENT_QUERY
 #+begin_deffn
@@ -6415,12 +6386,11 @@ message or a backtrace, and not because it is worth calling.
   #+cindex: @samp{property-resolved}, predicate
   An org-ql predicate: the prototype-aware =property=.  Matches an entry
   whose *resolved* value for NAME is non-nil, or equal to VALUE where one
-  is given.  Resolution is the entry's own drawer, then its
-  =:PROTOTYPE:= chain nearest hop first, then the registry's
-  =:ATTR_DEFAULT:=; a value the entry does not spell is therefore a match
-  here where =property= has none.  VALUE is compared case-sensitively.
-  =$NAME^= expands to this predicate.  See
-  [[*The property-resolved predicate]] and [[*The resolution order]].
+  is given.  Resolution is the entry's own drawer, then its =:PROTOTYPE:=
+  chain nearest hop first, then the registry's =:ATTR_DEFAULT:=; a value
+  the entry does not spell is a match here where =property= has none.
+  VALUE is compared case-sensitively.  =$NAME^= expands to this predicate.
+  See [[*The property-resolved predicate]] and [[*The resolution order]].
 
 - Function: org-agents-resolve-property name &optional pom ::
   The resolved value of NAME at POM (point by default) as *text*, or nil.
@@ -6596,9 +6566,10 @@ files under version control that other tools also write.
 - The query language is org-ql's, not Tinderbox's ::
   Tinderbox agent queries are written in Tinderbox's own expression
   language.  Reimplementing that over Org would have produced a second
-  query engine to sit beside the one Org users already have.  A query here
-  is therefore an org-ql S-expression, with a =$PROP= reference layer on
-  top of it and no engine of its own.  See [[*The query language]].
+  query engine to sit beside the one Org users already have.  In
+  consequence a query here is an org-ql S-expression, with a =$PROP=
+  reference layer on top of it and no engine of its own.  See
+  [[*The query language]].
 - An update happens when you ask for one ::
   #+cindex: continuous evaluation, and its absence
 #+findex: org-agents-update
@@ -6822,9 +6793,8 @@ end in =!= to mark that they write, and a verb resolved by constructing
 makes [[*Writing a verb of your own]] possible.  The idiom this package's
 lexer uses is org-edna's too.  The two differ in purpose.  In org-edna the
 vocabulary is open and its arguments are read as Lisp, because an entry's
-own trigger is something you wrote.  Conversely, here the vocabulary is
-nine verbs, closed, taking strings, never evaluated, applied only by an
-explicit
+own trigger is something you wrote.  Here the vocabulary is nine verbs,
+closed, taking strings, never evaluated, applied only by an explicit
 command and only after a dry run, because the text comes out of a corpus
 of files any of which may have arrived from somewhere else.  The
 divergence that will surprise an org-edna user is named where it arises:
