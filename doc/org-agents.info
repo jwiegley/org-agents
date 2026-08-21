@@ -4991,7 +4991,10 @@ Take the registry's ‘STATUS’ declaration from *note The registry file::,
 whose ‘:ATTR_FACES:’ is the line above and whose ‘:ATTR_DEFAULT:’ is
 ‘active’, and all nine entries of *note The example corpus::.  Turn the
 mode on and fontify.  Measured, headline by headline, with the resolved
-value beside the ‘face’ text property actually on the line:
+value beside the ‘face’ text property actually in the buffer -- read at
+the TODO keyword, since a headline is not one face from end to end and
+that is where Org's own face for the keyword and the attribute's face
+are both in play:
 
      Projects                 STATUS=active   face=org-level-1
      Rewrite the exporter     STATUS=active   face=(org-todo org-level-2)
@@ -7546,44 +7549,44 @@ Node: Appearance230778
 Node: Faces from attribute values232072
 Node: The ATTR_FACES syntax233009
 Node: From declaration to headline233879
-Node: It changes no bytes235777
-Node: Faces in every Org buffer236715
-Node: Precedence and following an edit238222
-Node: The two refusals239583
-Node: Action code240578
-Node: The three refusals242019
-Node: Writing an action244197
-Node: The nine verbs245601
-Node: Value keywords249845
-Node: The dry run251196
-Node: The blast radius253610
-Node: How much one run may edit256537
-Node: Destructive verbs and batch258126
-Node: The same command over a selection259710
-Node: The trust model260963
-Node: Writing a verb of your own262154
-Node: Limitations of action code263501
-Node: Reference265162
-Node: Commands266198
-Node: Minor modes270720
-Node: User options272093
-Node: Agent properties279115
-Node: Registry properties282537
-Node: Action verbs284729
-Node: Functions for Lisp callers288347
-Node: History and Acknowledgments290907
-Node: Tinderbox292512
-Node: What org-agents took294560
-Node: What it changed297723
-Node: What was deliberately not ported and why302553
-Node: Org and org-ql308668
-Node: Trademarks and non-affiliation311390
-Node: The example corpus312525
-Node: GNU General Public License317013
-Node: Concept Index317892
-Node: Key Index351956
-Node: Command Function and Name Index354358
-Node: Variable Index365324
+Node: It changes no bytes235948
+Node: Faces in every Org buffer236886
+Node: Precedence and following an edit238393
+Node: The two refusals239754
+Node: Action code240749
+Node: The three refusals242190
+Node: Writing an action244368
+Node: The nine verbs245772
+Node: Value keywords250016
+Node: The dry run251367
+Node: The blast radius253781
+Node: How much one run may edit256708
+Node: Destructive verbs and batch258297
+Node: The same command over a selection259881
+Node: The trust model261134
+Node: Writing a verb of your own262325
+Node: Limitations of action code263672
+Node: Reference265333
+Node: Commands266369
+Node: Minor modes270891
+Node: User options272264
+Node: Agent properties279286
+Node: Registry properties282708
+Node: Action verbs284900
+Node: Functions for Lisp callers288518
+Node: History and Acknowledgments291078
+Node: Tinderbox292683
+Node: What org-agents took294731
+Node: What it changed297894
+Node: What was deliberately not ported and why302724
+Node: Org and org-ql308839
+Node: Trademarks and non-affiliation311561
+Node: The example corpus312696
+Node: GNU General Public License317184
+Node: Concept Index318063
+Node: Key Index352127
+Node: Command Function and Name Index354529
+Node: Variable Index365495
 
 End Tag Table
 

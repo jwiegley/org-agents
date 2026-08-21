@@ -5073,7 +5073,9 @@ Take the registry's =STATUS= declaration from [[*The registry file]], whose
 and all nine entries of [[*The example corpus]].  Turn the mode on and
 fontify.
 Measured, headline by headline, with the resolved value beside the ~face~
-text property actually on the line:
+text property actually in the buffer --- read at the TODO keyword, since a
+headline is not one face from end to end and that is where Org's own face
+for the keyword and the attribute's face are both in play:
 
 #+begin_example
 Projects                 STATUS=active   face=org-level-1
