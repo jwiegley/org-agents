@@ -27,6 +27,21 @@ corpus's own attributes — their types, their allowed values, their
 documentation — and which drives value completion, a linter, and column
 formats. See "The attribute registry" below.
 
+## The manual
+
+There is a Texinfo manual under `doc/`, and it is the fuller and more
+carefully organised account: a tutorial, a chapter per feature, a
+complete reference for every command, option, property and verb, four
+indices, and the attribution owed to Tinderbox. Read it with
+
+    C-u C-h i doc/org-agents.info RET
+
+(`C-h i` with a prefix argument prompts for an Info file), or with
+`info -f doc/org-agents.info` from a shell. The source is
+`doc/org-agents.org`; `make manual` regenerates the `.info` from it and
+fails on any `makeinfo` warning. What follows in this README is the
+shorter tour.
+
 ## A worked example
 
 Put this in a file, with point on the heading, and press whatever you bound

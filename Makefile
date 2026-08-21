@@ -22,6 +22,16 @@ LOAD     := -L . -L "$(DEPS_DIR)"
 
 LOADTESTS := -l org-agents-test.el
 
+# The manual.  `doc/' is the Emacs and Org convention for a shipped manual
+# and is where `install-info' expects to find one; the repository's `docs/'
+# beside it holds design and working notes, which are a different thing
+# with a different lifetime.  The two names nearly collide: mind which one
+# you are in.
+DOC      := $(ROOT)/doc
+MANUAL   := $(DOC)/org-agents.org
+TEXI     := $(DOC)/org-agents.texi
+INFO     := $(DOC)/org-agents.info
+
 # EMACS is exported so that the recipes below and the gate script both see
 # whatever the caller set.  Exporting an undefined make variable exports it
 # empty, which the `:-' in each recipe treats as "not set".
@@ -52,7 +62,7 @@ EMACS_OR_DIE = emacs="$$EMACS"; \
 	command -v "$$emacs" >/dev/null 2>&1 || \
 	  { echo "no usable Emacs found; run again with EMACS=/path/to/emacs" >&2; exit 1; };
 
-.PHONY: help test test-one gate check clean
+.PHONY: help test test-one gate check clean manual manual-clean
 
 help:
 	@echo 'org-agents targets (DEPS_DIR=$(DEPS_DIR))'
@@ -62,8 +72,12 @@ help:
 	@echo '                  else, patterns included, always runs'
 	@echo '  make test-one T=REGEXP   the tests whose names match REGEXP'
 	@echo '  make gate       byte-compile, and fail on any warning at all'
-	@echo '  make check      gate, then test'
+	@echo '  make manual     export doc/org-agents.org to .texi and .info.'
+	@echo '                  Fails on any makeinfo warning: a manual that'
+	@echo '                  does not build clean is a manual nobody reads'
+	@echo '  make check      gate, manual, then test'
 	@echo '  make clean      remove byte-compiled output'
+	@echo '  make manual-clean   remove the Texinfo intermediate'
 	@echo
 	@echo 'Overrides: EMACS=/path/to/emacs  DEPS_DIR=/dir/holding/org-ql-ext.el'
 
@@ -92,8 +106,46 @@ test-one:
 gate:
 	@ORG_AGENTS_DEPS_DIR="$(DEPS_DIR)" $(ROOT)/tools/org-agents-byte-compile-gate.sh
 
-check: gate test
+# The export needs no LOAD: `ox-texinfo' and Org come out of site-lisp,
+# which is exactly why EMACS must never be an Emacs started with -Q.  Two
+# explicit steps rather than `org-texinfo-export-to-info', which shells out
+# to makeinfo from inside Emacs and buries its diagnostics.
+#
+# `makeinfo' warns on stderr and still exits 0, so its output is captured
+# and a non-empty capture is the failure.  Otherwise a dangling @ref ships.
+# Do NOT add --no-warn: making the warnings reach `make' is the whole point
+# of the separate step.
+#
+# The export runs with `doc' as the working directory, because the manual's
+# `#+setupfile:' and its `version' macro -- which reads the `;; Version:'
+# line out of org-agents.el, so the manual cannot drift from the package --
+# are both resolved relative to the Org file's own directory.  That version
+# line is why org-agents.el is a real prerequisite here and not a courtesy.
+manual: $(INFO)
+
+$(TEXI): $(MANUAL) $(DOC)/doc-setup.org $(ROOT)/org-agents.el
+	@cd $(DOC) || exit 1; $(EMACS_OR_DIE) \
+	  "$$emacs" -batch \
+	    --eval '(require (quote ox-texinfo))' \
+	    --eval '(setq gc-cons-threshold (* 50 1000 1000))' \
+	    --eval '(find-file "org-agents.org")' \
+	    --eval '(org-texinfo-export-to-texinfo)'
+
+$(INFO): $(TEXI)
+	@out=$$(makeinfo --no-split "$(TEXI)" -o "$(INFO)" 2>&1); \
+	  status=$$?; \
+	  [ -z "$$out" ] || printf '%s\n' "$$out" >&2; \
+	  [ $$status -eq 0 ] && [ -z "$$out" ] || \
+	    { echo "org-agents: the manual did not build clean" >&2; exit 1; }
+
+check: gate manual test
 
 clean:
 	rm -f $(ROOT)/*.elc
 	rm -rf $(ROOT)/eln-cache
+
+# Only the intermediate.  The .info beside it is committed, because this
+# package has no ELPA build and no install step, so a generated manual
+# nobody generates is a manual nobody reads.
+manual-clean:
+	rm -f $(TEXI)
