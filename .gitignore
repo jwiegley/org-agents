@@ -20,6 +20,7 @@
 # and no install step, so a generated manual nobody generates is a manual
 # nobody reads.
 /doc/org-agents.texi
+/doc/org-agents.info
 
 # macOS.
 .DS_Store

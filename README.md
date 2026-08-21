@@ -32,15 +32,22 @@ formats. See "The attribute registry" below.
 There is a Texinfo manual under `doc/`, and it is the fuller and more
 carefully organised account: a tutorial, a chapter per feature, a
 complete reference for every command, option, property and verb, four
-indices, and the attribution owed to Tinderbox. Read it with
+indices, and the attribution owed to Tinderbox.
+
+The source is `doc/org-agents.org`. The `.info` is built, not tracked, so
+build it once:
+
+    make manual
+
+Then read it with
 
     C-u C-h i doc/org-agents.info RET
 
 (`C-h i` with a prefix argument prompts for an Info file), or with
-`info -f doc/org-agents.info` from a shell. The source is
-`doc/org-agents.org`; `make manual` regenerates the `.info` from it and
-fails on any `makeinfo` warning. What follows in this README is the
-shorter tour.
+`info -f doc/org-agents.info` from a shell. `make manual` fails on any
+`makeinfo` warning, and rebuilds whenever the source, `doc/doc-setup.org`
+or `org-agents.el` changes. What follows in this README is the shorter
+tour.
 
 ## A worked example
 
