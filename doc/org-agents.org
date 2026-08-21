@@ -167,10 +167,8 @@ live instead --- slower, and identical in what it finds.  See
 #+cindex: requirements
 #+cindex: dependencies
 
-org-agents rests on a short list of dependencies.  Each entry below names
-what the dependency is for and how firm its version floor is; only one of
-the five is optional.  Two of them are on no package archive, which is
-the constraint the section closes on.
+org-agents rests on five dependencies, only one of them optional.  Two of
+the five are on no package archive.
 
 #+attr_texinfo: :table-type table :indic asis
 - Emacs 29.1 or later ::
@@ -804,12 +802,11 @@ a question you want to keep asking, whose answer you want to keep.
 :END:
 #+cindex: vocabulary map, Tinderbox to org-agents
 
-This section is one list, for the reader who already knows Tinderbox and
-wants only the spelling.  Each row gives Tinderbox's term, this package's
-spelling of it, and the node that describes it; =Not ported= marks an
-idea deliberately left out, and
-[[*What was deliberately not ported, and why]] gives the reason in each
-case.
+For a reader who already knows Tinderbox and wants only the spelling, one
+list will do.  Each row gives Tinderbox's term, this package's spelling of
+it, and the node that describes it; =Not ported= marks an idea
+deliberately left out, and [[*What was deliberately not ported, and why]]
+gives the reason in each case.
 
 #+attr_texinfo: :table-type table :indic asis
 - agent ::
@@ -1430,8 +1427,7 @@ questions org-ql has no predicate for.
 #+cindex: expansion, of a property reference
 #+cindex: sugar, the property-reference
 A property reference is a ~$~ followed by a property name, optionally
-followed by one suffix.  The shorthand this section describes is built
-out of nothing else:
+followed by one suffix.  The shorthand is built out of nothing else:
 
 #+begin_example
 $URL        the entry's own :URL: value
@@ -1934,11 +1930,9 @@ org-ql runs its normalizer when it compiles a query.  See
 :DESCRIPTION: What the sugar cannot express.
 :END:
 
-The =$PROP= layer is a rewrite over four positions, and this section
-collects the places where it stops; each limit below says what cannot be
-spelled and, where a way round exists, names it.  One principle accounts
-for most of them.  The layer refuses a spelling it has no reading for
-rather than guessing at one.
+The =$PROP= layer is a rewrite over four positions, and one principle
+accounts for most of the places where it stops: the layer refuses a
+spelling it has no reading for rather than guessing at one.
 
 A property name in a reference is a literal.  Nothing computes one, and
 there is no spelling for "the property this other property names".
@@ -1993,11 +1987,8 @@ drawer is code read out of a file, and a file may have arrived from
 anywhere: a colleague, a mailing-list attachment, a repository you cloned
 to read.
 
-This chapter states exactly what runs without a word, what you are asked
-about, and what is refused whatever you answer.  How a decision made once
-is remembered is stated here too.  A reader who finishes the chapter
-should be able to look at a file someone sent them and decide whether to
-update its agents.
+A reader who finishes this chapter should be able to look at a file
+someone sent them and decide whether to update its agents.
 
 ** Why a gate exists
 :PROPERTIES:
@@ -2031,11 +2022,8 @@ then remembered, and reviewable.
 :END:
 
 #+cindex: structurally safe query
-This section names the vocabulary a form must keep to if it is to run
-unremarked, states which form the gate is actually shown, and says what
-being asked amounts to in an interactive session and in batch.  The test
-is structural throughout.  A form is judged by what it is built out of,
-and never by what it would do if it ran.
+The test is structural throughout.  A form is judged by what it is built
+out of, and never by what it would do if it ran.
 
 A form passes the structural gate when it is built only out of:
 
@@ -2394,11 +2382,9 @@ which files org-ql opens, and can never change what matches.
 #+cindex: @samp{AGENT_SCOPE}, agent property
 #+vindex: org-directory
 #+vindex: org-agenda-files
-This section gives the five values =:AGENT_SCOPE:= accepts, and then the
-one distinction among them that the rest of the chapter turns on: whether
-a scope enumerates its files or merely describes a set.  What a bad or an
-empty scope does is stated here too, since a mistyped scope is worth
-diagnosing as one.
+=:AGENT_SCOPE:= accepts five values, and one distinction among them
+governs the rest of the chapter: whether a scope enumerates its files or
+merely describes a set.
 
 =:AGENT_SCOPE:= takes one of five forms:
 
@@ -2744,10 +2730,9 @@ and never an answer.  For the resolution order this rests on, see
 :END:
 
 #+vindex: org-agents-prefilter
-Three options govern the prefilter, and this section takes them in the
-order in which they bear on a run: whether ripgrep is used at all, which
+Three options govern the prefilter: whether ripgrep is used at all, which
 program is used, and how long one run may take.  All three are marked
-risky, for the reasons the section closes on.
+risky.
 
 ~org-agents-prefilter~ takes one of three values.  The default, ~auto~,
 uses ripgrep where the executable is found and the query offers a conjunct
@@ -3487,9 +3472,8 @@ looks exactly like an agent that matched nothing.
 :END:
 #+cindex: limitations, of the views
 
-The renderers do not preserve everything they find, and what each loss
-costs is set out below.  Every entry names the limit and the reason it
-stands.
+The renderers do not preserve everything they find, and each loss below is
+stated with the reason the limit stands.
 
 *Drawer edits to a pristine alias are discarded.*  The discard is the
 sharp edge of the alias contract, and it is worth restating on its own
@@ -3858,10 +3842,10 @@ block.  Everything else you bind yourself, or run with {{{kbd(M-x)}}}.
 #+findex: org-agents-update-buffer
 #+findex: org-agents-update-all
 
-Three commands update agents by hand, and this section gives them in
-order of how much of a corpus each one touches.  The first is the one
-worth a key.  The other two exist for the moments when a whole buffer,
-or a whole file list, has fallen behind.
+Three commands update agents by hand, in order of how much of a corpus
+each one touches.  The first is the one worth a key.  The other two exist
+for the moments when a whole buffer, or a whole file list, has fallen
+behind.
 
 *=org-agents-update=* updates the agent point is in, or the =org-agents=
 block point sits in.  Point may sit anywhere in the entry: on the
@@ -4160,9 +4144,8 @@ not what you asked to keep.
 #+cindex: @samp{AGENT_MATCHED}, agent property
 #+cindex: recording what an agent found
 
-After a render, the update writes =:AGENT_MATCHED:= on the agent: how
-many entries matched, and when.  The line is a convenience with a price,
-and this section states both.
+After a render, the update writes =:AGENT_MATCHED:= on the agent: how many
+entries matched, and when.  The line is a convenience with a price.
 
 #+begin_example
 :AGENT_MATCHED: 3 [2026-08-20 Thu 17:46]
@@ -4405,9 +4388,8 @@ to see what the reader made of your file is to ask for one:
 #+cindex: attribute types
 
 Six types are available, and a declaration names exactly one of them.
-Each entry below states what the type admits and what it refuses.
-Because a value Org's own reader accepts is not always a value the
-corpus meant, the refusals are where the types earn their keep.
+Because a value Org's own reader accepts is not always a value the corpus
+meant, the refusals are where the types earn their keep.
 
 #+attr_texinfo: :table-type table :indic code
 - string ::
@@ -4715,9 +4697,8 @@ nothing ever fills.
 #+cindex: limitations, of the registry
 
 Because the cost falls on the session rather than on the corpus, and no
-report names it, one limitation of the registry is worth a section of
-its own.  What follows states what a corpus-scope lint leaves behind,
-how far the two-tier split reduces it, and the remedy.
+report names it, one limitation of the registry is worth a section of its
+own.
 
 *A corpus-scope lint leaves every file in scope visited.*
 ~org-agents-check-attributes~ opens each file it reads with
@@ -5317,12 +5298,10 @@ does, they come first.
 :END:
 #+cindex: refusals, action code
 
-Three refusals bound what an action can do.  This section gives each with
-the reason for it.  An action never runs unbidden; an action is never
-inherited; nothing in the property is ever evaluated.  Each of the three
-is a consequence of how the package is built rather than a rule it
-undertakes to keep.  The construction that makes each hold is stated with
-it.
+Three refusals bound what an action can do: an action never runs unbidden;
+an action is never inherited; and nothing in the property is ever
+evaluated.  Each of the three is a consequence of how the package is built
+rather than a rule it undertakes to keep.
 
 *An action never runs on save, on a timer, or from either minor mode.* The
 only thing in this package that runs an action is
@@ -5493,9 +5472,8 @@ before archiving.  If the two disagree, the subtree is left alone.
 #+cindex: @samp{now}, value keyword
 #+cindex: @samp{empty}, value keyword
 
-An action's arguments are stored as written, with three exceptions that
-this section gives, along with where the interpretation happens and the one
-way to escape it.  Three bare words are interpreted rather than stored:
+An action's arguments are stored as written.  Three bare words are the
+exception, interpreted rather than stored:
 
 #+attr_texinfo: :table-type table :indic code
 - today ::
@@ -5588,9 +5566,7 @@ archive file is left modified like any other buffer, and named.
 #+vindex: org-agents-exclude
 
 An action run edits files, and a reader is owed a bound on what it may
-touch: this section states that bound, gives the properties of the command
-that hold it, and names what holding it costs.  The bound is checked rather
-than promised.
+touch.  The bound is checked rather than promised.
 
 *The blast radius of a run is the rows the report shows.* That sentence is
 the whole of the safety argument, and three properties of the command are
@@ -5749,9 +5725,9 @@ a generated alias is not a target.
 :END:
 #+cindex: trust model, action code
 
-This section states the trust model once, in plain words, because the rest
-of the chapter is consequences of it: nothing here is new, and every
-refusal already given follows from the two sentences below.
+Nothing here is new: the rest of the chapter is consequences of the trust
+model, and every refusal already given follows from the two sentences
+below.
 
 *A property drawer is file content, and file content is not trusted.* An
 Org file may have arrived from anywhere: a colleague, a repository, a mail
@@ -5807,9 +5783,8 @@ the nine have.
 #+cindex: limitations, of action code
 
 The limits of an action run lie not in the edits, which the report names
-one by one, but in the buffers those edits are made in; what a run leaves
-behind there, and what putting it back costs, is stated below.  The
-remedies at the end accordingly work one buffer at a time.
+one by one, but in the buffers those edits are made in.  The remedies
+accordingly work one buffer at a time.
 
 *Applying actions over a corpus scope leaves every file in scope visited.*
 The command reaches its match set through the same collection an update
@@ -5856,10 +5831,9 @@ are Org's own, or ones you are invited to bind yourself.
 :DESCRIPTION: The interactive commands, by name.
 :END:
 
-Every interactive command this package defines is listed here, each with
-what it writes and a pointer to the node that explains it; three work only
-inside the approvals listing and are grouped at the end, and the three key
-sequences that follow them are Org's own rather than this package's.
+Three of the commands below work only inside the approvals listing and are
+grouped at the end; the three key sequences after them are Org's own
+rather than this package's.
 
 - Command: org-agents-update ::
   Update the agent at point, or the =org-agents= block point sits in.
@@ -5961,11 +5935,9 @@ Three key sequences reach this package, and all three are Org's:
 :DESCRIPTION: The four modes, by name.
 :END:
 
-Four minor modes are defined, in two pairs.  Each pair is a buffer-local
-mode and the global mode that turns it on where it belongs.  One pair
-keeps a buffer's agents current on save; the other draws headlines in the
-faces their attribute values name; and neither buffer-local mode will turn
-itself on in a buffer that is not an Org buffer.
+Four minor modes are defined, in two pairs: a buffer-local mode and the
+global mode that turns it on where it belongs.  Neither buffer-local mode
+will turn itself on in a buffer that is not an Org buffer.
 
 - Command: org-agents-mode ::
   Buffer-local minor mode, =Agents= in the mode line.  Updates this buffer's
@@ -6376,11 +6348,10 @@ file is left modified like any other buffer, and named.
 :DESCRIPTION: The predicate and the resolver, for your own code.
 :END:
 
-The functions here are the ones a Lisp caller may reasonably reach for: a
-predicate for use inside an org-ql query, the resolvers behind the
-prototype chain, the readers over the attribute registry, and Org's
-dynamic-block writer.  The last is listed because it appears in a failure
-message or a backtrace, and not because it is worth calling.
+The functions here are the ones a Lisp caller may reasonably reach for,
+with one exception: Org's dynamic-block writer is listed because it
+appears in a failure message or a backtrace, and not because it is worth
+calling.
 
 - Function: property-resolved name &optional value ::
   #+cindex: @samp{property-resolved}, predicate
@@ -6493,9 +6464,9 @@ published manual.
 :END:
 #+cindex: correspondence with Tinderbox
 
-Five concepts were taken.  They are named here as Tinderbox names them.
+Five concepts were taken, and are named here as Tinderbox names them.
 [[*Agents in the Tinderbox tradition]] introduces each one with the
-quotations that describe it; this section is the summary and the map.
+quotations that describe it.
 
 #+attr_texinfo: :table-type table :indic asis
 - Agents ::
@@ -6645,9 +6616,9 @@ more likely to be a product code than a thousand.
 
 Some of Tinderbox's mechanisms were left out on purpose, and an honest
 account says which, and why, rather than leaving a reader to conclude they
-were merely missed.  Nothing in this section is a plan.  Each entry is a
-decision.  The line number after each name is where the Tinderbox v9.2
-manual describes the thing that is not being ported.
+were merely missed.  Nothing below is a plan.  Each entry is a decision.
+The line number after each name is where the Tinderbox v9.2 manual
+describes the thing that is not being ported.
 
 #+attr_texinfo: :table-type table :indic asis
 - =$Rule= (frequent timer), =tbxman920:2800= ::
@@ -6756,9 +6727,8 @@ The lists differ; the instinct does not.
 #+cindex: Dominik, Carsten
 #+cindex: Porter, Adam
 
-org-agents is a thin layer, and it is thin because of what it stands on:
-this section names what the layer rests on and what each of those supplies,
-so that the debts are on the record rather than implied.
+org-agents is a thin layer, and it is thin because of what it stands on.
+The debts below are on the record rather than implied.
 
 Org mode is Carsten Dominik's, maintained since by Bastien Guerry, Ihor
 Radchenko and many others.  Everything this package treats as given is
@@ -6811,9 +6781,7 @@ mechanism is bound off during an apply pass, and a corpus with
 #+cindex: trademarks
 #+cindex: non-affiliation
 
-This section records the trademark notices this manual relies on, and
-states plainly what org-agents is not.  The Tinderbox manual's own notices
-read:
+The Tinderbox manual's own notices read:
 
 #+begin_quote
 Tinderbox is © Copyright 2002-2021 by Eastgate Systems, Inc.  All
