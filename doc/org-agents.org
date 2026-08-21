@@ -141,12 +141,12 @@ everything downstream, it belongs here rather than four chapters
 later.
 
 *Evaluation is always performed by org-ql, against live Org buffers.*
-The package holds exactly one evaluation engine, and therefore has
-exactly one answer to give.  A query is an org-ql S-expression, extended
-with a compact =$PROP= reference layer that this package expands before
-org-ql sees it (see [[*The query language]]).  Whatever the scope,
-whatever the view, the entries an agent reports are the entries org-ql
-matched in a real buffer.
+The package holds exactly one evaluation engine, and therefore has exactly
+one answer to give: a query is an org-ql S-expression, extended with a
+compact =$PROP= reference layer that this package expands before org-ql
+sees it (see [[*The query language]]).  Whatever the scope, whatever the
+view, the entries an agent reports are the entries org-ql matched in a real
+buffer.  Nothing else decides.
 
 #+vindex: org-agents-prefilter
 ripgrep appears nowhere in that sentence.  ripgrep serves as an /optional
@@ -652,9 +652,9 @@ under is marked stale rather than removed.  See [[*Views]] and
 
 Two differences are worth naming here, because a Tinderbox reader will
 look for them.  Tinderbox agents run *continuously*, on a priority-driven
-timer; org-agents' run when you say so.  A Tinderbox alias, moreover, is
-a live proxy of its original, where an org-agents alias is a heading
-holding a link and nothing more.  Both differences are argued in
+timer, where org-agents' run only when you say so; a Tinderbox alias is a
+live proxy of its original, where an org-agents alias is a heading holding
+a link and nothing more.  Both differences are argued in
 [[*What it changed]] and [[*What was deliberately not ported, and why]].
 
 ** Action code in Tinderbox
@@ -1087,7 +1087,7 @@ longer rewrite.
 :END:
 #+cindex: @samp{AGENT_FORMAT}, agent property
 
-A list of titles is often not enough.  Where the queue is meant for
+A list of titles is often not enough: where the queue is meant for
 review, the date belongs beside each title.  Add =:AGENT_FORMAT:=, naming
 properties to show after the link, and update again:
 
@@ -1390,7 +1390,7 @@ agent rendered.
 An agent's query is an org-ql sexp query.  This package defines no query
 language of its own, and does not wrap or restrict org-ql's: anything you
 can write in an org-ql sexp query you can write in =:AGENT_QUERY:=.  That
-licence covers the predicates (~todo~, ~tags~, ~heading~, ~level~,
+latitude covers the predicates (~todo~, ~tags~, ~heading~, ~level~,
 ~priority~, ~category~, ~ts~, ~scheduled~, ~deadline~, ~closed~, ~src~
 and the rest), the combinators ~and~, ~or~, ~not~, ~when~ and ~unless~,
 the relational predicates ~parent~, ~ancestors~, ~children~ and
@@ -1947,9 +1947,9 @@ See [[*Refused heads]].
 :END:
 
 The =$PROP= layer is a rewrite over four positions, and this section
-collects the places where it stops.  Each limit below says what cannot be
+collects the places where it stops; each limit below says what cannot be
 spelled and, where a way round exists, names it.  One principle accounts
-for most of them: the layer refuses a spelling it has no reading for
+for most of them.  The layer refuses a spelling it has no reading for
 rather than guessing at one.
 
 A property name in a reference is a literal.  Nothing computes one, and
@@ -2481,7 +2481,7 @@ files ~org-agents-update-all~ opens and /writes/.  See [[*By hand]].
 #+cindex: measurement, of a prefiltered scope
 #+vindex: org-agents-prefilter
 #+vindex: gc-cons-threshold
-Only =active=, =all= and a directory scope are ever prefiltered.  An
+Only =active=, =all= and a directory scope are ever prefiltered; an
 =agenda= scope and an explicit file list are always read live.  Both
 halves of that were measured on the author's corpus rather than assumed.
 
@@ -2792,7 +2792,7 @@ expense on your behalf.  See [[*Checking a corpus]].
 Version 13 of ripgrep or later is wanted: the prefilter passes =--crlf=,
 without which a value pattern cannot match in a file with CRLF line
 endings.  Every flag was verified against 15.2.0 and against no other
-version; 13 is named as a round, safely old floor.
+version.  Thirteen is named as a round, safely old floor.
 
 One thing that program will /not/ see: =RIPGREP_CONFIG_PATH= is unset for
 the child, and the unsetting is a soundness requirement rather than
@@ -2931,10 +2931,10 @@ What a narrowed scope does instead is the subject of the next node.
 :DESCRIPTION: What is never pushed, and what one bad file costs.
 :END:
 
-This section collects what the prefilter never narrows, and what each
-limit costs.  Every entry names the limit, the measurement or the rule
-that established it, and, where the reason lies outside this section, the
-node that carries it.  One argument accounts for the shape of the whole
+Every place the prefilter declines to narrow is collected here, with what
+each decline costs.  Each entry names the limit, the measurement or the
+rule that established it, and, where the reason lies outside this section,
+the node that carries it.  One argument accounts for the shape of the whole
 list: narrowing is sound only where it is provably too wide, and a limit
 here is therefore allowed to cost breadth and never an answer.
 
@@ -3097,7 +3097,7 @@ holding a link to the match, one level below the agent, carrying
 =:AGENT_MATCH: t= in its own drawer.  Following the tradition, such a
 heading is called an /alias/.
 
-[[*Your first agent]] builds one of these from nothing.  What follows is
+[[*Your first agent]] builds one of these from nothing; what follows is
 the rendering itself, in full.  An agent and an update produce this:
 
 #+begin_example
@@ -3267,7 +3267,7 @@ meeting note.  Nothing is folded, and nothing is refilable.  The agent's
 subtree keeps whatever structure you gave it.
 
 Set =:AGENT_VIEW: list= and update.  The renderer needs an =org-agents=
-dynamic block to write into.  Where the entry has none, the update opens
+dynamic block to write into, and where the entry has none the update opens
 one:
 
 #+begin_example
@@ -3285,8 +3285,8 @@ one:
 ,#+END:
 #+end_example
 
-The block delimiters are the boundary of everything this view writes.
-Text above the block, below it, or in another block is not touched.  For
+The block delimiters are the boundary of everything this view writes:
+text above the block, below it, or in another block is not touched.  For
 what you can say in the =#+BEGIN:= line itself, see [[*Dynamic blocks]].
 
 ** The table view
@@ -3504,11 +3504,10 @@ looks exactly like an agent that matched nothing.
 :END:
 #+cindex: limitations, of the views
 
-This section collects what the renderers do not preserve, and what each
-loss costs.  Every entry names the limit and the reason it stands; where
-the reason lies outside this chapter, a cross-reference names its node.
-The order is by consequence.  The first entry is the one a reader is most
-likely to meet as though it were a bug.
+The renderers do not preserve everything they find, and what each loss
+costs is set out below.  Every entry names the limit and the reason it
+stands.  The order is by consequence, and the first entry is the one a
+reader is most likely to meet as though it were a bug.
 
 *Drawer edits to a pristine alias are discarded.*  The discard is the
 sharp edge of the alias contract, and it is worth restating on its own
@@ -3790,12 +3789,10 @@ already =org-update-all-dblocks='s job.
 :END:
 #+cindex: limitations, of dynamic blocks
 
-This section collects what a dynamic block cannot do, and what each
-limit costs.  Each entry states the limit, then the reason it stands;
-where that reason lies outside this chapter, a cross-reference names its
-node.  One fact accounts for most of them.  A block is written by Org's
-own dynamic-block machinery, which reaches it whether this package sent
-it or not.
+What a dynamic block cannot do follows, each limit with the reason it
+stands and what it costs.  One fact accounts for most of them: a block is
+written by Org's own dynamic-block machinery, which reaches it whether this
+package sent it or not.
 
 *=:AGENT_MATCHED:= records the first block's count, in buffer order.*
 For a multi-block agent no single number is the right one to record.
@@ -4162,10 +4159,8 @@ new to find is byte-for-byte identical to the first.
 Because the buffer is restored with =replace-buffer-contents=, point,
 the mark, and every marker and overlay survive.
 
-Two further behaviours belong here.
-
-Where a failure occurs, it is reported and the save then goes on
-regardless:
+Two further behaviours belong here.  Where a failure occurs, it is
+reported and the save then goes on regardless:
 
 #+begin_example
 org-agents: the update on save failed: ...
@@ -4193,11 +4188,10 @@ and this section states both.
 :AGENT_MATCHED: 3 [2026-08-20 Thu 17:46]
 #+end_example
 
-The line is written only once the view has been rendered, never during
-one.  Adding a line to a drawer moves every position below it, among
-them the bounds of the very dynamic block a render was called for.  The
-time is written as an inactive timestamp, which is how Org reads it
-back.
+The line is written only once the view has been rendered, never during one:
+adding a line to a drawer moves every position below it, among them the
+bounds of the very dynamic block a render was called for.  The time is
+written as an inactive timestamp, which is how Org reads it back.
 
 The point of the property is that an agent says what it last found
 without being run again.  In a system whose agents update continuously
@@ -4229,12 +4223,11 @@ Where an agent carries several blocks,
 :END:
 #+cindex: limitations, of updating
 
-This section collects what no update will do, whatever is asked of it.
-The first limit is a design position, argued elsewhere and named here so
-that the chapter is complete.  The second is the price of a property
-this chapter has already described; the third is the price of reading a
-corpus at all.  Each entry states the limit, and then the reason it
-stands.
+Three things no update will do, whatever is asked of it, are set out here.
+The first is a design position, argued elsewhere and named here so that the
+chapter is complete; the second is the price of a property this chapter has
+already described; and the third is the price of reading a corpus at all.
+Each entry states the limit, and then the reason it stands.
 
 *No timer-driven update exists, and none will.*  Nothing in this package
 renders an agent while you are not looking at it.  The reason is the
@@ -4322,8 +4315,8 @@ buys four things, and each of them is a separate feature of this package:
   [[*The resolution order]].
 
 Nothing else in the package requires a registry.  Agents, queries, views
-and updating all work with no registry at all.  A missing or unreadable
-registry declares nothing, and says nothing about it.
+and updating all work with no registry at all, and a missing or unreadable
+registry declares nothing and says nothing about it.
 
 ** The registry file
 :PROPERTIES:
@@ -4792,9 +4785,9 @@ along the *outline*.  It answers the question "where is this entry
 filed?".
 
 Prototypes answer a different question: "what kind of thing is this
-entry?".  They come from Tinderbox.  Like Tinderbox's, they have nothing
-to do with the outline.  See [[*Prototypes in Tinderbox]] for the idea
-in Tinderbox's own words.
+entry?".  They come from Tinderbox, and like Tinderbox's they have
+nothing to do with the outline.  See [[*Prototypes in Tinderbox]] for the
+idea in Tinderbox's own words.
 
 ** What a prototype is
 :PROPERTIES:
@@ -4804,7 +4797,7 @@ in Tinderbox's own words.
 #+cindex: follower, prototype
 
 A prototype is a relation between two entries.  One entry, the *master*,
-holds properties.  Another entry names it in =:PROTOTYPE:=, and thereby
+holds properties; another entry names it in =:PROTOTYPE:= and thereby
 reads through it.  Where the reading entry says nothing about a
 property, the master's value answers.
 
@@ -4904,10 +4897,10 @@ wrote or a declaration you made.
 #+cindex: resolution order
 #+cindex: @samp{ATTR_DEFAULT}, in resolution
 
-Resolving one property at one entry consults four things, in this order.
-It stops at the first that answers.  The order is what makes a prototype
-useful and a declared default harmless.  The entry's own word comes
-first; the corpus-wide fallback comes last.
+Resolving one property at one entry consults four things, in this order,
+and stops at the first that answers.  The order is what makes a prototype
+useful and a declared default harmless: the entry's own word comes first,
+and the corpus-wide fallback comes last.
 
 1. *the entry's own drawer*, read with inheritance *off*;
 2. *the prototype chain*, nearest hop first;
@@ -4924,8 +4917,8 @@ is bounded at a thousand hops, which is a guard against a malformed
 corpus and not a budget.
 
 Step 1 reads the drawer raw.  A present-but-empty =:NAME:= answers the
-empty string, which org-ql's own ~property~ predicate matches.  Hence
-resolution matches it too.
+empty string, which org-ql's own ~property~ predicate matches; resolution
+therefore matches it too.
 
 Take the registry and masters above, and the first four entries of
 [[*The example corpus]], whose properties bearing on this are the
@@ -5081,17 +5074,16 @@ for a partly different reason and over a different list; see
 #+cindex: prototype cycle
 
 Two things can be wrong with a chain, and each is said *once per update*
-rather than once per entry or once per redisplay.
-
-Where a =:PROTOTYPE:= names a master that is not there, the *dangling
-reference* is one message naming the entry that made it:
+rather than once per entry or once per redisplay.  Where a =:PROTOTYPE:=
+names a master that is not there, the *dangling reference* is one message
+naming the entry that made it:
 
 #+begin_example
 org-agents: no prototype ‘Nonesuch’ named by ‘Dangling’ in …/proto.org:1
 #+end_example
 
-Resolution then carries on at the next step of the order.  Where the
-registry declares a default, the entry still gets it.  A dangling
+Resolution then carries on at the next step of the order, and where the
+registry declares a default the entry still gets it.  A dangling
 reference costs you the chain and not the answer.
 
 A *cycle* is a ~user-error~ naming the hops:
@@ -5174,8 +5166,8 @@ to a value it maps wins.
 #+cindex: @samp{ATTR_FACES}, syntax
 
 =:ATTR_FACES:= is pipe-separated two-word groups: a value, whitespace, a
-face name.  The whole of the mapping lives in that one line.  What
-follows reads it out, and then states what a malformed line costs.
+face name, with the whole of the mapping on that one line.  What follows
+reads it out, and then states what a malformed line costs.
 
 #+begin_src org
 :ATTR_FACES: blocked error | paused shadow | done success
@@ -5218,11 +5210,10 @@ Reading                  STATUS=active   face=org-level-1
 Tinderbox notes          STATUS=active   face=org-level-2
 #+end_example
 
-Three things are worth reading out of that run.
-
-Although its drawer spells no =:STATUS:= at all, =Audit the prefilter=
-is drawn in ~error~: the value arrives through its prototype chain,
-which is exactly why the mode reads the resolved value.
+Three things are worth reading out of that run.  Although its drawer
+spells no =:STATUS:= at all, =Audit the prefilter= is drawn in ~error~:
+the value arrives through its prototype chain, which is exactly why the
+mode reads the resolved value.
 
 =active= maps to no face, and most of the corpus is therefore left as
 Org drew it; the mode is a way of marking the exceptional, not a way of
@@ -5341,14 +5332,14 @@ trust model or not at all.  See [[*The trust model]].
 #+cindex: action code
 #+cindex: @samp{AGENT_ACTION}, property
 
-An agent may carry an *action* as well as a query.  The property is
-=:AGENT_ACTION:=.  It holds a declarative sentence over a fixed vocabulary
-of nine verbs.  Each verb edits the entries the query matched.
+An agent may carry an *action* as well as a query: =:AGENT_ACTION:= holds
+a declarative sentence over a fixed vocabulary of nine verbs, each of
+which edits the entries the query matched.
 
 =:AGENT_ACTION:= is Tinderbox's =$AgentAction=, and it is the one part of
 org-agents that writes outside the agent's own file.  Three refusals make
-that affordable to reason about.  They come before the syntax here, being
-the more important half.
+that affordable to reason about.  Because they matter more than the syntax
+does, they come first.
 
 ** The three refusals
 :PROPERTIES:
@@ -5404,9 +5395,9 @@ an =:AGENT_ACTION:= is a bounded, greppable Org edit.
 :END:
 #+cindex: action, syntax
 
-This section gives the syntax of an action and the diagnostics the parser
-raises against it.  An action is a sentence of verbs.  The verbs apply
-left to right at every matched entry:
+An action is a sentence of verbs.  Its syntax, and the diagnostics the
+parser raises against a malformed sentence, are given here.  The verbs
+apply left to right at every matched entry:
 
 #+begin_src org
 ,* Stamp what I reviewed today
@@ -5433,9 +5424,9 @@ org-agents: :AGENT_ACTION: `frobnicate!' is not an action verb
 org-agents: :AGENT_ACTION: `archive!' must be the last verb
 #+end_example
 
-Everything else is checked in the *plan* phase, at the match.  Nothing is
-written before that.  The plan phase is where a verb learns which buffer it
-is in.  A check against buffer-local TODO keywords needs that.
+Everything else is checked in the *plan* phase, at the match, before
+anything is written.  The plan phase is where a verb learns which buffer it
+is in, and a check against buffer-local TODO keywords needs that.
 
 ** The nine verbs
 :PROPERTIES:
@@ -5445,7 +5436,7 @@ is in.  A check against buffer-local TODO keywords needs that.
 #+kindex: C-c C-t
 
 The vocabulary is closed at nine.  Their exact argument lists are in
-[[*Action verbs]].  What follows is what each is for and what it will not
+[[*Action verbs]]; what follows is what each is for and what it will not
 do.
 
 ~set-property!(NAME, VALUE)~ sets a property.  Several names are refused.
@@ -5633,8 +5624,8 @@ that hold it, and names what holding it costs.  The bound is checked rather
 than promised.
 
 *The blast radius of a run is the rows the report shows.* That sentence is
-the whole of the safety argument.  Three properties of the command make it
-true.
+the whole of the safety argument, and three properties of the command are
+what make it true.
 
 The match set is computed exactly as an update computes it: gated,
 prefiltered, with the agent itself dropped from its own match set and
@@ -5693,8 +5684,8 @@ as what happened rather than as success.
 #+cindex: limit, on an action run
 
 ~org-agents-action-limit~ is how many *entries* one run will edit.  The
-default is 100.  The number is chosen so that a mistake is reviewable, not
-for performance.
+default is 100, chosen so that a mistake is reviewable rather than for
+performance.
 
 Where a plan covers more entries than the limit, it is *refused* rather
 than truncated, and the refusal names the count, the limit and the
@@ -5849,10 +5840,10 @@ the nine have.
 :END:
 #+cindex: limitations, of action code
 
-This section collects what an action run leaves behind, and what putting it
-back costs: the limits lie not in the edits, which the report names one by
-one, but in the buffers those edits are made in.  The remedies at the end
-accordingly work one buffer at a time.
+The limits of an action run lie not in the edits, which the report names
+one by one, but in the buffers those edits are made in; what a run leaves
+behind there, and what putting it back costs, is stated below.  The
+remedies at the end accordingly work one buffer at a time.
 
 *Applying actions over a corpus scope leaves every file in scope visited.*
 The command reaches its match set through the same collection an update
@@ -6954,8 +6945,8 @@ fit on a printed line:
    :END:
 #+end_example
 
-=attributes.org= is the registry.  [[*The registry file]] and
-[[*Declaring masters]] print it in pieces.  Three
+=attributes.org= is the registry, and it is the file
+[[*The registry file]] and [[*Declaring masters]] print in pieces.  Three
 declarations and two masters:
 
 #+begin_example
@@ -7003,7 +6994,7 @@ Put both in a directory, add =corpus.org= to =org-agenda-files=, point
 ~org-agents-attributes-file~ at =attributes.org=, and point
 =org-directory= at the directory.  Agents go in a third file of their own,
 and any file will do: the examples print the agent as they use it.  The
-file =corpus.org= is not itself an agent file, and needs no entry in
+file =corpus.org= is not itself an agent file.  It needs no entry in
 ~org-agents-files~.
 
 Because several examples turn on them, two things about this corpus are
