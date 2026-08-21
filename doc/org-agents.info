@@ -2347,8 +2347,9 @@ a hash stood for.
      approval row this says ‘org-agents: this line is an approval; ‘d’
      forgets one’.
 
-‘g’ (‘tabulated-list-revert’)
-     Reread all three records.
+‘g’ (‘revert-buffer’)
+     Reread all three records.  The binding is ‘special-mode’'s, and the
+     buffer's ‘revert-buffer-function’ is what does the rereading.
 
 Deciding whether to trust a file
 --------------------------------
@@ -3514,7 +3515,11 @@ limit, which is not the same as a block that says nothing about limits.
      Overrides ‘:AGENT_VIEW:’.  A *symbol*, one of ‘children’, ‘list’,
      ‘table’.  A string is not the symbol, and is refused: ‘a block’s
      ‘:view’ must be one of children, list, table, not "table"’.  May
-     not be nil, because there is no such thing as no view.
+     not be nil, because there is no such thing as no view.  ‘children’
+     is accepted and read as ‘list’: a block cannot write headings, so
+     there is nothing else for it to mean.  Measured: a block written
+     ‘:view children’ renders a plain list, and says nothing.  See *note
+     The children view::.
 
 ‘:scope’
      Overrides ‘:AGENT_SCOPE:’.  Resolved exactly as the property is;
@@ -3554,6 +3559,15 @@ string.  The two spellings look alike and are read by different readers.
 has nothing to render, and says so:
 
      org-agents: block has no :query and no enclosing agent
+
+   Those four messages are quoted here as the writer raises them.
+Reached through Org's own dblock machinery -- ‘C-c C-c’,
+‘org-dblock-update’, ‘org-update-all-dblocks’ -- each arrives in the
+echo area behind a prefix from ‘org-dblock-write:org-agents’, so what
+you actually read is ‘org-agents: dblock update failed: org-agents: a
+block’s ‘:format’ must be a string, not NEXT_REVIEW’.  Reached through
+‘org-agents-update’ on an enclosing agent it is prefixed differently
+again, with the agent's heading and its ‘FILE:LINE’.
 
 
 File: org-agents.info,  Node: Several blocks under one agent,  Next: Limitations of dynamic blocks,  Prev: Block parameters,  Up: Dynamic blocks
@@ -3672,6 +3686,19 @@ three items.
    *A ‘children’ agent that owns blocks ignores them silently.*  Shown
 above.  If you find an ‘org-agents’ block that stays empty however often
 you update, check the enclosing entry's ‘:AGENT_VIEW:’.
+
+   *A block cannot render ‘children’, and does not say so.*  ‘:view
+children’ is accepted -- it is one of the three views, and the parameter
+is checked against all three -- and then read as ‘list’, because a block
+has no way to write a heading.  Measured: the block renders a plain list
+and no diagnostic is issued.  A view that quietly does something else is
+worse than one that refuses, and this is the one place the package does
+it.  What a refusal would cost is the reason: the writer reads the
+entry's view as well as the block's, and Org reaches it for every
+‘org-agents’ block whether this package sent it or not -- measured,
+‘org-update-all-dblocks’ in a buffer whose agent names no view renders
+that agent's block as a list -- so a refusal on ‘children’ would fire
+there too.
 
    *An interrupted or failed render restores the previous body, not the
 buffer.*  ‘org-prepare-dblock’ deletes the old body before the writer
@@ -4632,8 +4659,18 @@ consults that table rather than searching for the id, so a reference the
 table does not know about is a dangling reference and is reported as
 one: see *note The two diagnostics::.
 
-   ‘PROTOTYPE’ is the only property outside this package's own ‘AGENT_’
-and ‘ATTR_’ vocabularies that org-agents reads by name.
+   Outside this package's own ‘AGENT_’ and ‘ATTR_’ vocabularies,
+‘PROTOTYPE’ is one of a short list of properties org-agents reads by
+name.  The others are ‘ID’, which the ‘children’ and ‘list’ views read
+to build a link and which the id form above resolves through; the
+properties the action verbs read and edit -- ‘SCHEDULED’, ‘DEADLINE’,
+‘PRIORITY’, ‘org-effort-property’, and ‘ARCHIVE’ read *with
+inheritance*, which is how ‘archive!’ works out its destination and why
+‘set-property!’ refuses to write it (see *note The nine verbs::); and
+‘COLUMNS’, which ‘org-agents-attribute-columns’ writes with a prefix
+argument (see *note A corpus-wide column view::).  Nothing else in a
+drawer is read by name by this package: everything else reaches it
+through a query you wrote or a declaration you made.
 
 
 File: org-agents.info,  Node: The resolution order,  Next: Why outline inheritance is not in that order,  Prev: Naming a master,  Up: Prototypes
@@ -4805,7 +4842,7 @@ rather than once per entry or once per redisplay.
    A *dangling reference*, a ‘:PROTOTYPE:’ naming a master that is not
 there, is one message naming the entry that made the reference:
 
-     org-agents: no prototype `Nonesuch' named by `Dangling' in proto.org:1
+     org-agents: no prototype ‘Nonesuch’ named by ‘Dangling’ in …/proto.org:1
 
    Resolution then carries on at the next step of the order, so the
 entry still gets the registry's default if there is one.  A dangling
@@ -4813,7 +4850,7 @@ reference costs you the chain and not the answer.
 
    A *cycle* is a ‘user-error’ naming the hops:
 
-     org-agents: prototype cycle at `Looping' in cycle.org:1: A -> B -> A
+     org-agents: prototype cycle at ‘Looping’ in …/cycle.org:1: A -> B -> A
 
    Two entry points into resolution differ in what they do with a cycle,
 and the difference matters if you are writing Lisp against this.
@@ -5375,7 +5412,16 @@ and ‘archive!’.  They confirm *at every entry, on every run*.  There is
 no remembered approval, no option that silences it, and nothing to set.
 
    In batch, or under ‘inhibit-interaction’, a confirmation is a
-*refusal and not a default*:
+*refusal and not a default*.  The refusal is the prompt it would have
+asked, with the reason after it, so a log says exactly which question
+went unanswered.  For a run holding a destructive verb the prompt names
+the verb:
+
+     org-agents: apply 2 edits at 2 entries in 1 file, and 1 with nothing to do,
+       including the destructive delete-property!?  -- refused, because there is
+       no one to ask
+
+   and for one holding none it does not:
 
      org-agents: apply 6 edits at 3 entries in 1 file
        (1 not open before this ran)?  -- refused, because there is no one to ask
@@ -6014,6 +6060,16 @@ File: org-agents.info,  Node: Functions for Lisp callers,  Prev: Action verbs,  
      Whether VALUE is admissible for TYPE, and for VALUES where a
      vocabulary is given.  A predicate, not a diagnosis: it answers yes
      or no and says nothing about why.  See *note The six types::.
+
+ -- Function: org-dblock-write:org-agents params
+     Org's dynamic-block writer for the ‘list’ and ‘table’ views, and
+     the name you will meet in a failure message or a backtrace rather
+     than one you would call.  Org reaches it for every ‘org-agents’
+     block: ‘C-c C-c’ inside one, ‘org-dblock-update’,
+     ‘org-update-all-dblocks’, and ‘org-agents-update’ on an agent whose
+     view needs a block.  PARAMS are the block's own parameters; see
+     *note Block parameters:: for what they may say and *note
+     Limitations of dynamic blocks:: for what a failed render does.
 
 
 File: org-agents.info,  Node: History and Acknowledgments,  Next: The example corpus,  Prev: Reference,  Up: Top
@@ -6813,7 +6869,7 @@ C Concept Index
 * list, agent view:                      Choosing a view.     (line  16)
 * list, attribute type:                  The six types.       (line   6)
 * Local Variables block:                 Reviewing what you approved.
-                                                              (line  65)
+                                                              (line  66)
 * master, prototype:                     What a prototype is. (line   6)
 * materialised inheritance, and why there is none: What was deliberately not ported and why.
                                                               (line  73)
@@ -6922,7 +6978,7 @@ C Concept Index
 * ripgrep <1>:                           Which scopes get narrowed and why.
                                                               (line   6)
 * risky variable:                        Reviewing what you approved.
-                                                              (line  65)
+                                                              (line  66)
 * rule, and why there is none:           What was deliberately not ported and why.
                                                               (line   6)
 * rule, Tinderbox:                       Action code in Tinderbox.
@@ -7095,7 +7151,7 @@ E Command, Function and Name Index
 * org-agents-apply-actions:              Action code in Tinderbox.
                                                                (line 32)
 * org-agents-apply-actions <1>:          Reviewing what you approved.
-                                                               (line 74)
+                                                               (line 75)
 * org-agents-apply-actions <2>:          The dry run.          (line  6)
 * org-agents-apply-actions <3>:          Commands.             (line 55)
 * org-agents-approvals-mode:             Reviewing what you approved.
@@ -7142,7 +7198,7 @@ E Command, Function and Name Index
 * org-agents-mode:                       Activation.           (line 36)
 * org-agents-mode <1>:                   Refreshing on save.   (line  6)
 * org-agents-mode <2>:                   Reviewing what you approved.
-                                                               (line 58)
+                                                               (line 59)
 * org-agents-mode <3>:                   org-agents-mode.      (line  6)
 * org-agents-mode <4>:                   Minor modes.          (line  6)
 * org-agents-mode <5>:                   What it changed.      (line 20)
@@ -7178,6 +7234,11 @@ E Command, Function and Name Index
 * org-agents-update-buffer <3>:          What it changed.      (line 20)
 * org-dblock-update:                     Conventions used in this manual.
                                                                (line 21)
+* org-dblock-write:org-agents:           Block parameters.     (line 70)
+* org-dblock-write:org-agents <1>:       Functions for Lisp callers.
+                                                               (line 40)
+* org-dblock-write:org-agents <2>:       Functions for Lisp callers.
+                                                               (line 41)
 * org-dynamic-block-insert-dblock:       Conventions used in this manual.
                                                                (line 21)
 * org-ql-defpred:                        Putting a query in a property drawer.
@@ -7190,10 +7251,10 @@ E Command, Function and Name Index
 * property-resolved <2>:                 Functions for Lisp callers.
                                                                (line  6)
 * property-resolved <3>:                 Org and org-ql.       (line 16)
+* revert-buffer:                         Reviewing what you approved.
+                                                               (line 43)
 * scheduled!:                            Action verbs.         (line 45)
 * set-property!:                         Action verbs.         (line 12)
-* tabulated-list-revert:                 Reviewing what you approved.
-                                                               (line 43)
 * tag!:                                  Action verbs.         (line 27)
 * todo!:                                 Action verbs.         (line 33)
 
@@ -7320,99 +7381,99 @@ Node: Remembered approvals100550
 Node: Refused heads103794
 Node: Refused queries105995
 Node: Reviewing what you approved107907
-Node: Scope and the ripgrep prefilter111922
-Node: Scopes113352
-Node: Which scopes get narrowed and why115708
-Node: What the prefilter can and cannot do117996
-Node: The push-down rules120518
-Node: Inheritance and pushability126235
-Node: Bounding a run129658
-Node: A file the scope names but cannot open135337
-Node: Limitations of the prefilter138210
-Node: Views140907
-Node: Choosing a view142809
-Node: The children view144561
-Node: The alias contract146656
-Node: The list view150712
-Node: The table view152072
-Node: Formats154813
-Node: Sorting and limiting156751
-Node: Limitations of the views159942
-Node: Dynamic blocks161841
-Node: Inserting a block162965
-Node: Block parameters163948
-Node: Several blocks under one agent166678
-Node: Limitations of dynamic blocks170396
-Node: Updating172366
-Node: By hand174241
-Node: Looking before you write177764
-Node: org-agents-mode179016
-Node: global-org-agents-mode181826
-Node: The three refusals on the save path183801
-Node: What writing AGENT_MATCHED costs186654
-Node: Limitations of updating188511
-Node: The attribute registry190150
-Node: Why declare attributes191570
-Node: The registry file193860
-Node: The declaration195754
-Node: The six types197673
-Node: It is pure data200505
-Node: Checking a corpus202210
-Node: Completing declared values206406
-Node: A corpus-wide column view208221
-Node: Limitations of the registry210413
-Node: Prototypes211970
-Node: What a prototype is213224
-Node: Declaring masters214327
-Node: Naming a master215437
-Node: The resolution order216464
-Node: Why outline inheritance is not in that order219011
-Node: Reads are virtual220362
-Node: Names that never travel222274
-Node: The two diagnostics223822
-Node: Limitations of prototypes225138
-Node: Appearance225940
-Node: Faces from attribute values227211
-Node: The ATTR_FACES syntax228148
-Node: From declaration to headline229018
-Node: It changes no bytes230916
-Node: Faces in every Org buffer231854
-Node: Precedence and following an edit233361
-Node: The two refusals234722
-Node: Action code235717
-Node: The three refusals237158
-Node: Writing an action239336
-Node: The nine verbs240740
-Node: Value keywords244522
-Node: The dry run245873
-Node: The blast radius248287
-Node: How much one run may edit249262
-Node: Destructive verbs and batch250851
-Node: The same command over a selection252016
-Node: The trust model253269
-Node: Writing a verb of your own254460
-Node: Limitations of action code255807
-Node: Reference257468
-Node: Commands258504
-Node: Minor modes263026
-Node: User options264399
-Node: Agent properties271421
-Node: Registry properties274843
-Node: Action verbs277035
-Node: Functions for Lisp callers280481
-Node: History and Acknowledgments282426
-Node: Tinderbox284031
-Node: What org-agents took285862
-Node: What it changed288911
-Node: What was deliberately not ported and why293621
-Node: Org and org-ql299473
-Node: Trademarks and non-affiliation301009
-Node: The example corpus302142
-Node: GNU General Public License306630
-Node: Concept Index307503
-Node: Key Index341197
-Node: Command Function and Name Index343599
-Node: Variable Index354206
+Node: Scope and the ripgrep prefilter112031
+Node: Scopes113461
+Node: Which scopes get narrowed and why115817
+Node: What the prefilter can and cannot do118105
+Node: The push-down rules120627
+Node: Inheritance and pushability126344
+Node: Bounding a run129767
+Node: A file the scope names but cannot open135446
+Node: Limitations of the prefilter138319
+Node: Views141016
+Node: Choosing a view142918
+Node: The children view144670
+Node: The alias contract146765
+Node: The list view150821
+Node: The table view152181
+Node: Formats154922
+Node: Sorting and limiting156860
+Node: Limitations of the views160051
+Node: Dynamic blocks161950
+Node: Inserting a block163074
+Node: Block parameters164057
+Node: Several blocks under one agent167611
+Node: Limitations of dynamic blocks171329
+Node: Updating174109
+Node: By hand175984
+Node: Looking before you write179507
+Node: org-agents-mode180759
+Node: global-org-agents-mode183569
+Node: The three refusals on the save path185544
+Node: What writing AGENT_MATCHED costs188397
+Node: Limitations of updating190254
+Node: The attribute registry191893
+Node: Why declare attributes193313
+Node: The registry file195603
+Node: The declaration197497
+Node: The six types199416
+Node: It is pure data202248
+Node: Checking a corpus203953
+Node: Completing declared values208149
+Node: A corpus-wide column view209964
+Node: Limitations of the registry212156
+Node: Prototypes213713
+Node: What a prototype is214967
+Node: Declaring masters216070
+Node: Naming a master217180
+Node: The resolution order218928
+Node: Why outline inheritance is not in that order221475
+Node: Reads are virtual222826
+Node: Names that never travel224738
+Node: The two diagnostics226286
+Node: Limitations of prototypes227622
+Node: Appearance228424
+Node: Faces from attribute values229695
+Node: The ATTR_FACES syntax230632
+Node: From declaration to headline231502
+Node: It changes no bytes233400
+Node: Faces in every Org buffer234338
+Node: Precedence and following an edit235845
+Node: The two refusals237206
+Node: Action code238201
+Node: The three refusals239642
+Node: Writing an action241820
+Node: The nine verbs243224
+Node: Value keywords247006
+Node: The dry run248357
+Node: The blast radius250771
+Node: How much one run may edit251746
+Node: Destructive verbs and batch253335
+Node: The same command over a selection254919
+Node: The trust model256172
+Node: Writing a verb of your own257363
+Node: Limitations of action code258710
+Node: Reference260371
+Node: Commands261407
+Node: Minor modes265929
+Node: User options267302
+Node: Agent properties274324
+Node: Registry properties277746
+Node: Action verbs279938
+Node: Functions for Lisp callers283384
+Node: History and Acknowledgments285944
+Node: Tinderbox287549
+Node: What org-agents took289380
+Node: What it changed292429
+Node: What was deliberately not ported and why297139
+Node: Org and org-ql302991
+Node: Trademarks and non-affiliation304527
+Node: The example corpus305660
+Node: GNU General Public License310148
+Node: Concept Index311021
+Node: Key Index344715
+Node: Command Function and Name Index347117
+Node: Variable Index358081
 
 End Tag Table
 

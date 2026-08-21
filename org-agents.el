@@ -1243,7 +1243,7 @@ listed, and revocable, exactly like a saved one.
 and on disk; \\[org-agents-approvals-refuse] turns it into a refusal,
 which no later approval can undo; \\[org-agents-approvals-unrefuse] lifts
 a refusal, returning the query to needing approval rather than to having
-it; \\[tabulated-list-revert] rereads all three records."
+it; \\[revert-buffer] rereads all three records."
   (setq tabulated-list-format [("State" 18 t) ("Hash" 14 t) ("Query" 0 t)])
   (setq tabulated-list-padding 1)
   (add-hook 'tabulated-list-revert-hook #'org-agents--approvals-refresh nil t)
@@ -3097,11 +3097,14 @@ the corpus and quietly change the vocabulary the user is offered."
 
 (defconst org-agents--attribute-types '(string number date boolean set list)
   "The values `:ATTR_TYPE:' may take.
-`set' and `list' are Tinderbox's: a set is unordered and deduplicating, a
-list is ordered and admits duplicates.  Tinderbox separates their members
-with semicolons; here they are separated by WHITESPACE, which is what
-Org's own `NAME_ALL' convention uses and therefore what
-`org-property-get-allowed-values' already reads.")
+`set' and `list' are Tinderbox's distinction -- a set's members are
+unique, a list's may repeat and are ordered -- but they are VALIDATED
+here and not coerced: a repeated member makes the value invalid rather
+than being dropped, which is what Tinderbox does with it, and nothing
+canonicalises order or compares two sets order-insensitively.  Tinderbox
+separates their members with semicolons; here they are separated by
+WHITESPACE, which is what Org's own `NAME_ALL' convention uses and
+therefore what `org-property-get-allowed-values' already reads.")
 
 (defconst org-agents--attribute-type-names
   (mapcar #'symbol-name org-agents--attribute-types)
@@ -5151,10 +5154,15 @@ arguments."
   "Where POM is, as one string, for a diagnostic to name it by.
 A heading, a file and a line, so that a dangling `:PROTOTYPE:' can be
 navigated to rather than hunted for.  A buffer visiting no file is named
-by its buffer name, which is what a read in a temporary copy has."
+by its buffer name, which is what a read in a temporary copy has.
+
+`format-message' and not `format': this string is interpolated into a
+diagnostic whose own quotes `message' has already curled, so a plain
+`format' here printed one message quoting the missing master curly and
+the entry that named it ASCII."
   (org-with-point-at pom
     (let ((file (buffer-file-name (or (buffer-base-buffer) (current-buffer)))))
-      (format "`%s' in %s:%d"
+      (format-message "`%s' in %s:%d"
               (or (ignore-errors (org-get-heading t t t t)) "?")
               (if file (abbreviate-file-name file) (buffer-name))
               (line-number-at-pos)))))
@@ -8428,8 +8436,12 @@ it is honouring that contract.
 There is no option that turns this off.  There is nothing to set."
   (let ((prompt (apply #'format format args)))
     (when (or noninteractive inhibit-interaction)
-      (user-error "org-agents: %s -- refused, because there is no one to ask"
-                  prompt))
+      ;; No prefix of its own: every prompt that reaches here already
+      ;; carries one, and adding a second printed `org-agents:
+      ;; org-agents: apply ...' -- which a script matching on the line
+      ;; would not find and a reader diffing it against the manual could
+      ;; not explain.
+      (user-error "%s -- refused, because there is no one to ask" prompt))
     (y-or-n-p prompt)))
 
 (defun org-agents--action-call (verb phase args)
