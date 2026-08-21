@@ -6683,9 +6683,8 @@ for more details.
    This manual is distributed under the same terms as the package it
 documents.
 
-   The text of the license is at
-<https://www.gnu.org/licenses/gpl-2.0.html>, and a copy should have
-reached you with the program.
+   The full text is in the file ‘COPYING’ at the root of this
+repository, and online at <https://www.gnu.org/licenses/gpl-2.0.html>.
 
 
 File: org-agents.info,  Node: Concept Index,  Next: Key Index,  Prev: GNU General Public License,  Up: Top
@@ -6972,7 +6971,7 @@ C Concept Index
 * lint, attribute:                       Checking a corpus.   (line   6)
 * list view:                             The list view.       (line   6)
 * list, agent view:                      Choosing a view.     (line  16)
-* list, attribute type:                  The six types.       (line   6)
+* list, attribute type:                  The six types.       (line  36)
 * Local Variables block:                 Reviewing what you approved.
                                                               (line  66)
 * master, prototype:                     What a prototype is. (line   6)
@@ -7101,7 +7100,7 @@ C Concept Index
 * session approval:                      Remembered approvals.
                                                               (line   6)
 * set-property!, action verb:            Action verbs.        (line  13)
-* set, attribute type:                   The six types.       (line   6)
+* set, attribute type:                   The six types.       (line  32)
 * SHA-1:                                 Remembered approvals.
                                                               (line   6)
 * sorting an agent's matches:            Sorting and limiting.
@@ -7583,10 +7582,10 @@ Node: Org and org-ql308668
 Node: Trademarks and non-affiliation311390
 Node: The example corpus312525
 Node: GNU General Public License317013
-Node: Concept Index317886
-Node: Key Index351950
-Node: Command Function and Name Index354352
-Node: Variable Index365460
+Node: Concept Index317892
+Node: Key Index351956
+Node: Command Function and Name Index354358
+Node: Variable Index365466
 
 End Tag Table
 

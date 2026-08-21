@@ -4336,8 +4336,6 @@ way to see what the reader made of your file:
 :DESCRIPTION: What each type admits, and what it refuses.
 :END:
 #+cindex: attribute types
-#+cindex: @samp{set}, attribute type
-#+cindex: @samp{list}, attribute type
 
 #+attr_texinfo: :table-type table :indic code
 - string ::
@@ -4370,10 +4368,12 @@ way to see what the reader made of your file:
   and is ignored with a warning.
 
 - set ::
+  #+cindex: @samp{set}, attribute type
   Whitespace-separated members, every one of them admitted by the
   vocabulary, *and no member repeated*. The empty set is valid.
 
 - list ::
+  #+cindex: @samp{list}, attribute type
   Whitespace-separated members, every one admitted by the vocabulary.
   Duplicates are fine and order is significant.
 
@@ -6855,9 +6855,8 @@ details.
 This manual is distributed under the same terms as the package it
 documents.
 
-The text of the license is at
-[[https://www.gnu.org/licenses/gpl-2.0.html]], and a copy should have
-reached you with the program.
+The full text is in the file =COPYING= at the root of this repository, and
+online at [[https://www.gnu.org/licenses/gpl-2.0.html]].
 
 
 * Concept Index
