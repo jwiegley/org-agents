@@ -787,12 +787,12 @@ Org's makes it clear how little of this package is actually new.
 
 What org-agents adds on top is correspondingly narrow.  Six additions
 make the whole of it: a declaration for the properties you invented,
-giving them a type, a vocabulary and a lint; an inheritance axis that
-relates two entries instead of two positions; a way for a query's answer
-to become part of the document rather than a transient buffer; a way for
-appearance to follow from a value without anything being written; a
-bounded action vocabulary with a dry run in front of it; and a prefilter,
-which makes asking a question of a whole corpus affordable.
+giving them a type, a vocabulary and a lint; a second inheritance axis
+that relates two entries instead of two positions; a way for a query's
+answer to become part of the document rather than a transient buffer; a
+way for appearance to follow from a value without anything being
+written; a bounded action vocabulary with a dry run in front of it; and
+a prefilter, which makes asking a question of a whole corpus affordable.
 
 #+findex: org-ql-search
 #+findex: org-agents-preview
@@ -3845,8 +3845,8 @@ file you have armed for it.  That position is a design choice rather
 than an omission, and it is argued in
 [[*What was deliberately not ported, and why]].
 
-Four ways in follow from that choice, and this chapter is about choosing
-between them.
+Exactly four ways in follow from that choice, and this chapter is about
+choosing between them.
 
 - A command, over one agent, one buffer, or a named file set.  See
   [[*By hand]].
@@ -5161,8 +5161,7 @@ to a value it maps wins.
 #+cindex: @samp{ATTR_FACES}, syntax
 
 =:ATTR_FACES:= is pipe-separated two-word groups: a value, whitespace, a
-face name, with the whole of the mapping on that one line.  What follows
-reads it out, and then states what a malformed line costs.
+face name.  A declaration covering three values reads as three groups:
 
 #+begin_src org
 :ATTR_FACES: blocked error | paused shadow | done success
