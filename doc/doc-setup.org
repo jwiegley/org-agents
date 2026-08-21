@@ -1,0 +1,44 @@
+# SETUPFILE for the org-agents manual.
+
+# Copyright (C) 2026 John Wiegley
+#
+# This file is part of org-agents.
+#
+# org-agents is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 2, or (at your option) any
+# later version.
+#
+# org-agents is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+#+property: header-args :eval no
+#+startup: overview nologdone
+
+# Proper quote and backtick in code, per the Texinfo manual, section 14.2.
+#+texinfo_header: @set txicodequoteundirected
+#+texinfo_header: @set txicodequotebacktick
+
+# `^:nil' is required: without it AGENT_MATCHED and $NAME^ would be read
+# as superscripts.  `broken-links:mark' makes a dead internal link visible
+# in the output rather than silently dropped.
+#+options: H:4 num:t toc:t author:t \n:nil ::t |:t ^:nil -:t f:t *:t <:t e:t ':t
+#+options: d:nil todo:nil pri:nil tags:not-in-toc stat:nil broken-links:mark
+#+select_tags: export
+#+exclude_tags: noexport
+
+#+macro: cite @@texinfo:@cite{@@$1@@texinfo:}@@
+#+macro: var @@texinfo:@var{@@$1@@texinfo:}@@
+
+# {{{kbd(C-c C-c)}}} becomes @kbd{C-c C-c}, with @key{...} around SPC, RET
+# and the rest.
+#+macro: kbd (eval (org-texinfo-kbd-macro $1))
+
+# Read the package version out of the source, so the manual cannot drift
+# from it.
+#+macro: version (eval (with-current-buffer (find-file-noselect "../org-agents.el") (org-with-point-at 1 (if (re-search-forward "^;; Version: +\\([0-9.]+\\)" nil t) (match-string-no-properties 1) (error "Missing \"Version\" keyword in \"org-agents.el\"")))))
