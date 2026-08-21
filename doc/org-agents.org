@@ -5827,8 +5827,7 @@ are Org's own, or ones you are invited to bind yourself.
 :END:
 
 Three of the commands below work only inside the approvals listing and are
-grouped at the end; the three key sequences after them are Org's own
-rather than this package's.
+grouped at the end.
 
 - Command: org-agents-update ::
   Update the agent at point, or the =org-agents= block point sits in.
@@ -5930,8 +5929,7 @@ Three key sequences reach this package, and all three are Org's:
 :END:
 
 Four minor modes are defined, in two pairs: a buffer-local mode and the
-global mode that turns it on where it belongs.  Neither buffer-local mode
-will turn itself on in a buffer that is not an Org buffer.
+global mode that turns it on where it belongs.
 
 - Command: org-agents-mode ::
   Buffer-local minor mode, =Agents= in the mode line.  Updates this buffer's
