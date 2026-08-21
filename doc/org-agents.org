@@ -6276,7 +6276,6 @@ file is left modified like any other buffer, and named.
   nothing about why.  See [[*The six types]].
 
 - Function: org-dblock-write:org-agents params ::
-  #+findex: org-dblock-write:org-agents
   Org's dynamic-block writer for the =list= and =table= views, and the
   name you will meet in a failure message or a backtrace rather than one
   you would call.  Org reaches it for every =org-agents= block:

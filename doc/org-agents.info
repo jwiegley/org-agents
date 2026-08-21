@@ -7346,8 +7346,6 @@ E Command, Function and Name Index
 * org-dblock-write:org-agents:           Block parameters.     (line 70)
 * org-dblock-write:org-agents <1>:       Functions for Lisp callers.
                                                                (line 40)
-* org-dblock-write:org-agents <2>:       Functions for Lisp callers.
-                                                               (line 41)
 * org-dynamic-block-insert-dblock:       Conventions used in this manual.
                                                                (line 21)
 * org-ql-defpred:                        Putting a query in a property drawer.
@@ -7585,7 +7583,7 @@ Node: GNU General Public License317013
 Node: Concept Index317892
 Node: Key Index351956
 Node: Command Function and Name Index354358
-Node: Variable Index365466
+Node: Variable Index365324
 
 End Tag Table
 
