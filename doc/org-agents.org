@@ -2207,8 +2207,8 @@ examined.  A normalizer is arbitrary code from wherever that predicate was
 defined.
 
 The default value lists one head, ~semantic~, and that head is a shipped
-example rather than a placeholder.  The file =org-ql-semantic.el= defines
-it with a normalizer that calls ~org-ql-semantic--ensure-cache~, which
+example rather than a placeholder.  =org-ql-semantic.el= defines it with a
+normalizer that calls ~org-ql-semantic--ensure-cache~, which
 ~call-process~-es =org db search=.  Structurally, =(semantic "x")= is a
 predicate call like any other, and the structural gate admits it without a
 prompt.  The subprocess runs.  A refused head is where such a predicate
@@ -2551,7 +2551,7 @@ in this package rather than a setting to be tuned.
 The analysis is in two layers on purpose.  The splitter decides /which/
 conjuncts are superset-safe, in an abstract vocabulary; the emitter
 decides /how/ ripgrep expresses one, or declines to.  A pattern that
-cannot be written soundly is not written.  The conjunct then contributes no
+cannot be written soundly is not written.  Such a conjunct contributes no
 narrowing.  Slow and correct beats fast and wrong.
 
 Seven predicate heads can push:
@@ -2639,8 +2639,8 @@ literal and only one: =]=.  ~org-get-heading~ does not return a slice of
 the line; it reassembles the line from the groups of a regexp.  The only
 substring org-ql can match that the raw line need not spell is one
 crossing the junction between a priority cookie and the title.  Every such
-substring holds the cookie's closing =]=.  The emitter has refusals of its
-own, over any literal; see [[*Limitations of the prefilter]].  Several
+substring holds the cookie's closing =]=.  Over any literal the emitter
+has refusals of its own; see [[*Limitations of the prefilter]].  Several
 literals of one ~heading~ are emitted as several patterns and
 /intersected/, because org-ql requires all of them in one heading.
 
@@ -2690,17 +2690,17 @@ every setting:
 (property-resolved "OWNER")   (?:^[ \t]*:OWNER\+?:|^[ \t]*:PROTOTYPE\+?:)
 #+end_example
 
-Two things are worth naming there.  The resolver never reads
-~org-use-property-inheritance~ and never passes an INHERIT argument.  That
-option cannot change what the predicate answers, and keeping the guard
-would be a pure loss of narrowing.  The pattern is also /widened/: the
-local =:NAME:= line OR a =:PROTOTYPE:= line, as one alternation.  Widening
-is obligatory here.  An entry that resolves a name through a master never
-spells the value.  The ordinary pattern would therefore drop its file with
-no error, which is the one failure mode this package must not have.  The
-alternation is one pattern rather than two on purpose: several patterns of
-one conjunct are intersected.  Two would mean "spells =:NAME:= AND carries
-=:PROTOTYPE:=", which is catastrophically narrow, and silent.
+Two things are worth naming there.  No INHERIT argument is ever passed,
+and ~org-use-property-inheritance~ is never read.  That option cannot
+change what the predicate answers, and keeping the guard would be a pure
+loss of narrowing.  The pattern is also /widened/: the local =:NAME:= line
+OR a =:PROTOTYPE:= line, as one alternation.  Widening is obligatory here.
+An entry that resolves a name through a master never spells the value.
+The ordinary pattern would therefore drop its file with no error, which is
+the one failure mode this package must not have.  The alternation is one
+pattern rather than two on purpose: several patterns of one conjunct are
+intersected.  Two would mean "spells =:NAME:= AND carries =:PROTOTYPE:=",
+which is catastrophically narrow, and silent.
 
 #+cindex: @samp{ATTR_DEFAULT}, and the prefilter
 That widening has an exception of its own.  The exception is where a
@@ -2888,7 +2888,7 @@ and org-ql over it works and returns its match.  The test mirrors org-ql's
 own rule rather than inventing a stricter one.  Its cost, measured over a
 3,639-file =active= scope, is 0.465 seconds, against 0.265 seconds for the
 directory walk that produced the list.  org-ql then spends ten-odd seconds
-opening those files.  The check is roughly twice the walk, and negligible
+opening those files.  At roughly twice the walk, the check is negligible
 against the read it precedes, which is the comparison that matters.
 
 The check is a fallback-path diagnostic only: ripgrep cannot read an
@@ -4580,18 +4580,18 @@ corpus, that vocabulary is 111 names, once the two drawer delimiters are
 set aside.  Declare the ones you meant and ignore the ones you did not.
 The second run is then about values rather than names.
 
-The command runs in *two tiers*, because its two questions have
-different costs.  The vocabulary question needs no Org semantics and is
-answered by one ripgrep census over the whole scope, with each candidate
-then confirmed against a real property drawer.  The value question needs
-per-entry reading, and then only for the *declared* names and only in
-the files holding them.  Measured over a 3,616-file scope: 7 to 10
-seconds warm and 64 to 110 seconds cold, against a single-tier version
-that was killed at 600 seconds with no report at all.  Treat that range
-as an order of magnitude and not as a benchmark; the same
-vocabulary-only run over the same scope measured 3.5 seconds on an idle
-machine and 12.8 seconds on one busy with other work.  A figure outside
-the range is machine load rather than a regression.
+Because its two questions have different costs, the command runs in *two
+tiers*.  The vocabulary question needs no Org semantics and is answered by
+one ripgrep census over the whole scope, with each candidate then
+confirmed against a real property drawer.  The value question needs
+per-entry reading, and then only for the *declared* names and only in the
+files holding them.  Measured over a 3,616-file scope: 7 to 10 seconds
+warm and 64 to 110 seconds cold, against a single-tier version that was
+killed at 600 seconds with no report at all.  Treat that range as an order
+of magnitude and not as a benchmark; the same vocabulary-only run over the
+same scope measured 3.5 seconds on an idle machine and 12.8 seconds on one
+busy with other work.  A figure outside the range is machine load rather
+than a regression.
 
 ** Completing declared values
 :PROPERTIES:
@@ -4932,8 +4932,8 @@ property inheritance already says so, and the query layer spells that axis
 orthogonal, and a query has to say which it means because the two answer
 differently: over the corpus above, =$OWNER*= finds the two entries under
 =Projects= and =$OWNER^= finds =Projects= itself along with the entries
-whose chains reach a master that sets it.  The two answers share no
-entries at all.
+whose chains reach a master that sets it.  No entry at all is shared
+between the two answers.
 
 Tinderbox is explicit about this.  Its own words are "inheritance has
 nothing to do with the document hierarchy; a note's prototype is not
@@ -5216,14 +5216,14 @@ default is spelled nowhere*, and a text scan would miss precisely the
 entries this mode exists for.
 
 The mode is affordable, for two reasons.  The matcher answers nil before
-resolving anything where nothing declares a face.  It also reads only
-the entry at its match, and honours the region font-lock hands it.
-Measured over a 400-entry buffer of which one entry is drawn, under a
-registry declaring two face-bearing attributes, a twelve-line window
-costs 5 resolutions where the whole buffer costs 799; a headline outside
-the fontified region carries no ~face~ property at all.  Under a
-registry declaring one face-bearing attribute the same figures are 3
-against 400.  The cost scales with what is displayed and with how many
+resolving anything where nothing declares a face.  It also reads only the
+entry at its match, and honours the region font-lock hands it.  Measured
+over a 400-entry buffer of which one entry is drawn, under a registry
+declaring two face-bearing attributes, a twelve-line window costs 5
+resolutions where the whole buffer costs 799; a headline outside the
+fontified region carries no ~face~ property at all.  Under a registry
+declaring one face-bearing attribute the same figures are 3 against 400.
+What the mode costs scales with what is displayed and with how many
 attributes name faces, not with the size of the corpus.
 
 ** Precedence, and following an edit
@@ -5305,10 +5305,10 @@ rather than a rule it undertakes to keep.
 *An action never runs on save, on a timer, or from either minor mode.* The
 only thing in this package that runs an action is
 ~org-agents-apply-actions~, typed.  The refusal is *structural* rather
-than a promise kept by discipline.  The action text is not part of the
-plist the save path reads, and does not exist as data anywhere along it.
-The whole package holds one read of =:AGENT_ACTION:=.  It sits inside that
-command.
+than a promise kept by discipline.  Nothing in the plist the save path
+reads holds the action text, and it does not exist as data anywhere along
+that path.  One read of =:AGENT_ACTION:= exists in the whole package.  It
+sits inside that command.
 
 Tinderbox has =$Rule=, performed at frequent intervals, and =$Edict=,
 performed at startup and roughly hourly.  Neither is ported.  A Tinderbox
@@ -5430,7 +5430,7 @@ The verb sets the keyword and *nothing else*: no =CLOSED= stamp, no state
 note, no statistics cookie refreshed in an ancestor, no tag trigger, and
 no org-edna trigger.  The silence follows from the apply pass binding the
 hooks and the logging off, which is what keeps a run inside the rows its
-report showed.  The list, and the argument for binding them, are in
+report showed.  For the list, and the argument for binding them, see
 [[*The blast radius]].  If you want an entry's whole state change,
 {{{kbd(C-c C-t)}}} is the command that does it.
 
@@ -5458,9 +5458,10 @@ calls ~string-to-number~ at all.
 *terminal*.  It must be the last verb and may appear once, since it
 removes the subtree a later verb would edit.  The parser refuses the
 ordering rather than letting an apply pass discover it.  The destination
-is computed twice.  The first computation archives nothing.  The dry run
-can say where the subtree is about to go.  The second runs immediately
-before archiving.  If the two disagree, the subtree is left alone.
+is computed twice: the first computation archives nothing, which is what
+lets the dry run say where the subtree is about to go, and the second runs
+immediately before archiving.  If the two disagree, the subtree is left
+alone.
 
 ** Value keywords
 :PROPERTIES:
@@ -6504,11 +6505,11 @@ attribute types are Tinderbox's, unordered-unique and ordered
 respectively: "Lists are strings separated by semicolons"
 (=tbxman920:1428=), and "Sets are best though of as a special form of
 List.  Sets only hold one instance of any given value" (=tbxman920:1439=).
-The distinction is taken.  The coercion Tinderbox performs with it is not,
-and [[*What it changed]] says so.  The relative date words =today= and
-=now= that the action verbs accept are Tinderbox's too: for a date value
-"you can also use the terms yesterday, today, and tomorrow, and add or
-subtract units of time" (=tbxman920:1398--1399=).
+The distinction is taken; the coercion Tinderbox performs with it is not,
+and [[*What it changed]] says so.  Tinderbox is also the source of the
+relative date words =today= and =now= that the action verbs accept: for a
+date value "you can also use the terms yesterday, today, and tomorrow, and
+add or subtract units of time" (=tbxman920:1398--1399=).
 
 [[*The vocabulary map]] gives the whole correspondence as one table, with
 a pointer for each row.
@@ -6750,19 +6751,18 @@ org-edna is Ian Dunn's, and the shape of [[*Action code]] is its debt.
 Two of its designs are borrowed whole: a vocabulary of verbs whose names
 end in =!= to mark that they write, and a verb resolved by constructing
 =PREFIX-action/NAME= and asking whether it is ~fboundp~, which is what
-makes [[*Writing a verb of your own]] possible.  The idiom this package's
-lexer uses is org-edna's too.  The two differ in purpose.  In org-edna the
-vocabulary is open and its arguments are read as Lisp, because an entry's
-own trigger is something you wrote.  Here the vocabulary is nine verbs,
-closed, taking strings, never evaluated, applied only by an explicit
-command and only after a dry run, because the text comes out of a corpus
-of files any of which may have arrived from somewhere else.  The
-divergence that will surprise an org-edna user is named where it arises:
-this ~tag!~ is additive and never sets a tag list.  One thing this package
-deliberately does not extend is ~org-trigger-hook~: org-edna's own
-mechanism is bound off during an apply pass, and a corpus with
-=org-edna-mode= on gets no triggers from a run here.  See
-[[*The blast radius]].
+makes [[*Writing a verb of your own]] possible.  That lexing idiom is
+org-edna's too.  The two differ in purpose.  In org-edna the vocabulary is
+open and its arguments are read as Lisp, because an entry's own trigger is
+something you wrote.  Here the vocabulary is nine verbs, closed, taking
+strings, never evaluated, applied only by an explicit command and only
+after a dry run, because the text comes out of a corpus of files any of
+which may have arrived from somewhere else.  The divergence that will
+surprise an org-edna user is named where it arises: this ~tag!~ is
+additive and never sets a tag list.  One thing this package deliberately
+does not extend is ~org-trigger-hook~: org-edna's own mechanism is bound
+off during an apply pass, and a corpus with =org-edna-mode= on gets no
+triggers from a run here.  See [[*The blast radius]].
 
 ** Trademarks and non-affiliation
 :PROPERTIES:
