@@ -1231,11 +1231,11 @@ prefilter.  An =agenda= scope and an explicit file list *name* the files
 they will read; nothing is left for a prefilter to work out, and none is
 run.  The =active= and =all= scopes, and a directory, name nothing.
 Naming a directory says nothing about how much it holds, and reading one
-live means opening however many files it turns out to contain; those
-three scopes are therefore narrowed with ripgrep first, where the query
-gives it something to look for.  This query does give it something: with
-ripgrep installed, the update you have just run asked ripgrep which of
-the two files could hold a match before org-ql opened either.  Where that cannot
+live means opening however many files it turns out to contain; those three
+scopes are therefore narrowed with ripgrep first, where the query gives it
+something to look for.  This query does give it something: with ripgrep
+installed, the update you have just run asked ripgrep which of the two
+files could hold a match before org-ql opened either.  Where that cannot
 be done, the scope is read live and the run says so.  Set
 ~org-agents-prefilter~ to nil, update again, and the fallback message is
 what you get:
@@ -2141,8 +2141,8 @@ customize has no file to save it in
 Should you edit ~org-agents-exclude~, every approval you hold is
 invalidated.  That follows from the gate being shown the form.  The
 exclusion is part of the form, and changing it changes the text, and
-therefore the hash.  Measured
-over the same query with the default exclusion and with a different one:
+therefore the hash.  Measured over the same query with the default
+exclusion and with a different one:
 
 #+begin_example
 (and (> (string-to-number (or (org-entry-get nil "REVIEWS") "0")) 3)
@@ -2354,9 +2354,9 @@ nothing runs it but ~org-agents-apply-actions~, typed, and that command
 shows you every intended edit before it writes one.  See
 [[*The dry run]].
 
-Finally, {{{kbd(M-x org-agents-list-approvals)}}} after the fact.  If you approved
-something you would rather not have, =d= forgets it and =r= makes sure you
-are not asked again.
+Finally, {{{kbd(M-x org-agents-list-approvals)}}} after the fact.  If you
+approved something you would rather not have, =d= forgets it and =r= makes
+sure you are not asked again.
 
 * Scope and the ripgrep prefilter
 :PROPERTIES:
@@ -2418,11 +2418,11 @@ enumerate: the file names exist as a list before anything is read.
 =active=, =all= and a directory describe: the only way to know what they
 hold is to walk the tree.  That difference decides which scopes are
 prefiltered ([[*Which scopes get narrowed, and why]]) and how an
-unreadable file is reported
-([[*A file the scope names but cannot open]]).  The same difference decides
-whether the file set is stable between two updates.  A described scope's
-walk can intermittently drop a symlink to a file on this platform.  An
-enumerating scope cannot.  See [[*Limitations of the prefilter]].
+unreadable file is reported ([[*A file the scope names but cannot open]]).
+The same difference decides whether the file set is stable between two
+updates.  A described scope's walk can intermittently drop a symlink to a
+file on this platform.  An enumerating scope cannot.  See
+[[*Limitations of the prefilter]].
 
 A scope that names no directory is refused before anything is spawned so
 that a mistyped scope is diagnosed as one rather than as a prefilter
@@ -2623,11 +2623,11 @@ all for a query that matches thousands.
 Because ripgrep cannot compare dates, a planning bound is never pushed,
 only the presence of the stamp.  Hence =(deadline)=,
 =(deadline :from -7 :to 7)=, =(deadline 7)= and =(deadline auto)= all push
-the same thing, all soundly,
-and org-ql applies the bound afterwards.  The opening bracket in the
-pattern is not decoration: an active timestamp begins with =<= and an
-inactive one with =[=, and demanding it narrowed 216, 91 and 18 candidate
-files down to 203, 76 and 3 over a 3,669-file corpus.
+the same thing, all soundly, and org-ql applies the bound afterwards.  The
+opening bracket in the pattern is not decoration: an active timestamp
+begins with =<= and an inactive one with =[=, and demanding it narrowed
+216, 91 and 18 candidate files down to 203, 76 and 3 over a 3,669-file
+corpus.
 
 A ~heading~ argument is always a literal, never a regexp: org-ql
 normalizes ~heading~ to ~heading-regexp~ with every argument
@@ -2915,8 +2915,7 @@ a match.
 Unless every character in a literal is printable ASCII, the literal is not
 pushed.  The two programs disagree about encoding: ripgrep decodes as
 UTF-8, while Emacs may decode an Org file as latin-1 through a coding
-cookie or
-~file-coding-system-alist~.  Measured: a latin-1 file holding
+cookie or ~file-coding-system-alist~.  Measured: a latin-1 file holding
 =* Cafe Review= with an accented =e= matches the ASCII pattern =Caf= and
 does not match the UTF-8 pattern for the accented spelling.  No flag fixes
 it, since =--encoding= is one global setting and a corpus is mixed.  Such
@@ -3018,7 +3017,8 @@ is =children=; the shortest agent that can be written, one bare
 - children ::
   #+cindex: @samp{children}, agent view
   One child heading per match, written under the agent.  The default, and
-  the only view that writes outside a dynamic block.  See [[*The children view]].
+  the only view that writes outside a dynamic block.  See
+  [[*The children view]].
 
 - list ::
   #+cindex: @samp{list}, agent view
@@ -4193,12 +4193,11 @@ and the third is the price of reading a corpus at all.
 *No timer-driven update exists, and none will.*  Nothing in this package
 renders an agent while you are not looking at it.  The reason is the
 medium.  An Org corpus is thousands of text files under version control
-that other tools also write, and a timer that rewrote them would put
-edits into files you are not looking at and stamps into commits you did
-not make.  That divergence is the largest between this package and the
-system these ideas come from;
-[[*What was deliberately not ported, and why]] argues it at length, with
-the alternatives named.
+that other tools also write, and a timer that rewrote them would put edits
+into files you are not looking at and stamps into commits you did not
+make.  That divergence is the largest between this package and the system
+these ideas come from; [[*What was deliberately not ported, and why]]
+argues it at length, with the alternatives named.
 
 *The first save of a stale multi-block agent writes the file, and only
 that save.*  A save refreshes every block of a multi-block agent; a buffer
@@ -5316,9 +5315,8 @@ performed at startup and roughly hourly.  Neither is ported.  A Tinderbox
 document is one binary file the application owns while open; an Org corpus
 is thousands of text files under version control that other tools also
 write.  Code that edits those files while you are not looking is a commit
-nobody authored.  See
-[[*What was deliberately not ported, and why]] for the rest of that
-accounting, in Tinderbox's own vocabulary.
+nobody authored.  See [[*What was deliberately not ported, and why]] for
+the rest of that accounting, in Tinderbox's own vocabulary.
 
 *An action is not inheritable.* =:AGENT_ACTION:= is read from the entry's
 own drawer, with ~org-entry-get~ and no INHERIT argument, and never
@@ -5543,11 +5541,10 @@ org-agents: apply 6 edits at 3 entries in 1 file (1 not open before this ran)?
 
 Once the plan is agreed to, the edits are applied in order.  The hooks and
 the logging that would edit anything the report does not name are bound
-off.  An
-error, a =no=, a {{{kbd(C-g)}}}, or an entry that did not end up as its
-line said stops at that edit: that line says what happened, and every
-later line says =not attempted=. Finally the buffers that were modified
-are named:
+off.  An error, a =no=, a {{{kbd(C-g)}}}, or an entry that did not end up
+as its line said stops at that edit: that line says what happened, and
+every later line says =not attempted=. Finally the buffers that were
+modified are named:
 
 #+begin_example
 org-agents: applied 6, refused 0, failed 0, skipped 0, 0 not attempted;
@@ -5584,17 +5581,16 @@ the corpus.
 
 The apply pass runs with hooks and logging bound off.  Thus nothing
 arrives in the files that the report did not name.  Thirteen names are
-bound off:
-~org-after-todo-state-change-hook~, ~org-trigger-hook~,
+bound off: ~org-after-todo-state-change-hook~, ~org-trigger-hook~,
 ~org-property-changed-functions~, ~org-after-tags-change-hook~,
 ~org-archive-hook~, ~org-archive-finalize-hook~, ~org-log-done~,
 ~org-todo-log-states~, ~org-todo-state-tags-triggers~,
-~org-provide-todo-statistics~, ~org-log-reschedule~,
-~org-log-redeadline~ and ~org-archive-subtree-save-file-p~.  Measured,
-each of these through the real command: one function on
-~org-after-todo-state-change-hook~ left =:TRIGGERED: yes= on an entry the
-query never matched while the report said =1 edit at 1 entry in 1 file=.
-~org-log-done~ =time= added a =CLOSED:= line no line named.
+~org-provide-todo-statistics~, ~org-log-reschedule~, ~org-log-redeadline~
+and ~org-archive-subtree-save-file-p~.  Measured, each of these through
+the real command: one function on ~org-after-todo-state-change-hook~ left
+=:TRIGGERED: yes= on an entry the query never matched while the report
+said =1 edit at 1 entry in 1 file=.  ~org-log-done~ =time= added a
+=CLOSED:= line no line named.
 
 #+cindex: hooks, and what binding them off costs
 #+vindex: org-log-done
@@ -5663,9 +5659,8 @@ run is N modified buffers, reviewable and undoable one at a time.
 
 Two verbs remove information rather than change it.  They are
 ~delete-property!~ and ~archive!~, and they confirm *at every entry, on
-every run*. No remembered
-approval applies, no option silences the prompt, and nothing is there to
-set.
+every run*. No remembered approval applies, no option silences the prompt,
+and nothing is there to set.
 
 Where interaction is impossible, in batch or under ~inhibit-interaction~,
 a confirmation is a *refusal and not a default*: the refusal is the prompt
@@ -5690,10 +5685,9 @@ Because the check comes before ~y-or-n-p~ is ever reached, neither of
 those conditions reads standard input and neither can hang.  The
 difference matters more than it looks: measured, in ~-batch~,
 ~(y-or-n-p "ok? ")~ with a =y= on standard input returns t, and with
-standard input closed signals
-~end-of-file~ from inside whatever called it.  A script, a CI job, or any
-invocation whose standard input happened to carry text would otherwise
-have answered yes on your behalf.
+standard input closed signals ~end-of-file~ from inside whatever called
+it.  A script, a CI job, or any invocation whose standard input happened
+to carry text would otherwise have answered yes on your behalf.
 
 ** The same command over a selection
 :PROPERTIES:
@@ -5808,8 +5802,8 @@ action over an unbounded scope deliberately rather than casually, and
 prefer an explicit =:AGENT_SCOPE:= list where you can name the files.
 
 For the features org-agents does not have here at all, and why, see
-[[*What was deliberately not ported, and why]]: no timer, no startup pass, no
-action on an outline edit, and no inheritable action.
+[[*What was deliberately not ported, and why]]: no timer, no startup pass,
+no action on an outline edit, and no inheritable action.
 
 * Reference
 :PROPERTIES:
@@ -5872,11 +5866,10 @@ rather than this package's.
   Return a =COLUMNS= format string over the named declared attributes,
   =%ITEM= first and a ={+}= summary cookie on an attribute declared
   =number=, as in =%ITEM %STATUS %REVIEWS{+}=.  Given a prefix argument,
-  also set the result as
-  the =:COLUMNS:= *property* of the entry at point, which is what
-  descendants inherit and what =org-agenda-columns= reads.  Refuses an
-  undeclared name, and a declared name a =COLUMNS= format cannot spell.
-  See [[*A corpus-wide column view]].
+  also set the result as the =:COLUMNS:= *property* of the entry at point,
+  which is what descendants inherit and what =org-agenda-columns= reads.
+  Refuses an undeclared name, and a declared name a =COLUMNS= format
+  cannot spell.  See [[*A corpus-wide column view]].
 
 - Command: org-agents-list-approvals ::
   Pop =*org-agents approvals*=, a listing of every remembered approval
@@ -5951,8 +5944,8 @@ will turn itself on in a buffer that is not an Org buffer.
   =^[ \t]*:AGENT_QUERY:=.  See [[*global-org-agents-mode]].
 
 - Command: org-agents-faces-mode ::
-  Buffer-local minor mode, =Attrs= in the mode line.  Draws a headline in the
-  face its resolved value for a declared attribute names, ahead of
+  Buffer-local minor mode, =Attrs= in the mode line.  Draws a headline in
+  the face its resolved value for a declared attribute names, ahead of
   =org-level-N= rather than instead of it.  Changes no bytes: one
   font-lock keyword, no text, no property, no overlay.  Refuses a buffer
   that is not an Org buffer.  See [[*Faces from attribute values]].
@@ -6046,19 +6039,19 @@ The reason is stated in each entry.
   run: the scope is scanned live, with the message that says so.  Risky,
   because it names a program that will be run as a subprocess.
 
-- User Option: org-agents-rg-timeout :: Default =30=.  Seconds to wait for
-  one prefilter run, or nil for no bound.  A bound is needed because
-  nothing else provides one: on an unresponsive filesystem a run can take
-  arbitrarily long.  Because a timer set before a synchronous
-  =call-process= to a hanging child never fires, the bound is a deadline
-  over an asynchronous process rather than a timer; Emacs runs no timers
-  while blocked there.  When the deadline expires, the answer is the same
-  "unavailable" a missing ripgrep gives, and the scope is scanned live: a
-  spurious expiry costs a slow correct answer and never a wrong one.  The
-  new cost is reentrancy, since waiting on a subprocess runs timers; see
-  [[*Limitations of dynamic blocks]] and [[*Bounding a run]].  Risky: a
-  file-local nil takes the bound off, and a file-local 0 expires every
-  run.
+- User Option: org-agents-rg-timeout ::
+  Default =30=.  Seconds to wait for one prefilter run, or nil for no
+  bound.  A bound is needed because nothing else provides one: on an
+  unresponsive filesystem a run can take arbitrarily long.  Because a
+  timer set before a synchronous =call-process= to a hanging child never
+  fires, the bound is a deadline over an asynchronous process rather than
+  a timer; Emacs runs no timers while blocked there.  When the deadline
+  expires, the answer is the same "unavailable" a missing ripgrep gives,
+  and the scope is scanned live: a spurious expiry costs a slow correct
+  answer and never a wrong one.  The new cost is reentrancy, since waiting
+  on a subprocess runs timers; see [[*Limitations of dynamic blocks]] and
+  [[*Bounding a run]].  Risky: a file-local nil takes the bound off, and a
+  file-local 0 expires every run.
 
 - User Option: org-agents-attributes-file ::
   Default ="~/org/attributes.org"=.  The attribute registry.  Optional: a
@@ -6488,8 +6481,8 @@ quotations that describe it.
 - Prototypes ::
   #+cindex: prototype, as a Tinderbox concept
   "[I]t shares all the properties of the prototype, except where we
-  specify otherwise" (=tbxman920:1683=), by a checklist that consults the note,
-  then its chain, then the default (=tbxman920:1739--1746=), and
+  specify otherwise" (=tbxman920:1683=), by a checklist that consults the
+  note, then its chain, then the default (=tbxman920:1739--1746=), and
   independently of the outline: "inheritance has nothing to do with the
   document hierarchy" (=tbxman920:1751=).  Here: =:PROTOTYPE:=, resolved
   in that order, virtually.  See [[*Prototypes]] and
@@ -6503,20 +6496,19 @@ quotations that describe it.
   #+cindex: appearance, as a Tinderbox concept
   Tinderbox's own example is an agent holding urgent tasks, which "can
   automatically change their color in order to draw your attention"
-  (=tbxman920:2792=).  Here:
-  =:ATTR_FACES:= and =org-agents-faces-mode=.  See [[*Appearance]].
+  (=tbxman920:2792=).  Here: =:ATTR_FACES:= and =org-agents-faces-mode=.
+  See [[*Appearance]].
 
 Two smaller borrowings deserve their own mention.  The =set= and =list=
 attribute types are Tinderbox's, unordered-unique and ordered
 respectively: "Lists are strings separated by semicolons"
 (=tbxman920:1428=), and "Sets are best though of as a special form of
-List.  Sets only hold one instance of any given value"
-(=tbxman920:1439=).  The distinction is taken.  The coercion Tinderbox
-performs with it is not, and [[*What it changed]] says so.  The relative
-date words =today= and =now= that the action verbs accept are Tinderbox's
-too: for a date value "you can
-also use the terms yesterday, today, and tomorrow, and add or subtract
-units of time" (=tbxman920:1398--1399=).
+List.  Sets only hold one instance of any given value" (=tbxman920:1439=).
+The distinction is taken.  The coercion Tinderbox performs with it is not,
+and [[*What it changed]] says so.  The relative date words =today= and
+=now= that the action verbs accept are Tinderbox's too: for a date value
+"you can also use the terms yesterday, today, and tomorrow, and add or
+subtract units of time" (=tbxman920:1398--1399=).
 
 [[*The vocabulary map]] gives the whole correspondence as one table, with
 a pointer for each row.
@@ -6567,11 +6559,10 @@ files under version control that other tools also write.
   (=tbxman920:1557=).  An org-agents alias is a heading holding a link:
   ordinary Org text, written by one render and reaped by the next.
   Editing it edits nothing but itself.  Org has no facility for a
-  bidirectional
-  proxy, and pretending otherwise would be worse than admitting it.  In
-  exchange there is a contract Tinderbox does not need, under which an
-  alias you have written under stops being the package's to delete.  See
-  [[*The alias contract]].
+  bidirectional proxy, and pretending otherwise would be worse than
+  admitting it.  In exchange there is a contract Tinderbox does not need,
+  under which an alias you have written under stops being the package's to
+  delete.  See [[*The alias contract]].
 - Attributes are declared in a file, not in a document inspector ::
   Tinderbox's user attributes are declared through a dialog and stored in
   the document.  Here they are declared in an ordinary Org file.  The
@@ -6596,14 +6587,14 @@ Org's own =NAME_ALL= convention uses, and therefore what
 are separated by whitespace rather than semicolons.  The uniqueness a set
 means is *validated* here where Tinderbox coerces it: a repeated member is
 a lint finding rather than a silently dropped duplicate.  Tinderbox's
-boolean coercions are not ported either.  Tinderbox holds that "the number 0,
-the empty string, and the date =never= are considered to be false"
-(=tbxman920:1391--1392=); here those are values that
-fail to be booleans, and the lint says so, rather than values silently
-read as false.  A number may not carry an exponent, though Tinderbox
-allows "either an integer or a floating point (decimal) number, positive
-or negative" (=tbxman920:1426=), because =1e3= in an Org drawer is far
-more likely to be a product code than a thousand.
+boolean coercions are not ported either.  Tinderbox holds that "the number
+0, the empty string, and the date =never= are considered to be false"
+(=tbxman920:1391--1392=); here those are values that fail to be booleans,
+and the lint says so, rather than values silently read as false.  A number
+may not carry an exponent, though Tinderbox allows "either an integer or a
+floating point (decimal) number, positive or negative" (=tbxman920:1426=),
+because =1e3= in an Org drawer is far more likely to be a product code
+than a thousand.
 
 ** What was deliberately not ported, and why
 :PROPERTIES:
@@ -6673,10 +6664,9 @@ are not looking, and the result is a diff nobody wrote.  Here the only
 thing that runs an action is =org-agents-apply-actions=, typed.  The
 refusal is structural rather than disciplined: the action text is not part
 of the data the save path reads, and no hook could reach it.  See
-[[*The three refusals]], and
-[[*Updating]], which states the same absence from the other direction: as
-a limitation of the updating feature rather than as an act of
-attribution.
+[[*The three refusals]], and [[*Updating]], which states the same absence
+from the other direction: as a limitation of the updating feature rather
+than as an act of attribution.
 
 #+cindex: inheritable action, and why there is none
 *Inheritable actions.*  A Tinderbox rule is normally inherited; the
