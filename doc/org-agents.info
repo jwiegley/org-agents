@@ -1004,9 +1004,9 @@ File: org-agents.info,  Node: Tutorial,  Next: The query language,  Prev: Agents
 
 This chapter builds one agent from nothing, a property at a time.  Every
 step was run, and the output shown after each is the text the buffer
-actually held.  Nothing outside Emacs is needed: the scope stays on your
-agenda files, so no ripgrep, no registry and no configuration is
-involved.
+actually held.  No registry and no configuration is needed, and the
+scope stays on your agenda files until the last step, which changes it
+in order to show you what a scope change costs.
 
 * Menu:
 
@@ -1185,6 +1185,11 @@ and left where it is, with your note.  This is the single most important
 thing to understand about the ‘children’ view, and *note The alias
 contract:: sets out its four sharp edges.
 
+   Delete that line again before going on: the steps below print the
+output of an agent whose three aliases are all pristine, and an alias
+you have adopted is one this package will no longer rewrite -- which is
+exactly what the paragraph above promised.
+
 
 File: org-agents.info,  Node: Showing properties beside the link,  Next: The same matches as a table,  Prev: What the update wrote,  Up: Tutorial
 
@@ -1232,7 +1237,13 @@ File: org-agents.info,  Node: The same matches as a table,  Next: Narrowing what
 
 Child headings are the right rendering for something you want to fold
 into the outline and write under.  For a queue you mean to scan and
-sort, a table is better.  Set ‘:AGENT_VIEW: table’ and name the columns:
+sort, a table is better.
+
+   First delete the three aliases the last update wrote, because a
+change of view does not reclaim the outline the previous view built:
+only the ‘children’ renderer looks for aliases, so the table renderer
+will leave them sitting under the agent for ever.  See *note Limitations
+of the views::.  Then set ‘:AGENT_VIEW: table’ and name the columns:
 
      * Up for review
        :PROPERTIES:
@@ -1241,9 +1252,8 @@ sort, a table is better.  Set ‘:AGENT_VIEW: table’ and name the columns:
        :AGENT_COLUMNS: ITEM_BY_ID NEXT_REVIEW
        :END:
 
-   Update it, and the aliases are gone; in their place is an
-‘org-agents’ dynamic block, which the update opened because the entry
-had none:
+   Update it, and in place of the aliases there is an ‘org-agents’
+dynamic block, which the update opened because the entry had none:
 
      #+BEGIN: org-agents
      | ITEM_BY_ID           | NEXT_REVIEW |
@@ -1256,8 +1266,10 @@ had none:
    ‘ITEM_BY_ID’ is the link to the match, wherever in the column list
 you put it.  Every other name is read as a property at the match, and a
 property the match does not have makes an empty cell rather than an
-error.  The cells are not padded: the writer leaves that to Org, and
-‘C-c C-c’ on the table lines it up.
+error.  The renderer writes an unpadded table and then asks Org to align
+it, so the table arrives aligned; the alignment is cosmetic, and a
+failure there is reported and stepped over rather than allowed to take
+the update down with it.
 
    A review queue in file order is not much of a queue.  Add a sort:
 
@@ -1312,25 +1324,36 @@ records 2 -- the rows written, not the rows found.  The limit is applied
 *after* the sort, so these really are the two nearest reviews and not
 the first two org-ql happened to come across.
 
-   Now try a scope that names a directory instead of a file.  Set
-‘:AGENT_SCOPE: .’ -- the directory holding these two files, since
-‘org-directory’ is where you put them -- and update.  This time there is
-a second message:
+   Now try a scope that names a directory instead of a file.  Go back to
+the ‘Up for review’ agent, set ‘:AGENT_SCOPE: .’ on it -- the directory
+holding these two files, since ‘org-directory’ is where you put them --
+and update.  The echo area says ‘org-agents: 3 matches’, the same three
+as before.
 
-     org-agents: scope `.' not narrowed (prefiltering off); scanning 2 files live
+   What is different is invisible, and it is your introduction to the
+prefilter.  ‘agenda’ and an explicit file list *name* the files they
+will read, so there is nothing for a prefilter to work out and none is
+run.  ‘active’, ‘all’ and a directory name nothing: naming a directory
+says nothing about how much it holds, and reading one live means opening
+however many files it turns out to contain.  Those three scopes are
+therefore narrowed with ripgrep first, where the query gives it
+something to look for -- and this query does, so with ripgrep installed
+the update you have just run asked ripgrep which of the two files could
+hold a match before org-ql opened either.
+
+   Where that cannot be done, the scope is read live and the run says
+so.  Set ‘org-agents-prefilter’ to nil, update again, and the fallback
+message is what you get:
+
+     org-agents: scope ‘.’ not narrowed (prefiltering off); scanning 2 files live
      org-agents: 3 matches
 
-   That first line is your introduction to the prefilter.  ‘agenda’ and
-an explicit file list *name* the files they will read, so there is
-nothing for a prefilter to work out and none is run.  ‘active’, ‘all’
-and a directory name nothing: naming a directory says nothing about how
-much it holds, and reading one live means opening however many files it
-turns out to contain.  Those three scopes are therefore narrowed with
-ripgrep where it can be done, and read live with a message like the one
-above where it cannot -- two files here, and possibly several thousand
-in a real corpus.  Whichever happens, the answer is the same three
-matches, because a prefilter chooses files and never matches.  See *note
-Scope and the ripgrep prefilter::.
+   Without ripgrep installed the same line reads ‘(ripgrep not found)’
+instead, and there are two further reasons it can give; see *note Which
+scopes get narrowed and why::.  Set the option back to ‘auto’ when you
+have read the message.  Whichever path a run takes, the answer is the
+same three matches, because a prefilter chooses files and never matches.
+See *note Scope and the ripgrep prefilter::.
 
 
 File: org-agents.info,  Node: Refreshing on save,  Next: Where to go next,  Prev: Narrowing what the agent reads,  Up: Tutorial
@@ -3381,6 +3404,15 @@ line comes back at the block's own indentation column.
 happens after the table is in the buffer, and a failure there is
 reported and stepped over rather than allowed to abort the update.  An
 unaligned table is a correct table.
+
+   *Changing ‘:AGENT_VIEW:’ away from ‘children’ orphans the aliases
+already written.*  A view change does not reclaim the outline the
+previous view built: only the ‘children’ renderer looks for aliases, so
+an agent switched to ‘list’ or ‘table’ renders its block and leaves
+every alias sitting under it, pristine ones included, with nothing said
+about them.  Delete them by hand.  The reverse case is the same in shape
+and easier to see: an agent switched back to ‘children’ renders aliases
+and leaves its block where it was, holding the last answer it was given.
 
 
 File: org-agents.info,  Node: Dynamic blocks,  Next: Updating,  Prev: Views,  Up: Top
@@ -6410,7 +6442,7 @@ B Concept Index
 * AGENT_SCOPE, agent property <1>:       Scopes.               (line  6)
 * AGENT_SCOPE, agent property <2>:       Agent properties.     (line 26)
 * AGENT_SORT, agent property:            The same matches as a table.
-                                                               (line 35)
+                                                               (line 42)
 * AGENT_SORT, agent property <1>:        Sorting and limiting. (line  6)
 * AGENT_SORT, agent property <2>:        Agent properties.     (line 33)
 * AGENT_VIEW, agent property:            The same matches as a table.
@@ -6581,7 +6613,7 @@ B Concept Index
 * introduction:                          Introduction.         (line  6)
 * ITEM_BY_ID:                            The table view.       (line  6)
 * ITEM_BY_ID, agent column:              The same matches as a table.
-                                                               (line 29)
+                                                               (line 34)
 * key bindings, and the absence of any:  Conventions used in this manual.
                                                                (line 21)
 * latin-1:                               Limitations of the prefilter.
@@ -6801,9 +6833,7 @@ C Key Index
                                                                (line 21)
 * C-c C-c:                               Conventions used in this manual.
                                                                (line 21)
-* C-c C-c <1>:                           The same matches as a table.
-                                                               (line 29)
-* C-c C-c <2>:                           Commands.             (line 90)
+* C-c C-c <1>:                           Commands.             (line 90)
 * C-c C-o:                               Your first agent.     (line 48)
 * C-c C-t:                               The nine verbs.       (line  6)
 * C-c C-x C-c:                           A corpus-wide column view.
@@ -7081,122 +7111,122 @@ Node: Appearance in Tinderbox43116
 Node: What Org already had44771
 Node: The vocabulary map46661
 Node: Tutorial49282
-Node: A corpus to work with50419
-Node: Your first agent52219
-Node: What the update wrote54092
-Node: Showing properties beside the link56564
-Node: The same matches as a table58108
-Node: Narrowing what the agent reads60410
-Node: Refreshing on save62848
-Node: Where to go next65100
-Node: The query language66913
-Node: org-ql is the base language68185
-Node: Property references70881
-Node: The four positions72741
-Node: The two axes78018
-Node: Entry specials81707
-Node: The property-resolved predicate84321
-Node: Putting a query in a property drawer87588
-Node: Limitations of the query layer89998
-Node: What is evaluated and what is refused92054
-Node: Why a gate exists93426
-Node: The structural gate94723
-Node: Remembered approvals98500
-Node: Refused heads101744
-Node: Refused queries103945
-Node: Reviewing what you approved105857
-Node: Scope and the ripgrep prefilter109872
-Node: Scopes111302
-Node: Which scopes get narrowed and why113658
-Node: What the prefilter can and cannot do115946
-Node: The push-down rules118468
-Node: Inheritance and pushability124185
-Node: Bounding a run127608
-Node: A file the scope names but cannot open133287
-Node: Limitations of the prefilter136160
-Node: Views138857
-Node: Choosing a view140616
-Node: The children view142368
-Node: The alias contract144463
-Node: The list view148452
-Node: The table view149812
-Node: Formats152553
-Node: Sorting and limiting154533
-Node: Limitations of the views157150
-Node: Dynamic blocks158459
-Node: Inserting a block159583
-Node: Block parameters160566
-Node: Several blocks under one agent163296
-Node: Limitations of dynamic blocks167014
-Node: Updating168984
-Node: By hand170859
-Node: Looking before you write174382
-Node: org-agents-mode175634
-Node: global-org-agents-mode178444
-Node: The three refusals on the save path180419
-Node: What writing AGENT_MATCHED costs183272
-Node: Limitations of updating185129
-Node: The attribute registry186768
-Node: Why declare attributes188188
-Node: The registry file190478
-Node: The declaration192372
-Node: The six types194291
-Node: It is pure data197123
-Node: Checking a corpus198828
-Node: Completing declared values202743
-Node: A corpus-wide column view204558
-Node: Limitations of the registry206750
-Node: Prototypes208307
-Node: What a prototype is209561
-Node: Declaring masters210664
-Node: Naming a master211774
-Node: The resolution order212801
-Node: Why outline inheritance is not in that order215203
-Node: Reads are virtual216554
-Node: Names that never travel218346
-Node: The two diagnostics219894
-Node: Limitations of prototypes221210
-Node: Appearance222012
-Node: Faces from attribute values223283
-Node: The ATTR_FACES syntax224220
-Node: From declaration to headline225090
-Node: It changes no bytes226986
-Node: Faces in every Org buffer227924
-Node: Precedence and following an edit229431
-Node: The two refusals230792
-Node: Action code231787
-Node: The three refusals233228
-Node: Writing an action235406
-Node: The nine verbs236810
-Node: Value keywords240592
-Node: The dry run241943
-Node: The blast radius244374
-Node: How much one run may edit245349
-Node: Destructive verbs and batch246938
-Node: The same command over a selection248103
-Node: The trust model249356
-Node: Writing a verb of your own250547
-Node: Limitations of action code251894
-Node: Reference253555
-Node: Commands254591
-Node: Minor modes259113
-Node: User options260486
-Node: Agent properties267508
-Node: Registry properties270930
-Node: Action verbs273122
-Node: Functions for Lisp callers276568
-Node: History and Acknowledgments278513
-Node: Tinderbox280126
-Node: What org-agents took281957
-Node: What it changed285006
-Node: What was deliberately not ported and why289716
-Node: Org and org-ql295568
-Node: Trademarks and non-affiliation297104
-Node: GNU General Public License298237
-Node: Concept Index299119
-Node: Key Index331450
-Node: Command Function and Name Index333995
-Node: Variable Index344602
+Node: A corpus to work with50458
+Node: Your first agent52258
+Node: What the update wrote54131
+Node: Showing properties beside the link56858
+Node: The same matches as a table58402
+Node: Narrowing what the agent reads61129
+Node: Refreshing on save64169
+Node: Where to go next66421
+Node: The query language68234
+Node: org-ql is the base language69506
+Node: Property references72202
+Node: The four positions74062
+Node: The two axes79339
+Node: Entry specials83028
+Node: The property-resolved predicate85642
+Node: Putting a query in a property drawer88909
+Node: Limitations of the query layer91319
+Node: What is evaluated and what is refused93375
+Node: Why a gate exists94747
+Node: The structural gate96044
+Node: Remembered approvals99821
+Node: Refused heads103065
+Node: Refused queries105266
+Node: Reviewing what you approved107178
+Node: Scope and the ripgrep prefilter111193
+Node: Scopes112623
+Node: Which scopes get narrowed and why114979
+Node: What the prefilter can and cannot do117267
+Node: The push-down rules119789
+Node: Inheritance and pushability125506
+Node: Bounding a run128929
+Node: A file the scope names but cannot open134608
+Node: Limitations of the prefilter137481
+Node: Views140178
+Node: Choosing a view141937
+Node: The children view143689
+Node: The alias contract145784
+Node: The list view149773
+Node: The table view151133
+Node: Formats153874
+Node: Sorting and limiting155854
+Node: Limitations of the views158471
+Node: Dynamic blocks160370
+Node: Inserting a block161494
+Node: Block parameters162477
+Node: Several blocks under one agent165207
+Node: Limitations of dynamic blocks168925
+Node: Updating170895
+Node: By hand172770
+Node: Looking before you write176293
+Node: org-agents-mode177545
+Node: global-org-agents-mode180355
+Node: The three refusals on the save path182330
+Node: What writing AGENT_MATCHED costs185183
+Node: Limitations of updating187040
+Node: The attribute registry188679
+Node: Why declare attributes190099
+Node: The registry file192389
+Node: The declaration194283
+Node: The six types196202
+Node: It is pure data199034
+Node: Checking a corpus200739
+Node: Completing declared values204654
+Node: A corpus-wide column view206469
+Node: Limitations of the registry208661
+Node: Prototypes210218
+Node: What a prototype is211472
+Node: Declaring masters212575
+Node: Naming a master213685
+Node: The resolution order214712
+Node: Why outline inheritance is not in that order217114
+Node: Reads are virtual218465
+Node: Names that never travel220257
+Node: The two diagnostics221805
+Node: Limitations of prototypes223121
+Node: Appearance223923
+Node: Faces from attribute values225194
+Node: The ATTR_FACES syntax226131
+Node: From declaration to headline227001
+Node: It changes no bytes228897
+Node: Faces in every Org buffer229835
+Node: Precedence and following an edit231342
+Node: The two refusals232703
+Node: Action code233698
+Node: The three refusals235139
+Node: Writing an action237317
+Node: The nine verbs238721
+Node: Value keywords242503
+Node: The dry run243854
+Node: The blast radius246285
+Node: How much one run may edit247260
+Node: Destructive verbs and batch248849
+Node: The same command over a selection250014
+Node: The trust model251267
+Node: Writing a verb of your own252458
+Node: Limitations of action code253805
+Node: Reference255466
+Node: Commands256502
+Node: Minor modes261024
+Node: User options262397
+Node: Agent properties269419
+Node: Registry properties272841
+Node: Action verbs275033
+Node: Functions for Lisp callers278479
+Node: History and Acknowledgments280424
+Node: Tinderbox282037
+Node: What org-agents took283868
+Node: What it changed286917
+Node: What was deliberately not ported and why291627
+Node: Org and org-ql297479
+Node: Trademarks and non-affiliation299015
+Node: GNU General Public License300148
+Node: Concept Index301030
+Node: Key Index333361
+Node: Command Function and Name Index335763
+Node: Variable Index346370
 
 End Tag Table
 

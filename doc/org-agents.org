@@ -844,9 +844,9 @@ case.
 
 This chapter builds one agent from nothing, a property at a time.  Every
 step was run, and the output shown after each is the text the buffer
-actually held.  Nothing outside Emacs is needed: the scope stays on your
-agenda files, so no ripgrep, no registry and no configuration is
-involved.
+actually held.  No registry and no configuration is needed, and the scope
+stays on your agenda files until the last step, which changes it in order
+to show you what a scope change costs.
 
 ** A corpus to work with
 :PROPERTIES:
@@ -1039,6 +1039,11 @@ is, with your note.  This is the single most important thing to understand
 about the =children= view, and [[*The alias contract]] sets out its four
 sharp edges.
 
+Delete that line again before going on: the steps below print the output
+of an agent whose three aliases are all pristine, and an alias you have
+adopted is one this package will no longer rewrite --- which is exactly
+what the paragraph above promised.
+
 ** Showing properties beside the link
 :PROPERTIES:
 :DESCRIPTION: :AGENT_FORMAT:, so you need not open a match to read it.
@@ -1090,7 +1095,14 @@ which leaves trailing whitespace on the heading.  See [[*Formats]].
 
 Child headings are the right rendering for something you want to fold
 into the outline and write under.  For a queue you mean to scan and sort,
-a table is better.  Set =:AGENT_VIEW: table= and name the columns:
+a table is better.
+
+First delete the three aliases the last update wrote, because a change of
+view does not reclaim the outline the previous view built: only the
+=children= renderer looks for aliases, so the table renderer will leave
+them sitting under the agent for ever.  See
+[[*Limitations of the views]].  Then set =:AGENT_VIEW: table= and name the
+columns:
 
 #+begin_example
 ,* Up for review
@@ -1101,8 +1113,8 @@ a table is better.  Set =:AGENT_VIEW: table= and name the columns:
   :END:
 #+end_example
 
-Update it, and the aliases are gone; in their place is an =org-agents=
-dynamic block, which the update opened because the entry had none:
+Update it, and in place of the aliases there is an =org-agents= dynamic
+block, which the update opened because the entry had none:
 
 #+begin_example
 ,#+BEGIN: org-agents
@@ -1115,12 +1127,13 @@ dynamic block, which the update opened because the entry had none:
 #+end_example
 
 #+cindex: @samp{ITEM_BY_ID}, agent column
-#+kindex: C-c C-c
 =ITEM_BY_ID= is the link to the match, wherever in the column list you
 put it.  Every other name is read as a property at the match, and a
 property the match does not have makes an empty cell rather than an
-error.  The cells are not padded: the writer leaves that to Org, and
-{{{kbd(C-c C-c)}}} on the table lines it up.
+error.  The renderer writes an unpadded table and then asks Org to align
+it, so the table arrives aligned; the alignment is cosmetic, and a
+failure there is reported and stepped over rather than allowed to take
+the update down with it.
 
 #+cindex: @samp{AGENT_SORT}, agent property
 A review queue in file order is not much of a queue.  Add a sort:
@@ -1185,27 +1198,38 @@ the sort, so these really are the two nearest reviews and not the first
 two org-ql happened to come across.
 
 #+vindex: org-agents-prefilter
-Now try a scope that names a directory instead of a file.  Set
-=:AGENT_SCOPE: .= --- the directory holding these two files, since
-=org-directory= is where you put them --- and update.  This time there is
-a second message:
+Now try a scope that names a directory instead of a file.  Go back to the
+=Up for review= agent, set =:AGENT_SCOPE: .= on it --- the directory
+holding these two files, since =org-directory= is where you put them ---
+and update.  The echo area says =org-agents: 3 matches=, the same three as
+before.
+
+What is different is invisible, and it is your introduction to the
+prefilter.  =agenda= and an explicit file list *name* the files they will
+read, so there is nothing for a prefilter to work out and none is run.
+=active=, =all= and a directory name nothing: naming a directory says
+nothing about how much it holds, and reading one live means opening
+however many files it turns out to contain.  Those three scopes are
+therefore narrowed with ripgrep first, where the query gives it something
+to look for --- and this query does, so with ripgrep installed the update
+you have just run asked ripgrep which of the two files could hold a match
+before org-ql opened either.
+
+Where that cannot be done, the scope is read live and the run says so.
+Set ~org-agents-prefilter~ to nil, update again, and the fallback message
+is what you get:
 
 #+begin_example
-org-agents: scope `.' not narrowed (prefiltering off); scanning 2 files live
+org-agents: scope ‘.’ not narrowed (prefiltering off); scanning 2 files live
 org-agents: 3 matches
 #+end_example
 
-That first line is your introduction to the prefilter.  =agenda= and an
-explicit file list *name* the files they will read, so there is nothing
-for a prefilter to work out and none is run.  =active=, =all= and a
-directory name nothing: naming a directory says nothing about how much it
-holds, and reading one live means opening however many files it turns out
-to contain.  Those three scopes are therefore narrowed with ripgrep where
-it can be done, and read live with a message like the one above where it
-cannot --- two files here, and possibly several thousand in a real corpus.
-Whichever happens, the answer is the same three matches, because a
-prefilter chooses files and never matches.  See
-[[*Scope and the ripgrep prefilter]].
+Without ripgrep installed the same line reads =(ripgrep not found)=
+instead, and there are two further reasons it can give; see
+[[*Which scopes get narrowed, and why]].  Set the option back to =auto=
+when you have read the message.  Whichever path a run takes, the answer is
+the same three matches, because a prefilter chooses files and never
+matches.  See [[*Scope and the ripgrep prefilter]].
 
 ** Refreshing on save
 :PROPERTIES:
@@ -3387,6 +3411,15 @@ comes back at the block's own indentation column.
 happens after the table is in the buffer, and a failure there is reported
 and stepped over rather than allowed to abort the update.  An unaligned
 table is a correct table.
+
+*Changing =:AGENT_VIEW:= away from =children= orphans the aliases already
+written.*  A view change does not reclaim the outline the previous view
+built: only the =children= renderer looks for aliases, so an agent
+switched to =list= or =table= renders its block and leaves every alias
+sitting under it, pristine ones included, with nothing said about them.
+Delete them by hand.  The reverse case is the same in shape and easier to
+see: an agent switched back to =children= renders aliases and leaves its
+block where it was, holding the last answer it was given.
 
 * Dynamic blocks
 :PROPERTIES:
