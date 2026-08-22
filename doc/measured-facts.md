@@ -13,8 +13,7 @@ wrong the correction is recorded rather than the belief.
 >
 > Also historical, and marked in place below: **E1**, **E2** and **E7** name
 > the database or the deleted `org-db-cli.el` where they mean ripgrep or
-> `org-agents.el` alone; **E9**'s figures were taken over two files, one of
-> which is gone; **E10** and **§4 Q2** cite `org-agents--absolute-date`, a
+> `org-agents.el` alone; **E10** and **§4 Q2** cite `org-agents--absolute-date`, a
 > function that was deleted along with the second date engine it existed to
 > agree with; **§2 L7** and **§4 Q2-Q5** reason about two engines disagreeing,
 > and there is now one; **L8** states the superseded whitespace rule; and
@@ -436,8 +435,8 @@ Measured end to end at *every* setting of `org-use-property-inheritance` — `ni
 `t`, and the selective list `("OWNER")` — over a parent/child fixture: the plain
 one- and two-argument forms matched the parent only in all nine combinations,
 and only the `:inherit t` form matched the child. **Trusting the docstring is
-what produced a wrong design premise here**, retracted twice (once in a
-docstring, once in the spec) before it stopped propagating. Do not write "plain
+what produced a wrong design premise here**, retracted twice before it stopped
+propagating. Do not write "plain
 forms inherit" anywhere. Note also that when `org-use-property-inheritance` is a
 *list*, a plist-bearing form gets `:inherit ''selective`, not the list.
 
@@ -807,13 +806,22 @@ differential tests designed, wired, self-verifying, and never once run, because
 no PostgreSQL was reachable during development. The prefilter is now ripgrep,
 so the property is provable in a plain `make test`: the same fixture corpus is
 handed to org-ql and to the prefilter in one Emacs, and the candidate set is
-asserted to cover org-ql's own answer. Eighteen tests make that assertion
-through `org-agents-test--should-cover`, fifteen of them named
+asserted to cover org-ql's own answer. Twenty-two tests make that assertion
+through `org-agents-test--should-cover`, sixteen of them named
 `org-agents-test-rg-covers-*`, and most name the fixture file they lose under
-the mutation they guard against; 25 tests in all need ripgrep and skip without
+the mutation they guard against; 45 tests in all need ripgrep and skip without
 it, which is the number `make test` prints. *Corrected 2026-08-19: this said
 "Twenty such tests", which is the size of the deleted differential suite and
-matches no grouping of the new one.* Every mutation those tests guard against
+matches no grouping of the new one. Re-measured 2026-08-22: 18/15/25 became
+22/16/45 as the suite grew. Method, so the next reader gets the same
+answer: the first two are counted over `(ert-select-tests t t)` — tests whose
+BODY calls `org-agents-test--should-cover`, and tests whose NAME begins
+`org-agents-test-rg-covers-` — not by grepping occurrences, which counts a
+helper holding the call as though it were a test and yields 23. The third is
+the skip total `make test` prints under `PATH=/tmp/empty:/usr/bin:/bin`; it
+is not statically derivable, because only 10 tests carry a literal
+`(skip-unless (executable-find "rg"))` and the other 35 reach it through
+helper macros.* Every mutation those tests guard against
 was applied and watched to fail. What replaced the
 unproven argument is not a better argument; it is a suite that executes.
 
