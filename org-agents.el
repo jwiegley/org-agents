@@ -71,8 +71,8 @@
 ;;   :AGENT_FORMAT:  whitespace-separated property names, shown after the
 ;;                   link in the children and list views.
 ;;   :AGENT_ACTION:  what to DO to the entries the query matched, as a
-;;                   declarative sentence: `set-property!(REVIEWED, today)
-;;                   tag!(+reviewed)'.  Read only by
+;;                   declarative sentence: `(set-property! REVIEWED today)
+;;                   (tag! +reviewed)'.  Read only by
 ;;                   `org-agents-apply-actions', from this entry's own
 ;;                   drawer, and never evaluated.  See `Actions' below.
 ;;   :AGENT_MATCH:   written by this package on a generated alias, never
@@ -232,8 +232,9 @@
 ;; machine and 12.8 s on one busy with other work, so a figure outside
 ;; the range above is machine load and not a regression.  The fast enumerator
 ;; reports the same vocabulary as the slow one, and
-;; `org-agents-test-attr-census-fast-equals-slow' is what says so.  And `org-agents-attribute-columns',
-;; which builds a `COLUMNS' format out of chosen declarations -- see
+;; `org-agents-test-attr-census-fast-equals-slow' is what says so.  And
+;; `org-agents-attribute-columns', which builds a `COLUMNS' format out of
+;; chosen declarations -- see
 ;; README's "Corpus-wide column view" for what that is for, which is a
 ;; recipe rather than a renderer: MEASURED, `org-agenda-columns' already
 ;; runs inside an `org-ql-search' results buffer, so corpus-wide
@@ -413,21 +414,12 @@
 ;; them as source and reports their own `(require 'cl)' against the require
 ;; lines here, then compiles this one and fails on any warning at all.
 ;;
-;; For the evaluation gate as it stands, see the `;;;; Gate' section below
-;; and README.md's "The query language": doc/design.md's own §Safety is
-;; superseded in part, and says at its head which four statements no
-;; longer describe the code.  See doc/design.md for the renderers.  Do
-;; NOT read its push-down table: that table describes the PostgreSQL
-;; prefilter this package used to have, and its per-row justifications
-;; are facts about SQL operators that no longer run -- a heading literal
-;; is argued safe there by `ILIKE %lit%', and a property value is said to
-;; be pushable when it holds no whitespace, which the rule in this file
-;; says outright is the wrong test.  Extending the table on those
-;; arguments can push something ripgrep cannot see, which drops files
-;; with no error.  The current push-down table is
-;; `org-agents--pushdown-fns' below, whose every row states its own
-;; superset argument, and README.md's "The ripgrep prefilter" section
-;; states the same table for a reader.
+;; For the evaluation gate as it stands, see the `;;;; Gate' section below,
+;; README.md's "The query language", and the manual's "What is evaluated,
+;; and what is refused".  The renderers are the manual's "Views" chapter.
+;; The push-down table is `org-agents--pushdown-fns' below, whose every row
+;; states its own superset argument, and README.md's "The ripgrep
+;; prefilter" section states the same table for a reader.
 
 ;;; Code:
 
@@ -946,23 +938,48 @@ what failing open costs is a subprocess."
         ((consp form) (or (org-agents--refused-head (car form))
                           (org-agents--refused-head (cdr form))))))
 
+(defun org-agents--query-position-p (form)
+  "Non-nil when FORM's ARGUMENTS are query positions.
+A combinator, a nested query, or a known predicate: those are the
+positions where the user meant to write a query.  Anywhere else is
+residual Lisp, where `p' or `re' is an ordinary variable and
+diagnosing it would answer a question the user was never asked."
+  (and (consp form)
+       (or (memq (car form) org-agents--boolean-heads)
+           (memq (car form) org-agents--nested-query-heads)
+           (org-agents--known-predicate-p (car form)))))
+
+(defun org-agents--walk-query (form check)
+  "Call CHECK on FORM and on every query position below it.
+ONE descent, shared by every check that wants it, because the descent
+is the part that must not drift: two walkers with the same guard
+written out twice are two chances to widen one and not the other, and a
+check that stopped descending where its sibling still did would go
+quiet rather than wrong.
+
+Deliberately still one walk PER CHECK rather than one walk calling
+several: each check then reports the first fault of its own kind
+anywhere in the query, which is the order the diagnostics were written
+for."
+  (when (and (consp form) (proper-list-p form))
+    (funcall check form)
+    (when (org-agents--query-position-p form)
+      (dolist (argument (cdr form))
+        (org-agents--walk-query argument check)))))
+
 (defun org-agents--check-head-spelling (form)
   "Signal `user-error' if FORM uses a spelling org-ql has no reading for.
-Only query positions are examined -- combinators, nested queries, and
-the arguments of known predicates, the same descent
-`org-agents--structurally-safe-p' makes -- because those are the
-positions where the user meant to write a query.  `(property \"K\"
+Only query positions are examined, through `org-agents--walk-query' --
+the same descent `org-agents--structurally-safe-p' makes.  `(property \"K\"
  (headline \"x\"))' is caught there, while in residual Lisp `p' or `re'
 is an ordinary variable or datum, and diagnosing it would answer a
 question the user was never asked."
-  (when (and (consp form) (proper-list-p form))
-    (when-let* ((fix (alist-get (car form) org-agents--misspelled-heads)))
-      (user-error "org-agents: `%s' is not an org-ql predicate; use `%s'"
-                  (car form) fix))
-    (when (or (memq (car form) org-agents--boolean-heads)
-              (memq (car form) org-agents--nested-query-heads)
-              (org-agents--known-predicate-p (car form)))
-      (mapc #'org-agents--check-head-spelling (cdr form)))))
+  (org-agents--walk-query
+   form
+   (lambda (form)
+     (when-let* ((fix (alist-get (car form) org-agents--misspelled-heads)))
+       (user-error "org-agents: `%s' is not an org-ql predicate; use `%s'"
+                   (car form) fix)))))
 
 (defun org-agents--check-resolved-args (form)
   "Signal `user-error' if FORM holds a `property-resolved' that cannot run.
@@ -976,23 +993,20 @@ time from inside org-ql's generated matcher, naming neither the agent nor
 the argument that was wrong.  It is named here instead, once, before any
 entry is examined.
 
-Only query positions are examined -- the same descent
-`org-agents--check-head-spelling' makes, and for the same reason: in
-residual Lisp `property-resolved' is an ordinary function call and not
-this predicate."
-  (when (and (consp form) (proper-list-p form))
-    (when (eq (car form) 'property-resolved)
-      (pcase form
-        (`(property-resolved ,(pred stringp)))
-        (`(property-resolved ,(pred stringp) ,(pred stringp)))
-        (_ (user-error
-            (concat "org-agents: `property-resolved' takes a property name"
-                    " and an optional value, both strings: `%s'")
-            (org-agents--query-text form)))))
-    (when (or (memq (car form) org-agents--boolean-heads)
-              (memq (car form) org-agents--nested-query-heads)
-              (org-agents--known-predicate-p (car form)))
-      (mapc #'org-agents--check-resolved-args (cdr form)))))
+Only query positions are examined, through `org-agents--walk-query' --
+in residual Lisp `property-resolved' is an ordinary function call and
+not this predicate."
+  (org-agents--walk-query
+   form
+   (lambda (form)
+     (when (eq (car form) 'property-resolved)
+       (pcase form
+         (`(property-resolved ,(pred stringp)))
+         (`(property-resolved ,(pred stringp) ,(pred stringp)))
+         (_ (user-error
+             (concat "org-agents: `property-resolved' takes a property name"
+                     " and an optional value, both strings: `%s'")
+             (org-agents--query-text form))))))))
 
 (defun org-agents--check-spelling (form)
   "Signal `user-error' if FORM cannot be evaluated as written.
@@ -1321,15 +1335,15 @@ refuse one, or lift a refusal.  See `org-agents-approvals-mode'."
 ;; answer with no error at all.  So the analysis is in two layers on
 ;; purpose: this one decides WHICH conjuncts are superset-safe, in an
 ;; abstract vocabulary -- `(property NAME)', `(property NAME VALUE)',
-;; `(scheduled)', `(deadline)', `(closed)', `(heading LITERAL...)' -- and
+;; `(property-resolved ...)', `(property-ts ...)', `(scheduled)',
+;; `(deadline)', `(closed)' and `(heading LITERAL...)' -- and
 ;; the emitter in the next section decides how ripgrep expresses one, or
 ;; declines to, which only widens.  Each layer states its own superset
 ;; argument, row by row and pattern by pattern.
 ;;
 ;; Soundness evidence: the `org-agents-test-rg-covers-*' tests, each of
 ;; which names the fixture file it loses under the mutation it guards
-;; against, and README.md's push-down table.  Not doc/design.md's
-;; table, which is the removed database's -- see the Commentary.
+;; against, and README.md's push-down table.
 
 (defun org-agents--heading-literals-p (strings)
   "Non-nil when every string in non-empty STRINGS may be sought in a raw line.
@@ -2022,12 +2036,12 @@ Pure: nothing here spawns anything."
                      "|" (org-agents--rg-property-pattern
                           org-agents--prototype-property)
                      ")"))))
-    ;; The value arm is deliberately NARROWER than the design document's
-    ;; widening, which puts existence on both sides.  It is sound by the
-    ;; same argument -- a matching entry either spells the value on one
-    ;; line of its own file or carries a `:PROTOTYPE:' line in it -- and
-    ;; MEASURED over the fixture corpus it drops a file the doc's spelling
-    ;; keeps, which is what stops `$NAME^' from being markedly slower than
+    ;; The value arm is deliberately NARROWER than putting existence on
+    ;; both sides.  It is sound by the same argument -- a matching entry
+    ;; either spells the value on one line of its own file or carries a
+    ;; `:PROTOTYPE:' line in it -- and MEASURED over the fixture corpus it
+    ;; drops a file the wider spelling keeps, which is what stops
+    ;; `$NAME^' from being markedly slower than
     ;; `$NAME' for no reason.  A value ripgrep cannot carry degrades to
     ;; the existence arm, which is wider and always sound.
     (`(property-resolved ,name ,value)
@@ -2625,7 +2639,17 @@ like."
 A property line written with nothing after it reads as the empty
 string, which `read-from-string' cannot read at all and which
 `expand-file-name' resolves to the whole of `org-directory'.  Written
-but empty and not written at all mean the same thing here."
+but empty and not written at all mean the same thing here.
+
+NO INHERITANCE OF ANY KIND, and that is load-bearing rather than
+incidental.  `org-entry-get' is called with no INHERIT argument, so this
+reads the entry's OWN drawer and nothing above it.  The
+non-inheritability of `:AGENT_ACTION:' rests here: were an INHERIT
+argument ever added, a prototype master or an outline ancestor could
+supply the code that edits your corpus when you act on a different
+file, and reading a file before trusting it would prove nothing.
+Anything that does want resolution calls `org-agents-resolve-property'
+instead."
   (when-let* ((value (org-entry-get nil property)))
     (unless (string-blank-p value) value)))
 
@@ -2651,8 +2675,8 @@ else aborts the whole run."
    ((null value) 'agenda)
    ((string-prefix-p "(" value) (org-agents--read-sexp ":AGENT_SCOPE:" value))
    ;; Only the three corpus names are symbols.  Interning every bare
-   ;; value would leave no way to write the directory scope the design
-   ;; calls for, and no `stringp' scope could ever reach
+   ;; value would leave no way to write a DIRECTORY scope -- see the
+   ;; manual's "Scope" -- and no `stringp' scope could ever reach
    ;; `org-agents--scope-root'.
    ((member value org-agents--scope-names) (intern value))
    (t value)))
@@ -6594,9 +6618,9 @@ is no agent one.  The whole buffer is read, whatever it is narrowed to."
            ;; position, so that marker would be left pointing at the block
            ;; just written -- and the next agent, found there, would render
            ;; the previous agent's block a second time and never its own.
-           ;; This is the same hazard Task 7 closed for alias insertion by
-           ;; inserting before the subtree's final newline; here the anchor
-           ;; itself is made to advance.
+           ;; This is the same hazard alias insertion closes by inserting
+           ;; before the subtree's final newline; here the anchor itself is
+           ;; made to advance.
            (push (copy-marker heading t) markers)))))
     (nreverse markers)))
 
@@ -7063,10 +7087,11 @@ for a user who asked for it by name."
 ;;
 ;; NO WRITES, of any kind, from an appearance declaration.  Setting a tag
 ;; or a TODO state from a resolved value is action code arriving through
-;; another door: it would be INHERITABLE behaviour, which part 3 of
-;; doc/research/action-code-safety.md is about -- a master's declaration
-;; running in every follower's file makes per-file trust meaningless.  Any
-;; such thing goes through the action-code trust model or not at all.
+;; another door: it would be INHERITABLE behaviour -- a master's
+;; declaration running in every follower's file makes per-file trust
+;; meaningless, which the manual's "What was deliberately not ported, and
+;; why" sets out.  Any such thing goes through the action-code trust model
+;; or not at all.
 
 (require 'font-lock)                    ; the keyword, and the region function
 
@@ -7605,17 +7630,41 @@ content may only tighten."
 ;;; The parser.  Pure: it reads no buffer, creates none, and writes
 ;;; nothing.  Every diagnostic fires before the query has run.
 
-(defconst org-agents--action-prefix "org-agents-action/"
-  "The namespace every action verb's name begins with.
-Name construction plus `fboundp' IS the resolver.  There is no registry
-and nothing declares anything, so a `defun' in init is an extension --
-and no text out of a property can name a function outside this
-namespace.")
+; Wrapped so that `org-agents-define-action' can read it while this file
+; is being COMPILED: a macro runs at expansion time, and a bare
+; `defconst' does not set a value then.
+(eval-and-compile
+  (defconst org-agents--action-prefix "org-agents-action/"
+    "The namespace every action verb's name begins with.
+  Name construction plus `fboundp' IS the resolver.  There is no registry
+  and nothing declares anything, so a `defun' in init is an extension --
+  and no text out of a property can name a function outside this
+  namespace."))
 
-(defconst org-agents--action-token-re "[[:alnum:]][[:alnum:]-]*!"
-  "A verb token: alphanumerics and hyphens, ending in `!'.
-The bang is part of the name and not punctuation around it, which is
-what makes a token visibly a thing that acts.")
+(eval-and-compile
+  (defconst org-agents--action-token-re "\\`[[:alnum:]][[:alnum:]-]*!\\'"
+    "The shape of a verb token: alphanumerics and hyphens, then one `!'.
+  ANCHORED AT BOTH ENDS, and matched against a WHOLE lexed run rather than
+  looked for at a position -- see `org-agents--action-check-token'.  That
+  is the difference between refusing `(set-property!! X)' and silently
+  writing a property whose NAME is `!': a `!' is not in this pattern's own
+  character class, so a pattern merely matched AT a position stops at the
+  first one and leaves the surplus to be lexed as an argument.
+
+  The bang is part of the name and not punctuation around it, which is
+  what makes a token visibly a thing that acts.
+
+  IT IS ALSO WHAT KEEPS THE LISP SHAPE HONEST.  An action looks like the
+  query in the drawer above it, and it is never read as Lisp; the bang is
+  the difference a reader can see.  No function in Emacs is named
+  `set-property!', and a form whose head does not end in one -- `(progn
+  ...)', `(shell-command \"y\")' -- is refused by shape, before any
+  question of what it might have meant.
+
+  The verb is lexed with `org-agents--action-bare-re', the very regexp an
+  ARGUMENT is lexed with, so the lexer cannot disagree with itself about
+  where a token ends.  Do not reintroduce a second character set for the
+  boundary: the two would drift, and the drift IS the bug above."))
 
 (defconst org-agents--action-ws-re "[ \t\n]*"
   "Whitespace between the pieces of an action.
@@ -7625,19 +7674,37 @@ A newline counts: an `:AGENT_ACTION:' value is one line, but a
 
 (defconst org-agents--action-quoted-re "\"\\(\\(?:[^\"\\\\]\\|\\\\.\\)*\\)\""
   "A quoted argument, group 1 holding its text still escaped.
-A quoted argument may hold commas, parentheses and escaped quotes, and
-is ALWAYS literal -- it is never read as a value keyword.  That is the
-documented escape hatch for both of the shape rules below.")
+A quoted argument may hold commas, parentheses, whitespace and escaped
+quotes.  That is the documented escape hatch for the shape rules below.
 
-(defconst org-agents--action-bare-re "[^,()\"]+"
-  "A bare argument: anything but a comma, a parenthesis or a quote.
+IN A VALUE POSITION it is also literal: `org-agents--action-value' does
+not read a quoted argument as one of its three keywords, which is how
+`(set-property! REVIEWED \"today\")' stores five letters.  The mark does
+not travel further than that.  A date position has no literal sink for it
+to travel to -- a SCHEDULED stamp cannot hold the word `today' -- and
+quoting there is LEXICALLY NECESSARY rather than an escape: whitespace
+separates arguments, so `(scheduled! \"2026-08-27 14:00\")' is the only
+way to write a shape `org-agents--action-date-re' already accepts.")
+
+(defconst org-agents--action-bare-re "[^ \t\n,()\"]+"
+  "A bare argument: anything but whitespace, a comma, a paren or a quote.
 Parentheses are outside it DELIBERATELY, and this is where the design
-parts from an evaluator.  `set-property!(X, (shell-command \"y\"))' is
+parts from an evaluator.  `(set-property! X (shell-command \"y\"))' is
 therefore a parse error naming the verb and the argument position,
 rather than a value that has to be proved harmless afterwards: an
-argument that LOOKS like Lisp is refused by shape.  The documented way
+argument that LOOKS like a call is refused by shape.  The documented way
 to store literal parentheses is to quote the argument, and a quoted one
-arrives as text.")
+arrives as text.
+
+Whitespace separates arguments, so a bare one holds none.  A value with
+a space in it is quoted: `(set-property! NOTE \"hello world\")'.
+
+A comma is outside it too, and that is worth its own sentence.  A comma
+separated the arguments of the older `set-property!(NAME, VALUE)' shape,
+so a corpus still spelling that way gets a diagnostic naming the verb
+and the position rather than a property whose value ends in a comma.  In
+Lisp a comma is also the unquote reader macro, and `,x' has no business
+arriving here as a string.")
 
 (defconst org-agents--action-values
   '(("today" . date) ("now" . datetime) ("empty" . empty))
@@ -7655,7 +7722,7 @@ A date, a date and a time, an offset like `+7d' or `++2w', `today' or
 `now'.  Anything else is refused, and the refusal is the point: MEASURED,
 `(org-read-date nil nil \"junk\")' answers with TODAY'S DATE silently,
 so `(org-schedule nil \"garbage\")' schedules today and says nothing.
-Ported naively, `scheduled!(nextweek)' would mass-schedule a corpus to
+Ported naively, `(scheduled! nextweek)' would mass-schedule a corpus to
 today.")
 
 (defconst org-agents--action-tag-re "\\`[-+][[:alnum:]_@#%]+\\'"
@@ -7668,7 +7735,7 @@ term is refused rather than read as \"add\".")
     ("SCHEDULED" . "scheduled!") ("DEADLINE" . "deadline!")
     ("TAGS" . "tag!"))
   "The verb that edits each special property `set-property!' refuses.
-Named in the refusal, so a corpus that spelled `set-property!(TODO, ...)'
+Named in the refusal, so a corpus that spelled `(set-property! TODO ...)'
 is told what to write instead of being told only that it cannot.")
 
 (defun org-agents--action-error (format &rest args)
@@ -7683,13 +7750,13 @@ came out of a file and the reader is looking at that file."
 Sets the match data, so a caller reads with `match-string' and advances
 with `match-end'.
 
-DELIBERATELY NOT a regexp beginning `\\\\=': MEASURED, `string-match'
-with a non-zero START does not anchor such a pattern at START, and the
-first prototype of this lexer therefore mis-lexed every input -- a bare
-`archive!' was reported as an error at character 4.  `\\\\=' is a POINT
-anchor and there is no point in a string.  The `(= (match-beginning 0)
-INDEX)' idiom below is what org-edna's own lexer uses, and it is
-correct.  Please do not \"simplify\" this back."
+DELIBERATELY NOT a regexp beginning `\\\\='.  MEASURED, and still true:
+`(string-match \"\\\\=b\" \"aaab\" 3)' answers nil, because `\\\\=' is a POINT
+anchor and a string has no point -- so a pattern written that way is not
+anchored at START and the lexer would mis-read every position it was
+handed.  The `(= (match-beginning 0) INDEX)' idiom below is what
+org-edna's own lexer uses, and it is correct.  Please do not \"simplify\"
+this back."
   (and (string-match regexp text index)
        (= (match-beginning 0) index)))
 
@@ -7732,6 +7799,55 @@ there is nothing to be gained by making one."
   (when-let* ((symbol (intern-soft (concat org-agents--action-prefix token))))
     (and (fboundp symbol) symbol)))
 
+(defun org-agents--action-token-p (run)
+  "Non-nil when RUN, one lexed run of characters, is spelled like a verb.
+A true predicate: it answers, it never signals, and it reads no match
+data -- `org-agents--action-check-token' is the one that refuses."
+  (and (stringp run) (string-match-p org-agents--action-token-re run) t))
+
+(defun org-agents--action-check-token (run index)
+  "Answer whether RUN, lexed at INDEX, is a verb token, refusing a near miss.
+Three outcomes, because a run that is nearly a verb and a run that was
+never one need different sentences:
+
+  t     -- RUN is spelled like a verb, and the caller may go on.
+  nil   -- RUN holds no `!' and was never a verb.  `(shell-command
+           \"x\")' and `(progn ...)' are not misspelled verbs, and
+           telling their author about bangs would tell him the wrong
+           thing, so the CALLER says where it stopped.
+  error -- RUN holds a `!', so it was trying to be a verb and is spelled
+           wrong.  Named AS WRITTEN, with the character it starts at,
+           which no later diagnostic can do once the run has been split.
+
+THIS IS THE BY-SHAPE REFUSAL, and it is why the lexer takes the whole
+run before judging any of it.  MEASURED against the parser this
+replaces: `(set-property!! X)' parsed as the verb `set-property!' with
+the arguments \"!\" and \"X\", so a stray bang silently wrote a property
+whose NAME is `!' at every entry the query matched; `(tag!+a)' added and
+`(tag!-a)' removed a tag where the Lisp reader would have seen one atom;
+and `(effort!0:30)' and `(todo!DONE)' set a field the same way.  A run
+is not resolved and the corpus is not opened until this has answered."
+  (cond ((org-agents--action-token-p run) t)
+        ((and run (string-match-p "!" run))
+         (org-agents--action-error
+          (concat "`%s' at character %d is not a verb token -- a verb is"
+                  " alphanumerics and hyphens ending in one `!', so either"
+                  " a space is missing or the token is misspelled")
+          run (1+ index)))))
+
+(defun org-agents--action-advised-spelling (token)
+  "How TOKEN should have been written, as a parenthesised form.
+Used by the one diagnostic that tells a corpus written in the older
+`verb!(...)' shape what to write instead.  A verb whose whole argument
+list is PHASE takes nothing, so it is spelled `(archive!)' and the
+advice must not invite an argument; anything else, and any token that
+names no verb at all, is spelled with an ellipsis."
+  (let* ((verb (org-agents--action-resolve token))
+         (maximum (and verb (cdr (func-arity verb)))))
+    (if (and (integerp maximum) (<= maximum 1))
+        (format "(%s)" token)
+      (format "(%s ...)" token))))
+
 (defun org-agents--action-terminal-p (verb)
   "Non-nil when VERB must be the last one in an action.
 Declared with a symbol property, like destructiveness, so that a verb
@@ -7745,7 +7861,7 @@ Used for one rule and nothing else: ONE ACTION WRITES EACH FIELD ONCE.
 The reason is the dry run.  Every planner runs against the state the run
 began in, so a second verb writing a field the first one already planned
 reports an `old' that is no longer there and a `new' that is not what the
-entry ends up as -- MEASURED, `tag!(+alpha) tag!(+beta)' at an entry
+entry ends up as -- MEASURED, `(tag! +alpha) (tag! +beta)' at an entry
 tagged `:api:' reports `:api: -> :api:beta:' on its second line while the
 entry ends up `:api:alpha:beta:'.  A report that understates the run is
 the one failure a dry run may not have, so the ordering is refused by the
@@ -7777,7 +7893,17 @@ function's own less one."
            (given (length args)))
       (when (or (< given low) (and high (> given high)))
         (org-agents--action-error
-         "`%s' takes %s, and %d %s given" token
+         ;; Too many arguments has one likely cause where the verb takes
+         ;; a value at all: whitespace separates arguments, so a value
+         ;; written with a space in it arrives as several.  Say what to
+         ;; do about it -- but only THERE.  A verb that takes no
+         ;; argument, `archive!', has no value to rejoin, and advising
+         ;; quotation would send its author looking for a value that was
+         ;; never in the form.
+         (concat "`%s' takes %s, and %d %s given"
+                 (and high (> high 0) (> given high)
+                      " -- a value with a space in it is one argument"))
+         token
          (cond ((and high (= low high))
                 (format "%d argument%s" low (if (= 1 low) "" "s")))
                (high (format "%d to %d arguments" low high))
@@ -7785,49 +7911,75 @@ function's own less one."
          given (if (= 1 given) "was" "were"))))))
 
 (defun org-agents--action-args (text index token)
-  "Parse the argument list of TOKEN, which opens at INDEX in TEXT.
-Answers `(ARGS . NEW-INDEX)'.  TEXT at INDEX is the opening parenthesis.
-Every argument is a string: a bare one `string-trim'med, a quoted one
-unescaped and marked -- see `org-agents--action-quoted-p'.  Every
+  "Parse the arguments of TOKEN, which begin at INDEX in TEXT.
+Answers `(ARGS . NEW-INDEX)', where NEW-INDEX is just past the closing
+parenthesis.  Every argument is a string: a bare one verbatim, a quoted
+one unescaped and marked -- see `org-agents--action-quoted-p'.  Every
 diagnostic names TOKEN and the 1-based position of the argument, because
-that is what a reader has to go and look at."
+that is what a reader has to go and look at.
+
+Whitespace separates the arguments and the closing parenthesis ends
+them, so there is no separator to get wrong and no empty argument to
+diagnose.
+
+AN ARGUMENT MAY NOT BE A LIST, and the refusal is by shape rather than
+by a rule checked afterwards: a parenthesis is outside
+`org-agents--action-bare-re', so the lexer cannot consume one as an
+argument and says so where it stands.  That is the one thing this
+language gives up nothing on by looking like Lisp."
   (let ((length (length text))
         (args nil)
         (position 0)
-        (index (1+ index))
         (done nil))
-    (setq index (org-agents--action-skip-ws text index))
-    (if (and (< index length) (= (aref text index) ?\)))
-        (cons nil (1+ index))           ; an empty list, `todo!()'
-      (while (not done)
+    (while (not done)
+      (setq index (org-agents--action-skip-ws text index))
+      (cond
+       ((>= index length)
+        (org-agents--action-error "`%s' is not closed" token))
+       ((= (aref text index) ?\)) (setq index (1+ index)) (setq done t))
+       (t
         (setq position (1+ position))
-        (setq index (org-agents--action-skip-ws text index))
         (cond
-         ((>= index length)
-          (org-agents--action-error "`%s' argument list is not closed" token))
          ((org-agents--action-at org-agents--action-quoted-re text index)
+          ;; A RAW NEWLINE IS REFUSED, by shape, here.  A quoted argument
+          ;; may otherwise hold anything, and a newline written into a
+          ;; property value ends the drawer line: MEASURED,
+          ;; `org-entry-put' accepts one, so `(set-property! NOTE \"a<LF>*
+          ;; Planted\")' left `* Planted' sitting inside the drawer where
+          ;; Org reads it as a HEADING.  Nothing legitimate is lost --
+          ;; an Org property value cannot span lines in the first place --
+          ;; and the escape `\\n' is unaffected, since
+          ;; `org-agents--action-unescape' reduces it to the letter `n'.
+          ;; Reachable because an `:AGENT_ACTION+:' continuation may be
+          ;; joined by an `org-property-separators' value holding one.
+          (when (string-match-p "[\n\r]" (match-string 1 text))
+            (org-agents--action-error
+             (concat "`%s' argument %d holds a line break, which would end"
+                     " the drawer line it was written into")
+             token position))
           (push (propertize (org-agents--action-unescape (match-string 1 text))
                             'org-agents-action-quoted t)
                 args)
           (setq index (match-end 0)))
+         ((= (aref text index) ?\()
+          (org-agents--action-error
+           (concat "`%s' argument %d is a list, and nothing in an action is"
+                   " ever evaluated -- quote it to store the text")
+           token position))
          ((org-agents--action-at org-agents--action-bare-re text index)
-          (let ((bare (string-trim (match-string 0 text))))
-            (when (string-empty-p bare)
-              (org-agents--action-error "`%s' argument %d is malformed"
-                                        token position))
-            (push bare args)
-            (setq index (match-end 0))))
+          (push (match-string 0 text) args)
+          (setq index (match-end 0)))
+         ;; The likeliest thing here is a comma left over from the
+         ;; older `set-property!(NAME, VALUE)' shape, so it is named
+         ;; rather than folded into the generic complaint.
+         ((= (aref text index) ?,)
+          (org-agents--action-error
+           (concat "`%s' argument %d begins with a comma -- whitespace"
+                   " separates the arguments of a form")
+           token position))
          (t (org-agents--action-error "`%s' argument %d is malformed"
-                                      token position)))
-        (setq index (org-agents--action-skip-ws text index))
-        (cond
-         ((>= index length)
-          (org-agents--action-error "`%s' argument list is not closed" token))
-         ((= (aref text index) ?,) (setq index (1+ index)))
-         ((= (aref text index) ?\)) (setq index (1+ index)) (setq done t))
-         (t (org-agents--action-error "`%s' argument %d is malformed"
-                                      token position))))
-      (cons (nreverse args) index))))
+                                      token position))))))
+    (cons (nreverse args) index)))
 
 (defun org-agents--parse-actions (text)
   "Parse TEXT, an `:AGENT_ACTION:' value, into a list of `(VERB . ARGS)'.
@@ -7836,7 +7988,7 @@ VERB is a symbol `fboundp' answered t for, produced only by
 verbatim out of TEXT: there are no symbols, no numbers, no lists and no
 other object type anywhere in the answer.  So
 
-  set-property!(REVIEWED, today) tag!(+reviewed)
+  (set-property! REVIEWED today) (tag! +reviewed)
 
 parses to
 
@@ -7874,23 +8026,60 @@ does."
           (fields (make-hash-table :test #'equal))
           (verbs nil))
       (while (< index length)
-        (unless (org-agents--action-at org-agents--action-token-re text index)
-          (org-agents--action-error
-           "unreadable at character %d: `%s'" (1+ index)
-           (substring text index (min length (+ index 24)))))
-        (let ((token (match-string 0 text))
-              (args nil)
-              (verb nil))
-          (setq index (match-end 0))
+        ;; Every form opens with a parenthesis, and the verb is inside
+        ;; it.  A token found OUTSIDE one is the older `verb!(...)'
+        ;; shape, so it gets its own sentence rather than the generic
+        ;; complaint: a corpus written the old way is told what to do.
+        (unless (= (aref text index) ?\()
+          (let ((run (and (org-agents--action-at
+                           org-agents--action-bare-re text index)
+                          (match-string 0 text))))
+            (if (org-agents--action-check-token run index)
+                ;; The advised spelling is the verb's OWN.  A verb that
+                ;; takes no argument is written `(archive!)', so
+                ;; advising `(archive! ...)' would send its author to
+                ;; the arity error next -- and
+                ;; `org-agents--action-call-text' already prints the
+                ;; parenthesised form the property holds.
+                (org-agents--action-error
+                 (concat "`%s' must be written `%s', with the verb"
+                         " inside the parens")
+                 run (org-agents--action-advised-spelling run))
+              (org-agents--action-error
+               "unreadable at character %d: `%s'" (1+ index)
+               (substring text index (min length (+ index 24)))))))
+        (let ((open index))
+          (setq index (org-agents--action-skip-ws text (1+ index)))
+          ;; Nothing left to quote, so the complaint is the truncation
+          ;; itself rather than an empty pair of quotes.  The character
+          ;; named is the PAREN's, 1-based, as every sibling diagnostic
+          ;; in this function names its own position.
+          (when (>= index length)
+            (org-agents--action-error
+             "the text ends after the `(' at character %d, with no verb read"
+             (1+ open))))
+        ;; The verb is lexed as ONE maximal run -- the same run an
+        ;; argument is lexed as -- and then judged whole.  That is what
+        ;; refuses `(set-property!! X)' and `(tag!+a)' rather than
+        ;; splitting a surplus bang or a dropped space off as argument 1.
+        (let* ((run (and (org-agents--action-at
+                          org-agents--action-bare-re text index)
+                         (cons (match-string 0 text) (match-end 0))))
+               (token (car run))
+               (args nil)
+               (verb nil))
+          (unless (org-agents--action-check-token token index)
+            (org-agents--action-error
+             "unreadable at character %d: `%s' -- a form opens with a verb"
+             (1+ index) (substring text index (min length (+ index 24)))))
+          (setq index (cdr run))
           (setq verb (or (org-agents--action-resolve token)
                          (org-agents--action-error
                           "`%s' is not an action verb (there is no `%s%s')"
                           token org-agents--action-prefix token)))
-          (setq index (org-agents--action-skip-ws text index))
-          (when (and (< index length) (= (aref text index) ?\())
-            (let ((parsed (org-agents--action-args text index token)))
-              (setq args (car parsed))
-              (setq index (cdr parsed))))
+          (let ((parsed (org-agents--action-args text index token)))
+            (setq args (car parsed))
+            (setq index (cdr parsed)))
           (org-agents--action-check-arity verb token args)
           ;; Refused HERE and not diagnosed mid-apply.  A terminal verb
           ;; removes the subtree a later verb would edit, so anything
@@ -7916,6 +8105,96 @@ does."
           (push (cons verb args) verbs)
           (setq index (org-agents--action-skip-ws text index))))
       (nreverse verbs))))
+
+;;; Defining a verb.  One macro, so that an author writes the token a
+;;; property spells and never the prefix the resolver constructs.
+
+;; Wrapped for the same reason as the two constants above: the macro reads
+;; it at expansion time, which is while this file is being compiled.
+(eval-and-compile
+  (defconst org-agents--action-declarations
+    '((:destructive . org-agents-action-destructive)
+      (:terminal    . org-agents-action-terminal)
+      (:field       . org-agents-action-field))
+    "The declarations `org-agents-define-action' accepts, and their properties.
+An alist rather than three cases in the macro, so the macro cannot accept a
+keyword the parser does not read -- and so this list is the one place a
+fourth declaration would be added."))
+
+(defmacro org-agents-define-action (name arglist &rest body)
+  "Define NAME as an action verb taking ARGLIST, with BODY.
+
+NAME is the token as a PROPERTY spells it -- `shout!', not
+`org-agents-action/shout!'.  The prefix is constructed here, so an author
+writes the name he will write in a drawer and nothing besides.
+
+THE NAMESPACE IS STILL THE CONTRACT.  This macro is a convenience over
+`defun' and nothing more: it constructs exactly the name
+`org-agents--action-resolve' will construct again at parse time, so a
+property still cannot reach a function outside
+`org-agents--action-prefix', and resolution is still name construction
+plus `intern-soft' plus `fboundp'.  Nothing registers anything.
+
+NAME IS CHECKED AGAINST THE TOKEN SHAPE at expansion time, which a plain
+`defun' could not do: a verb whose name no property could ever spell is
+unreachable, and finding that out at macro-expansion beats finding it out
+when an action silently fails to resolve.
+
+BODY may open with a docstring, then any of three declarations, each of
+which becomes the symbol property the parser already reads:
+
+  :destructive t     confirm at every entry, on every run
+  :terminal t        must be the last verb, and may appear once
+  :field FUNCTION    what the verb WRITES, as a function of its argument
+                     list, for the one-write-per-field rule
+
+Declared HERE rather than in loose `put' forms after the fact, and that
+is the point of the macro beyond the prefix: nothing enforces a `put'
+that was forgotten, and a destructive verb whose declaration was
+forgotten is a verb that quietly stops asking.  Keeping the declaration
+beside the definition makes the omission visible where it is made.
+
+The first parameter is the PHASE, always.  A verb is one function over
+two phases -- see the section comment below for why -- and
+`org-agents--action-check-arity' reads a verb's arity as its own less
+one, so a verb that took no phase would be refused as unusable at parse
+time.  That, too, is checked here instead."
+  (declare (indent 2) (doc-string 3))
+  (unless (symbolp name)
+    (error "org-agents: an action verb's name must be a symbol: %S" name))
+  (unless (string-match-p org-agents--action-token-re (symbol-name name))
+    (error (concat "org-agents: `%s' is not a token a property could name;"
+                   " a verb is alphanumerics and hyphens ending in one `!'")
+           name))
+  (unless (memq (car-safe arglist) '(phase _phase))
+    (error (concat "org-agents: `%s' must take PHASE first;"
+                   " a verb is one function over the `plan' and `apply' phases")
+           name))
+  (let* ((symbol (intern (concat org-agents--action-prefix (symbol-name name))))
+         (docstring (and (stringp (car-safe body)) (pop body)))
+         (declarations nil))
+    (while (keywordp (car-safe body))
+      (let* ((keyword (pop body))
+             (property (cdr (assq keyword org-agents--action-declarations))))
+        (unless property
+          (error (concat "org-agents: `%s' is not an action declaration;"
+                         " `%s' accepts %s")
+                 keyword name
+                 (mapconcat (lambda (cell) (format "`%s'" (car cell)))
+                            org-agents--action-declarations ", ")))
+        (when (null body)
+          (error "org-agents: `%s' declaration `%s' has no value" name keyword))
+        (push (cons property (pop body)) declarations)))
+    (unless body
+      (error "org-agents: `%s' has no body" name))
+    `(progn
+       (defun ,symbol ,arglist
+         ,@(and docstring (list docstring))
+         ,@body)
+       ,@(mapcar (lambda (cell)
+                   `(put ',symbol ',(car cell) ,(cdr cell)))
+                 (nreverse declarations))
+       ',symbol)))
 
 ;;; The vocabulary.  Nine verbs, each over Org's own editing primitives,
 ;;; each a `pcase' on PHASE.  An unknown phase is an `error' and not a
@@ -8009,8 +8288,8 @@ Interpreted HERE, in the verbs, and never in the parser: the parser
 cannot know which argument is a value, since `set-property!''s first
 argument is a property NAME and must stay literal whatever it spells.
 
-A QUOTED argument is never a keyword.  `set-property!(REVIEWED, today)'
-stores today's date and `set-property!(REVIEWED, \"today\")' stores the
+A QUOTED argument is never a keyword.  `(set-property! REVIEWED today)'
+stores today's date and `(set-property! REVIEWED \"today\")' stores the
 five letters.  That is the one cost of having keywords at all -- a
 keyword shadows a literal -- and quoting is the escape hatch: a bare
 word is literal unless it is one of three keywords, and a quoted
@@ -8026,6 +8305,26 @@ and the quoting mark is the parser's business rather than Org's."
       ('empty "")
       (_ plain))))
 
+(defun org-agents--action-text (text)
+  "TEXT with the parser's own bookkeeping off it, for insertion.
+THE RULE, rather than a list of callers, because a list is what goes
+stale: ANY argument a verb is about to put into the outline goes through
+this first.  `org-agents--action-value' does the same thing for a value
+and says why -- the answer goes into a buffer, and the quoting mark is
+the parser's business rather than Org's.  A verb that hands an argument
+to Org without either one leaks the mark.
+
+MEASURED before this existed: `(tag! \"+alpha\")' left
+`org-agents-action-quoted' on the five characters of `alpha' in the
+headline, and `(set-property! \"MYNAME\" v)' left it on the drawer line.
+A text property is not written to a file, so nothing was corrupted -- but
+the parser's bookkeeping sat in the outline for the rest of the session.
+
+NOT stripped centrally in `org-agents--action-call': the mark has to
+reach `org-agents--action-value' and `org-agents--action-arg-text', which
+is what it is for."
+  (and text (substring-no-properties text)))
+
 (defun org-agents--action-date (token date)
   "DATE as text `org-read-date' will read, or a `user-error' naming TOKEN.
 The SHAPE is checked first, and that check is the whole reason this
@@ -8033,8 +8332,26 @@ function exists -- see `org-agents--action-date-re' for the measurement.
 
 `today' and `now' are expanded here rather than handed to
 `org-read-date', so what is scheduled is what the word says and not
-whatever that parser makes of it."
-  (unless (string-match-p org-agents--action-date-re date)
+whatever that parser makes of it.
+
+THE QUOTING MARK IS DELIBERATELY IGNORED, and the reason is lexical.
+Whitespace separates arguments, so `(scheduled! \"2026-08-27 14:00\")' is
+the only way to write a shape the pattern above already accepts: quoting
+in a date position is what makes a shape writable, not a request to
+refuse it.  There is also no literal for it to mean -- a planning stamp
+cannot hold the word `today' -- so honouring the mark here would refuse
+a documented shape and buy nothing.  See
+`org-agents--action-quoted-re'."
+  ;; CASE-SENSITIVELY, and that is not fastidiousness.  `string-match-p'
+  ;; honours `case-fold-search', which defaults to t, so without this
+  ;; binding the pattern accepted the very spellings it was written to
+  ;; refuse -- and `org-read-date' does not understand them.  MEASURED:
+  ;; `+7D' and `+2W' passed the check and `org-read-date' answered TODAY;
+  ;; `TODAY' passed it and then missed the keyword arm below, because that
+  ;; arm compares with `equal'.  That is exactly the silent
+  ;; mass-scheduling this pattern exists to prevent.
+  (unless (let ((case-fold-search nil))
+            (string-match-p org-agents--action-date-re date))
     (org-agents--action-error
      (concat "`%s' takes a date `2026-08-27', a date and time"
              " `2026-08-27 14:00', an offset `+7d', `today' or `now'"
@@ -8042,15 +8359,29 @@ whatever that parser makes of it."
      token date))
   (cond ((equal date "today") (format-time-string "%Y-%m-%d"))
         ((equal date "now") (format-time-string "%Y-%m-%d %H:%M"))
-        (t date)))
+        (t (org-agents--action-text date))))
 
-(defun org-agents--action-stamp (date)
+(defun org-agents--action-stamp (date &optional existing)
   "The planning stamp DATE resolves to, as `<2026-08-27 Thu>'.
 Computed, and computed WITHOUT writing: the dry run has to show the date
 the apply phase is about to write, and an offset like `+7d' is not one a
-reader can work out from the line."
+reader can work out from the line.
+
+EXISTING is the entry's current planning value, and it is what makes a
+DOUBLE-SIGN offset predictable.  Org reads `++2w' as two weeks from the
+timestamp already on the entry, and `org-schedule' supplies that
+timestamp as `org-read-date''s DEFAULT-TIME.  Resolved without it, the
+same text means two weeks from NOW instead.
+
+MEASURED before EXISTING was passed, on an entry scheduled
+`<2020-01-01 Wed>': the report line said `-> <2026-09-05 Sat>' and the
+file received `<2020-01-15 Wed>'.  All four double-sign forms diverged,
+for both planning verbs, and `org-agents--action-verify' then stopped the
+run at that edit.  A report that names a date the apply phase will not
+write is the one failure a dry run may not have."
   (let* ((with-time (and (string-match-p "[0-9][0-9]:[0-9][0-9]" date) t))
-         (time (org-read-date with-time t date)))
+         (default (and existing (org-time-string-to-time existing)))
+         (time (org-read-date with-time t date nil default)))
     (format-time-string (org-time-stamp-format with-time) time)))
 
 (defconst org-agents--action-repeater-re
@@ -8078,7 +8409,7 @@ the middle of a run over a corpus.
 
 A REPEATER ALREADY ON THE ENTRY IS PART OF THE PLAN.  MEASURED:
 `org--deadline-or-schedule' lifts the cookie off the old stamp and puts
-it back on the new one, so `scheduled!(+7d)' over
+it back on the new one, so `(scheduled! +7d)' over
 `<2020-01-01 Wed +1w>' writes `<2026-08-27 Thu +1w>' -- and a plan that
 answered `<2026-08-27 Thu>' would have told the reader the repeater was
 about to be dropped.  Predicted here with Org's own pattern rather than
@@ -8087,7 +8418,10 @@ discovered afterwards."
     (pcase phase
       ('plan
        (let* ((old (org-entry-get nil property))
-              (stamp (org-agents--action-stamp date))
+              ;; OLD is handed on, so a double-sign offset resolves
+              ;; against the stamp already on the entry -- the same
+              ;; default `org-schedule' will use in the apply arm.
+              (stamp (org-agents--action-stamp date old))
               (repeater (org-agents--action-repeater old)))
          (cons old (if (and repeater (string-suffix-p ">" stamp))
                        (concat (substring stamp 0 -1) " " repeater ">")
@@ -8096,10 +8430,11 @@ discovered afterwards."
       (_ (org-agents--action-phase-error token phase)))))
 
 (defun org-agents--action-tag-terms (spec)
-  "SPEC's signed terms, each checked against `org-agents--action-tag-re'."
-  (let ((terms (split-string spec "[ \t]+" t)))
-    (unless terms
-      (org-agents--action-error "`tag!' was given no tag"))
+  "Check every term in SPEC against `org-agents--action-tag-re'.
+SPEC is a list of signed terms, already separated: the parser split them
+on the whitespace that separated them where the action was written, so
+this splits nothing."
+  (let ((terms (mapcar #'org-agents--action-text spec)))
     (dolist (term terms)
       (unless (string-match-p org-agents--action-tag-re term)
         (org-agents--action-error
@@ -8126,10 +8461,10 @@ than as a rewrite."
   "TAGS as Org spells them, `:a:b:', or the empty string for none."
   (if tags (concat ":" (string-join tags ":") ":") ""))
 
-(defun org-agents-action/set-property! (phase name value)
+(org-agents-define-action set-property! (phase name value)
   "Set property NAME to VALUE at the entry.
 
-Syntax: set-property!(NAME, VALUE)
+Syntax: (set-property! NAME VALUE)
 
 VALUE goes through `org-agents--action-value', so `today', `now' and
 `empty' are the three keywords and everything else is its own text.
@@ -8147,17 +8482,22 @@ because an action that could write them would PLANT agents, prototype
 links and action text into files the user has never edited -- which is
 exactly the per-file trust the non-inheritance rule exists to keep, and
 it would be undone by a verb.  `ARCHIVE' is refused because it steers
-where `archive!' puts a subtree: MEASURED, `set-property!(\"ARCHIVE\",
-\"/elsewhere.org::\") archive!' reported the innocuous default
-destination in the dry run and wrote the subtree to the other file, so
-the report -- which is the whole mitigation -- named the wrong file."
+where `archive!' puts a subtree: MEASURED,
+`(set-property! \"ARCHIVE\" \"/elsewhere.org::\") (archive!)' reported
+the innocuous default destination in the dry run and wrote the subtree to
+the other file, so the report -- which is the whole mitigation -- named
+the wrong file."
+  :field (lambda (args) (format "the property %s" (upcase (car args))))
   (when (member (upcase name) org-special-properties)
     (let ((instead (cdr (assoc-string (upcase name)
                                       org-agents--action-special-verbs))))
       (org-agents--action-error
        "`set-property!' will not write the special property `%s'%s" name
        (if instead (format "; use `%s'" instead) ""))))
-  (when (string-match-p org-agents--prototype-opaque-re (upcase name))
+  ;; The predicate, not its regexp: `org-agents--prototype-opaque-p' owns
+  ;; this test and does the case folding itself, so a widened opaque set
+  ;; reaches this refusal without a second edit here.
+  (when (org-agents--prototype-opaque-p name)
     (org-agents--action-error
      (concat "`set-property!' will not write `%s': an action may not plant"
              " an agent, a prototype link or action text in another file")
@@ -8168,34 +8508,49 @@ the report -- which is the whole mitigation -- named the wrong file."
              " `archive!' puts a subtree, and the dry run would name the"
              " destination it read before that")
      name))
-  (let ((new (org-agents--action-value value)))
+  (let ((new (org-agents--action-value value))
+        (name (org-agents--action-text name)))
     (pcase phase
       ('plan (cons (org-entry-get nil name) new))
       ('apply (org-entry-put nil name new))
       (_ (org-agents--action-phase-error "set-property!" phase)))))
 
-(defun org-agents-action/delete-property! (phase name)
+(org-agents-define-action delete-property! (phase name)
   "Delete property NAME at the entry.
 
-Syntax: delete-property!(NAME)
+Syntax: (delete-property! NAME)
 
 DESTRUCTIVE: it removes information, so it confirms at every entry on
 every run.  There is no remembered approval, no option that silences it,
 and in batch it is refused rather than assumed -- see
 `org-agents--action-confirm'."
-  (pcase phase
-    ('plan (cons (org-entry-get nil name) nil))
-    ('apply (org-entry-delete nil name))
-    (_ (org-agents--action-phase-error "delete-property!" phase))))
+  :destructive t
+  :field (lambda (args) (format "the property %s" (upcase (car args))))
+  (let ((name (org-agents--action-text name)))
+    (pcase phase
+      ('plan (cons (org-entry-get nil name) nil))
+      ('apply (org-entry-delete nil name))
+      (_ (org-agents--action-phase-error "delete-property!" phase)))))
 
-(defun org-agents-action/tag! (phase spec)
-  "Add and remove tags at the entry, following SPEC.
+(org-agents-define-action tag! (phase term &rest terms)
+  "Add and remove tags at the entry, following TERM and TERMS.
 
-Syntax: tag!(+added -removed)
+Syntax: (tag! +added -removed)
 
-Whitespace-separated SIGNED terms, applied left to right.  `tag!(+a -b)'
-adds `a' and removes `b'; `tag!(reviewed)' is refused, and the refusal
-says to write `+reviewed'.
+SIGNED terms, applied left to right.  `(tag! +a -b)' adds `a' and
+removes `b'; `(tag! reviewed)' is refused, and the refusal says to write
+`+reviewed'.
+
+One term is REQUIRED in the signature rather than checked in the body,
+so that `(tag!)' is an arity error out of the parser, raised before the
+corpus is opened.  A verb that accepted no tag and complained later
+would have moved that refusal into the plan phase for no reason.
+
+Not every refusal can move there.  Whether a term is SIGNED is checked
+in the plan phase, along with `scheduled!''s date shape, `todo!''s
+keyword and `priority!''s letter -- see `org-agents--action-tag-terms'.
+The parser refuses what it can see in the text; a verb refuses what it
+can only know at the entry.
 
 DELIBERATELY NOT org-edna's `tag!', and the divergence is the point.
 That one hands a whole tag specification to `org-set-tags' and therefore
@@ -8203,7 +8558,9 @@ REPLACES the entry's tags.  Over an agent's match set that is a silent
 mass deletion -- bounded, and data-destroying -- from a verb whose
 one-word form looks additive.  A set-all form, if it is ever wanted, is a
 different verb and it is destructive.  README states this."
-  (let ((tags (org-get-tags nil t)))
+  :field (lambda (_args) "tags")
+  (let ((tags (org-get-tags nil t))
+        (spec (cons term terms)))
     (pcase phase
       ('plan (cons (org-agents--action-tag-text tags)
                    (org-agents--action-tag-text
@@ -8211,10 +8568,10 @@ different verb and it is destructive.  README states this."
       ('apply (org-set-tags (org-agents--action-tags spec tags)))
       (_ (org-agents--action-phase-error "tag!" phase)))))
 
-(defun org-agents-action/todo! (phase state)
+(org-agents-define-action todo! (phase state)
   "Set the entry's TODO keyword to STATE.
 
-Syntax: todo!(DONE)
+Syntax: (todo! DONE)
 
 STATE is checked against `org-todo-keywords-1' READ IN THE MATCH'S OWN
 BUFFER, because those keywords are buffer-local: a corpus may spell
@@ -8239,6 +8596,7 @@ arithmetic at apply time, and the line the user approved said
 which is what `C-c C-t' is for; a mass action that silently rolled
 ninety stamps forward while reporting something else is not a feature
 worth having, so `todo!' names the entry and refuses."
+  :field (lambda (_args) "the TODO keyword")
   (pcase phase
     ('plan
      (unless (member state org-todo-keywords-1)
@@ -8255,10 +8613,10 @@ worth having, so `todo!' names the entry and refuses."
     ('apply (org-todo state))
     (_ (org-agents--action-phase-error "todo!" phase))))
 
-(defun org-agents-action/priority! (phase letter)
+(org-agents-define-action priority! (phase letter)
   "Set the entry's priority to LETTER.
 
-Syntax: priority!(A)
+Syntax: (priority! A)
 
 One upper-case letter, inside `org-priority-highest' to
 `org-priority-lowest'.  `aref' of the checked string, never
@@ -8267,6 +8625,7 @@ One upper-case letter, inside `org-priority-highest' to
 MEASURED, `org-priority' signals a `user-error' for a letter outside the
 range, so this check too only moves an existing refusal earlier -- into
 the phase that has not written anything yet."
+  :field (lambda (_args) "the priority")
   (unless (string-match-p "\\`[A-Z]\\'" letter)
     (org-agents--action-error
      "`priority!' takes one upper-case letter, not `%s'" letter))
@@ -8280,34 +8639,37 @@ the phase that has not written anything yet."
       ('apply (org-priority char))
       (_ (org-agents--action-phase-error "priority!" phase)))))
 
-(defun org-agents-action/scheduled! (phase date)
+(org-agents-define-action scheduled! (phase date)
   "Schedule the entry for DATE.
 
-Syntax: scheduled!(2026-08-27), scheduled!(+7d), scheduled!(today)
+Syntax: (scheduled! 2026-08-27), (scheduled! +7d), (scheduled! today)
 
 See `org-agents--action-date-re' for the shapes accepted, and for the
 measured hazard the shape check exists to close."
+  :field (lambda (_args) "SCHEDULED")
   (org-agents--action-planning phase "scheduled!" "SCHEDULED"
                                #'org-schedule date))
 
-(defun org-agents-action/deadline! (phase date)
+(org-agents-define-action deadline! (phase date)
   "Give the entry a deadline of DATE.
 
-Syntax: deadline!(2026-08-27), deadline!(+7d), deadline!(today)
+Syntax: (deadline! 2026-08-27), (deadline! +7d), (deadline! today)
 
 The same shapes `scheduled!' takes, and the same refusal."
+  :field (lambda (_args) "DEADLINE")
   (org-agents--action-planning phase "deadline!" "DEADLINE"
                                #'org-deadline date))
 
-(defun org-agents-action/effort! (phase value)
+(org-agents-define-action effort! (phase value)
   "Set the entry's effort to VALUE.
 
-Syntax: effort!(0:30)
+Syntax: (effort! 0:30)
 
 The argument stays a STRING.  Org's effort values are text -- `0:30',
 `2d' -- so there is nothing to convert, and nothing in this vocabulary
 calls `string-to-number' at all.  Written to `org-effort-property',
 which is the name Org's own column summaries read."
+  :field (lambda (_args) (format "the property %s" (upcase org-effort-property)))
   (let ((new (org-agents--action-value value)))
     (pcase phase
       ('plan (cons (org-entry-get nil org-effort-property) new))
@@ -8323,10 +8685,10 @@ of it."
   (car (org-archive--compute-location
         (or (org-entry-get nil "ARCHIVE" 'inherit) org-archive-location))))
 
-(defun org-agents-action/archive! (phase)
+(org-agents-define-action archive! (phase)
   "Archive the entry's subtree.
 
-Syntax: archive!
+Syntax: (archive!)
 
 DESTRUCTIVE, so it confirms at every entry on every run; and TERMINAL,
 so it must be the last verb in the text and may appear once -- it removes
@@ -8338,7 +8700,7 @@ The destination is computed WITHOUT archiving, with the expression
 subtree is about to go -- and it is computed AGAIN, immediately before
 archiving, and the subtree is not archived at all where the two
 disagree.  MEASURED, that is not a theoretical divergence: an earlier
-`set-property!(\"ARCHIVE\", \"/elsewhere.org::\")' in the same action
+`(set-property! \"ARCHIVE\" \"/elsewhere.org::\")' in the same action
 redirected the archive while the report named the default file next to
 the source, since the whole plan is computed before any row is applied.
 `set-property!' now refuses the name `ARCHIVE' as well, so there are two
@@ -8361,6 +8723,9 @@ would read standard input in batch and whose refusal path signals a bare
 `error'.  The confirmation this verb needs is
 `org-agents--action-confirm', asked by the apply pass, once per entry,
 every run."
+  :destructive t
+  :terminal t
+  :field (lambda (_args) "the subtree")
   (pcase phase
     ('plan (cons "<subtree>" (org-agents--action-archive-location)))
     ('apply
@@ -8375,43 +8740,29 @@ every run."
          (org-archive-subtree))))
     (_ (org-agents--action-phase-error "archive!" phase))))
 
-;; Destructiveness and terminality are declared by SYMBOL PROPERTIES, and
-;; not by a list in this file or by a variable.  A verb defined in init
-;; declares itself with the same two `put's, which is why a property beats
-;; a list: extension must not require editing the package.  And a
-;; file-local variables block cannot `put' a property -- only the `eval:'
-;; escape hatch could, and that is already behind `enable-local-eval'.
-;; There is no option that turns either off, because there is nothing to
-;; set.
-(put 'org-agents-action/delete-property! 'org-agents-action-destructive t)
-(put 'org-agents-action/archive! 'org-agents-action-destructive t)
-(put 'org-agents-action/archive! 'org-agents-action-terminal t)
-
-;; And the third property, for the same reason: what each verb WRITES, so
-;; that `org-agents--action-field' can hold the one-write-per-field rule.
-;; A property name is upcased, because Org's are case-insensitive, and
-;; `set-property!' and `delete-property!' answer the same field for the
-;; same name so that writing and deleting one property in one action is
-;; refused as the contradiction it is.  `effort!' answers the property it
-;; writes rather than "effort", so it collides with a `set-property!' of
-;; `org-effort-property' spelled by hand.
-(let ((named (lambda (args) (format "the property %s" (upcase (car args))))))
-  (put 'org-agents-action/set-property! 'org-agents-action-field named)
-  (put 'org-agents-action/delete-property! 'org-agents-action-field named))
-(put 'org-agents-action/effort! 'org-agents-action-field
-     (lambda (_args) (format "the property %s" (upcase org-effort-property))))
-(put 'org-agents-action/tag! 'org-agents-action-field
-     (lambda (_args) "tags"))
-(put 'org-agents-action/todo! 'org-agents-action-field
-     (lambda (_args) "the TODO keyword"))
-(put 'org-agents-action/priority! 'org-agents-action-field
-     (lambda (_args) "the priority"))
-(put 'org-agents-action/scheduled! 'org-agents-action-field
-     (lambda (_args) "SCHEDULED"))
-(put 'org-agents-action/deadline! 'org-agents-action-field
-     (lambda (_args) "DEADLINE"))
-(put 'org-agents-action/archive! 'org-agents-action-field
-     (lambda (_args) "the subtree"))
+;; The three declarations each verb carries above are SYMBOL PROPERTIES,
+;; and not a list in this file or a variable.  A verb defined in init
+;; declares itself the same way, through the same macro, which is why a
+;; property beats a list: extension must not require editing the package.
+;; And a file-local variables block cannot `put' a property -- only the
+;; `eval:' escape hatch could, and that is already behind
+;; `enable-local-eval'.  There is no option that turns any of them off,
+;; because there is nothing to set.
+;;
+;; They are declared BESIDE each definition rather than in a block down
+;; here, and the reason is the failure mode: nothing enforces a `put' that
+;; was forgotten, and a destructive verb whose declaration was forgotten is
+;; a verb that quietly stops asking.  `org-agents-define-action' keeps the
+;; declaration where the omission would be made.
+;;
+;; On `:field', which is the least obvious of the three: it answers what a
+;; verb WRITES, so that `org-agents--action-field' can hold the
+;; one-write-per-field rule.  A property name is upcased, because Org's are
+;; case-insensitive, and `set-property!' and `delete-property!' answer the
+;; same field for the same name so that writing and deleting one property
+;; in one action is refused as the contradiction it is.  `effort!' answers
+;; the property it writes rather than "effort", so it collides with a
+;; `set-property!' of `org-effort-property' spelled by hand.
 
 ;;; The command: read, parse, match, gate on scale, plan, report,
 ;;; confirm, apply, say what was modified.  Nothing is saved.
@@ -8512,7 +8863,7 @@ an action never edits the agent itself, and never edits a generated
 alias.  The EXPLICIT path does not go through `--collect' at all, so
 without this it had neither -- MEASURED, an agent whose body held a link
 to itself, with that line in the region, applied
-`set-property!(AGENT_QUERY, hijacked)' to its own drawer and rewrote the
+`(set-property! AGENT_QUERY hijacked)' to its own drawer and rewrote the
 query the next run would read.  A region is a hand-made selection and a
 rendered view is full of links, so the entry that must not be edited is
 exactly the one most likely to be selected by accident.
@@ -8706,7 +9057,7 @@ and must not be accused of writing."
                               ;; an edit, and must not be counted in the
                               ;; sentence the user answers nor asked
                               ;; about at all -- MEASURED,
-                              ;; `delete-property!(OWNER)' over ninety
+                              ;; `(delete-property! OWNER)' over ninety
                               ;; entries where four carry `OWNER' asked
                               ;; ninety times and called itself ninety
                               ;; edits.
@@ -8805,8 +9156,8 @@ noticed, and they belong in the sentence being answered."
   "ARG spelled the way the property spells it, quotes included.
 A quoted argument is printed quoted, with its escapes restored.  Not
 decoration: `org-agents--action-value' gives the two spellings DIFFERENT
-meanings -- `set-property!(R, today)' stamps a date and
-`set-property!(R, \"today\")' stores five letters -- so a report that
+meanings -- `(set-property! R today)' stamps a date and
+`(set-property! R \"today\")' stores five letters -- so a report that
 printed them identically would leave an auditor unable to tell which
 line did which."
   (let ((plain (substring-no-properties arg)))
@@ -8816,18 +9167,22 @@ line did which."
       plain)))
 
 (defun org-agents--action-call-text (row)
-  "ROW's verb and arguments, spelled the way the property spells them."
+  "ROW's verb and arguments, spelled the way the property spells them.
+A form, parenthesised, with whitespace between the arguments -- so that
+a reader can take a line out of the report, paste it into the drawer, and
+have written what the report said.  A verb with no arguments still gets
+its parentheses, because `(archive!)' is what the property holds."
   (if-let* ((args (plist-get row :args)))
-      (format "%s(%s)" (plist-get row :token)
-              (mapconcat #'org-agents--action-arg-text args ", "))
-    (plist-get row :token)))
+      (format "(%s %s)" (plist-get row :token)
+              (mapconcat #'org-agents--action-arg-text args " "))
+    (format "(%s)" (plist-get row :token))))
 
 (defun org-agents--action-side (value)
   "VALUE as one side of a report line's `old -> new'.
 Nothing at all is `nil' and the EMPTY STRING is `\"\"', because they are
 different results and a line with nothing on either side of the arrow
 reads as a broken line rather than as a no-op -- MEASURED, removing a
-tag an entry only inherits printed `tag!(-inherited)   ->  '."
+tag an entry only inherits printed `(tag! -inherited)   ->  '."
   (cond ((null value) "nil")
         ((string-empty-p value) "\"\"")
         (t value)))
@@ -8884,7 +9239,7 @@ definition what the field reads now, and the planned NEW is what the
 report showed.
 
 Not hypothetical.  MEASURED, before the two refusals above existed:
-`todo!(DONE)' over a repeating entry left it `TODO' with its stamp rolled
+`(todo! DONE)' over a repeating entry left it `TODO' with its stamp rolled
 forward, and reported `TODO -> DONE  applied'.  And `org-todo' fails
 SILENTLY when `org-blocker-hook' blocks -- a `message' and a `throw', no
 signal -- which no amount of care inside a verb can turn into a
@@ -9072,7 +9427,21 @@ What happens, in order:
      buffer, and named.
 
 The vocabulary is the nine `org-agents-action/...' functions, and a
-tenth is a `defun' in your init file: see README's \"Action code\"."
+tenth is a `defun' in your init file: see README's \"Action code\".
+
+TWO CONTRACTS A VERB DEFINED IN INIT MUST KEEP, because neither is
+enforced and breaking either defeats a guarantee this command states.
+
+It reads the entry's OWN drawer, with `org-entry-get' or
+`org-agents--entry-get', and NEVER `org-agents-resolve-property'.  A
+verb that resolved would let a prototype master in another file decide
+what gets written here, which is the per-file trust the
+non-inheritance rule exists to keep.
+
+Its `plan' phase writes NOTHING and answers `(OLD . NEW)'.  The dry run
+is the whole mitigation, so a plan phase that wrote would put an edit
+on disk that no report line named.  A plan that writes is caught, but
+it is caught as a failure rather than prevented."
   (interactive "P")
   (let* ((marker (org-with-wide-buffer
                   (or (org-agents--agent-marker)

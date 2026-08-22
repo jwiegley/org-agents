@@ -15,9 +15,9 @@ evaluation engine and therefore exactly one answer.
 candidate-**file** prefilter and nothing more: it can narrow the set of
 files org-ql then opens and verifies, and it cannot change what matches.
 
-One file makes up the package, `org-agents.el` (~8,700 lines), and one
-tests it, `org-agents-test.el` — 449 ERT tests, all of which run in a
-plain `make test` with no external service. The 40 that exercise the
+One file makes up the package, `org-agents.el` (~9,400 lines), and one
+tests it, `org-agents-test.el` — 460 ERT tests, all of which run in a
+plain `make test` with no external service. The 45 that exercise the
 prefilter and the attribute census end to end need `rg` on `PATH`, and
 `make test` says so when it
 is missing.
@@ -925,10 +925,10 @@ reserved and none is planned.
 TODO state or a property from a resolved value is action code arriving
 through another door. What makes it different in kind from facing a headline
 is that it would be *inheritable behaviour*: a master's declaration running
-in every follower's file, in files you never opened, is what part 3 of
-`doc/research/action-code-safety.md` says makes per-file trust
-meaningless. Any such thing goes through the action-code trust model or not
-at all.
+in every follower's file, in files you never opened, is what makes per-file
+trust meaningless — the manual's "What was deliberately not ported, and
+why" sets out the argument. Any such thing goes through the action-code
+trust model or not at all.
 
 One thing is neither refused nor done: facing by a **member** of a `set` or
 `list` rather than by the whole value. `ATTR_FACES` maps whole values today,
@@ -1202,7 +1202,7 @@ An agent can carry an *action* as well as a query: a declarative sentence in
 * Stamp what I have reviewed
 :PROPERTIES:
 :AGENT_QUERY:  (and (todo) (property-ts "NEXT_REVIEW" :to today))
-:AGENT_ACTION: set-property!(REVIEWED, today) tag!(+reviewed)
+:AGENT_ACTION: (set-property! REVIEWED today) (tag! +reviewed)
 :END:
 ```
 
@@ -1227,8 +1227,9 @@ file — all fifteen autoloads and the six internal write drivers the save path
 is built out of — replaces all nine verbs with a tripwire, and asserts the
 tripwire is never touched, except by `org-agents-apply-actions`, which is
 asserted to touch it so that the tripwire is proved live rather than assumed.
-The list of autoloads is derived from the source text, so a sixteenth fails
-the suite until somebody adds it to the table and exercises it too.
+The list of autoloads is derived from the source text, so an autoload the
+table does not hold fails the suite until somebody adds it and exercises it
+too.
 
 **Actions are not inheritable.** The action is read from the agent entry's
 own drawer, with `org-entry-get` and no inheritance of any kind: not through
@@ -1248,13 +1249,71 @@ with the likeliest mutation, an added inherit argument, still in place.
 Measured: with that mutation applied, the prototype test passed and the
 outline and `#+PROPERTY:` tests failed.
 
-**Nothing in `:AGENT_ACTION:` is ever evaluated.** No `read`, no
-`read-from-string`, no `eval`, no `format` into a form, no `macroexpand`, and
-no `intern` of text out of a property. A token becomes a function by *name
-construction* — `org-agents-action/` plus the token — followed by
-`intern-soft` and `fboundp`, so a token that names nothing is a syntax error
-rather than a call, and a misspelling cannot even grow the obarray.
-Arguments reach a verb as strings, verbatim.
+**Nothing in `:AGENT_ACTION:` is ever evaluated.** An action is shaped like
+the query above it in the drawer, and the resemblance stops at the shape.
+No `read`, no `read-from-string`, no `eval`, no `format` into a form, no
+`macroexpand`, and no `intern` of text out of a property. A token becomes a
+function by *name construction* — `org-agents-action/` plus the token —
+followed by `intern-soft` and `fboundp`, so a token that names nothing is a
+syntax error rather than a call, and a misspelling cannot even grow the
+obarray. Arguments reach a verb as strings, verbatim.
+
+The bang is what keeps the Lisp shape honest. No function in Emacs is named
+`set-property!`, so a form whose head lacks one is refused before any
+question of what it might have meant: `(progn (tag! +a))` and
+`(shell-command "y")` are both parse errors naming the character they
+stopped at. And a parenthesis cannot appear inside an argument, so no form
+can hold another — `(set-property! X (shell-command "y"))` is a parse error
+naming the verb and the argument position, rather than a value something has
+to prove harmless afterwards. And a verb token is lexed *whole*: it is one
+run of characters up to the next space, comma, parenthesis or quotation
+mark, and that run must be alphanumerics and hyphens ending in a single
+`!`. So `(set-property!! X)` and `(tag!+a)` are parse errors naming the run
+as written and the character it starts at, rather than that verb with `!` or
+`+a` left over as its first argument. A `!` inside an argument is untouched:
+`(set-property! NOTE Done!)` writes `Done!`.
+
+### Writing an action
+
+An action is a sequence of forms. Each form is a verb and its arguments in
+parentheses, whitespace-separated, and the verbs apply left to right at
+every matched entry.
+
+```org
+:AGENT_QUERY:  (and (todo "TODO") (property "NEXT_REVIEW"))
+:AGENT_ACTION: (set-property! REVIEWED today) (tag! +reviewed)
+```
+
+A bare argument is anything but whitespace, a comma, a parenthesis or a
+quotation mark. A quoted argument admits backslash escapes and is how you
+write a value holding any of those — in particular, **a value with a space
+in it must be quoted**, since whitespace would otherwise split it into two
+arguments:
+
+```org
+:AGENT_ACTION: (set-property! NOTE "hello world")
+```
+
+A verb taking no argument keeps its parentheses: `(archive!)`.
+
+**This syntax changed.** An action used to be written with the verb outside
+the parentheses and the arguments separated by commas —
+`set-property!(REVIEWED, today) tag!(+reviewed)` — which read as a third
+language beside the query's sexp and Lisp proper. Both of the old spellings
+now get a diagnostic that says what to write instead:
+
+```
+org-agents: :AGENT_ACTION: `set-property!' must be written
+  `(set-property! ...)', with the verb inside the parens
+org-agents: :AGENT_ACTION: `set-property!' argument 2 begins with a comma
+  -- whitespace separates the arguments of a form
+```
+
+One behaviour changed with it, and it is the only one: a bare argument used
+to be able to hold a space, because commas did the separating. `tag!` also
+takes its signed terms as separate arguments now rather than as one
+whitespace-separated string, so `(tag!)` with no term at all is an arity
+error out of the parser instead of a complaint from the verb.
 
 ### The vocabulary
 
@@ -1270,15 +1329,15 @@ something you can check rather than take on trust.
 
 | Verb | What it edits | Through | Confirms |
 | --- | --- | --- | --- |
-| `set-property!(NAME, VALUE)` | the property `NAME` | `org-entry-put` | |
-| `delete-property!(NAME)` | removes the property `NAME` | `org-entry-delete` | **every time** |
-| `tag!(+added -removed)` | the entry's own tags | `org-set-tags` | |
-| `todo!(STATE)` | the TODO keyword, and nothing else — no `CLOSED`, no note; a repeating entry is refused | `org-todo` | |
-| `priority!(A)` | the priority cookie | `org-priority` | |
-| `scheduled!(DATE)` | the `SCHEDULED` stamp | `org-schedule` | |
-| `deadline!(DATE)` | the `DEADLINE` stamp | `org-deadline` | |
-| `effort!(VALUE)` | `org-effort-property`, normally `Effort` | `org-entry-put` | |
-| `archive!` | archives the subtree, into a buffer and never to disk | `org-archive-subtree` | **every time** |
+| `(set-property! NAME VALUE)` | the property `NAME` | `org-entry-put` | |
+| `(delete-property! NAME)` | removes the property `NAME` | `org-entry-delete` | **every time** |
+| `(tag! +added -removed)` | the entry's own tags | `org-set-tags` | |
+| `(todo! STATE)` | the TODO keyword, and nothing else — no `CLOSED`, no note; a repeating entry is refused | `org-todo` | |
+| `(priority! A)` | the priority cookie | `org-priority` | |
+| `(scheduled! DATE)` | the `SCHEDULED` stamp | `org-schedule` | |
+| `(deadline! DATE)` | the `DEADLINE` stamp | `org-deadline` | |
+| `(effort! VALUE)` | `org-effort-property`, normally `Effort` | `org-entry-put` | |
+| `(archive!)` | archives the subtree, into a buffer and never to disk | `org-archive-subtree` | **every time** |
 
 Several of them refuse more than Org does, and each refusal is a measured
 hazard rather than fastidiousness.
@@ -1287,8 +1346,8 @@ hazard rather than fastidiousness.
 `org-edna-action/tag!` hands a whole tag specification to `org-set-tags`,
 which *replaces* the entry's tags. Over an agent's match set that is a
 silent mass deletion, from a verb whose one-word form looks additive. So
-here `tag!(+reviewed)` adds, `tag!(-stale)` removes, `tag!(+reviewed -stale)`
-does both left to right, and `tag!(reviewed)` is refused with a message
+here `(tag! +reviewed)` adds, `(tag! -stale)` removes, `(tag! +reviewed -stale)`
+does both left to right, and `(tag! reviewed)` is refused with a message
 saying to write `+reviewed`. A set-all form, if it is ever wanted, will be a
 different verb and it will be destructive.
 
@@ -1324,8 +1383,8 @@ happens at apply time, so no dry run can show it; advancing a repeater is a
 per-entry judgement anyway, and that is what `C-c C-t` is for.
 
 **`set-property!` will not write an `AGENT_` name, `PROTOTYPE`, or
-`ARCHIVE`.** Measured: `set-property!("AGENT_QUERY", "(todo)")
-set-property!("AGENT_ACTION", "archive!")` left both properties on a matched
+`ARCHIVE`.** Measured: `(set-property! "AGENT_QUERY" "(todo)")
+(set-property! "AGENT_ACTION" "archive!")` left both properties on a matched
 entry — one confirmed action turning every entry it matched into an agent
 carrying its own action, written into files you have never edited. That is
 exactly the per-file trust the non-inheritance rule exists to keep.
@@ -1334,12 +1393,12 @@ exactly the per-file trust the non-inheritance rule exists to keep.
 row is applied, the dry run named the innocuous default while the subtree
 went to the other file.
 
-**One action writes each field once.** Measured: `tag!(+alpha) tag!(+beta)`
+**One action writes each field once.** Measured: `(tag! +alpha) (tag! +beta)`
 at an entry tagged `:api:` reported `:api: -> :api:beta:` on its second line
 and left the entry `:api:alpha:beta:` — a report showing *less* change than
 the run made, because every planner runs against the state the run began in.
 So two verbs writing one field is a parse error naming both, before the
-corpus is opened: `tag!(+alpha -stale)` is how you say it in one. A verb of
+corpus is opened: `(tag! +alpha -stale)` is how you say it in one. A verb of
 your own declares what it writes with `org-agents-action-field`; without a
 declaration, two calls of it collide and two different verbs do not.
 
@@ -1372,10 +1431,13 @@ Inactive deliberately: a value written into a drawer must not put the entry
 on the agenda, which is the same reasoning `:AGENT_MATCHED:` records.
 
 A keyword shadows a literal, and that is the one cost of having keywords at
-all. `set-property!(REVIEWED, today)` cannot store the word *today*. The
-escape hatch is quoting: `set-property!(REVIEWED, "today")` stores the five
-letters. The rule to remember is that **a bare word is literal unless it is
-one of those three, and a quoted argument is always literal.** The table is
+all. `(set-property! REVIEWED today)` cannot store the word *today*. The
+escape hatch is quoting: `(set-property! REVIEWED "today")` stores the five
+letters. The rule to remember is that **in a value position a bare word is
+literal unless it is one of those three, and a quoted one always is.**
+Quoting a *date* is a different thing: whitespace separates arguments, so
+`(scheduled! "2026-08-27 14:00")` is the only way to write that shape, and
+the quotes are what make it writable rather than a way to refuse it. The table is
 a constant, not an option: it is a vocabulary, nothing configures it, and no
 file can extend it.
 
@@ -1389,12 +1451,12 @@ entries, two verbs:
 
 ```
 org-agents: 6 edits at 3 entries in 2 files (1 not open before this ran).  Nothing written yet.
-/home/johnw/org/proj.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-/home/johnw/org/proj.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
-/home/johnw/org/proj.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-/home/johnw/org/proj.org:5: tag!(+reviewed)  :api: -> :api:reviewed:
-/home/johnw/org/notes.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-/home/johnw/org/notes.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/proj.org:1: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:1: (tag! +reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/proj.org:5: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:5: (tag! +reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/notes.org:1: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/notes.org:1: (tag! +reviewed)  :api: -> :api:reviewed:
 ```
 
 The buffer is `compilation-mode`, so `RET`, `next-error` and `M-g n` navigate
@@ -1415,12 +1477,12 @@ was written. Answered `y`, each line gains its outcome:
 
 ```
 org-agents: 6 edits at 3 entries in 2 files (1 not open before this ran).  Nothing was saved; every edit is undoable per buffer.
-/home/johnw/org/proj.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
-/home/johnw/org/proj.org:1: tag!(+reviewed)  :api: -> :api:reviewed:  applied
-/home/johnw/org/proj.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
-/home/johnw/org/proj.org:5: tag!(+reviewed)  :api: -> :api:reviewed:  applied
-/home/johnw/org/notes.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]  applied
-/home/johnw/org/notes.org:1: tag!(+reviewed)  :api: -> :api:reviewed:  applied
+/home/johnw/org/proj.org:1: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]  applied
+/home/johnw/org/proj.org:1: (tag! +reviewed)  :api: -> :api:reviewed:  applied
+/home/johnw/org/proj.org:5: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]  applied
+/home/johnw/org/proj.org:5: (tag! +reviewed)  :api: -> :api:reviewed:  applied
+/home/johnw/org/notes.org:1: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]  applied
+/home/johnw/org/notes.org:1: (tag! +reviewed)  :api: -> :api:reviewed:  applied
 ```
 
 ```
@@ -1451,7 +1513,7 @@ buffer completed the command with no complaint at all, and left that buffer
 modified on the runs the user *cancelled*.
 
 A row that would change nothing says so, and is not counted as an edit.
-Measured: `delete-property!(ABSENT)` reported `1 edit at 1 entry in 1 file`
+Measured: `(delete-property! ABSENT)` reported `1 edit at 1 entry in 1 file`
 and, because the verb is destructive, asked about deleting nothing — which
 over ninety matched entries of which four carry the property is ninety
 confirmations, eighty-six of them about nothing, in the one sentence this
@@ -1570,9 +1632,9 @@ verb is resolved by constructing `org-agents-action/` plus the token and
 asking `fboundp`, so an unknown token is a syntax error naming the token and
 the function that does not exist. An argument that *looks* like Lisp is
 refused by shape — parentheses are outside the bare-argument pattern — and
-`set-property!(X, (shell-command "y"))` is a parse error naming the verb and
+`(set-property! X (shell-command "y"))` is a parse error naming the verb and
 the argument position. Quoting is how you store literal parentheses, and what
-quoting gets you is text: `set-property!(NOTE, "(shell-command \"y\")")`
+quoting gets you is text: `(set-property! NOTE "(shell-command \"y\")")`
 stores those characters.
 
 This is where the design parts from org-edna, which lexes its actions with
@@ -1604,7 +1666,7 @@ would rewrite the drawer it was read from.
 The *explicit* path does not go through `org-agents--collect`, so it enforces
 both itself. Measured, before it did: an agent whose body held a link to
 itself, with that line in the region, applied
-`set-property!(AGENT_QUERY, hijacked)` to its own drawer and rewrote the
+`(set-property! AGENT_QUERY hijacked)` to its own drawer and rewrote the
 query the next run would read. A rendered view is full of links and a region
 is a hand-made selection, so the one entry that must not be touched is the
 one most easily selected by accident. Both are now skipped and *reported* —
@@ -1614,22 +1676,47 @@ has to be visible.
 
 ### Writing a verb of your own
 
-A verb is a `defun` in your init file. Nothing registers anything: the
-namespace *is* the contract.
+A verb is one `org-agents-define-action` in your init file. You write the
+token a property will spell — `shout!` — and never the prefix; nothing
+registers anything, and the namespace is still the contract.
 
 ```elisp
-(defun org-agents-action/shout! (phase name)
+(org-agents-define-action shout! (phase name)
   "Upcase the value of property NAME.
-Syntax: shout!(NAME)"
+Syntax: (shout! NAME)"
+  :destructive t                        ; only if it removes information
   (pcase phase
     ('plan  (cons (org-entry-get nil name)
                   (upcase (or (org-entry-get nil name) ""))))
     ('apply (org-entry-put nil name
                            (upcase (or (org-entry-get nil name) ""))))))
-
-;; Only if it removes information.
-(put 'org-agents-action/shout! 'org-agents-action-destructive t)
 ```
+
+That expands to a plain `defun` named `org-agents-action/shout!` plus the
+`put` its declaration asks for, so the macro is a convenience over `defun`
+and changes nothing about how a token is resolved: `org-agents-action/` plus
+the token, then `intern-soft` and `fboundp`, exactly as before. A property
+still cannot name a function outside the namespace.
+
+Three declarations may follow the docstring, each becoming the symbol
+property the parser already reads:
+
+| Declaration | Means |
+| --- | --- |
+| `:destructive t` | confirms at **every** entry, on **every** run |
+| `:terminal t` | must be the last verb, and may appear once |
+| `:field FUNCTION` | what the verb *writes*, as a function of its argument list, for the one-write-per-field rule |
+
+They go beside the definition rather than in `put` forms after it, and that
+is the point of the macro beyond the prefix: nothing enforces a `put` that
+was forgotten, and a destructive verb whose declaration was forgotten is a
+verb that quietly stops asking.
+
+The macro also refuses, at expansion time, three mistakes a bare `defun`
+would have taken silently: a name no property could ever spell (no `!`, or
+an interior one), an argument list that does not begin with the phase, and a
+declaration keyword the parser does not read. All nine shipped verbs are
+defined this way, which is what keeps it exercised.
 
 Two phases, one function. `plan` answers `(OLD . NEW)` — each a string or
 nil — and must write nothing; `apply` performs the edit and its return value
@@ -1653,25 +1740,22 @@ by a regexp*, and refuse otherwise — never with `read`, `intern` or
 `\`[A-Z]\'` and then bounds-checks `aref`, and `effort!` does not convert at
 all because Org's effort values are text.
 
-To mark a verb as one that must come last, as `archive!` is:
+`:field` is the least obvious of the three declarations, and the one worth
+spelling out. It says what the verb writes, so the one-write-per-field rule
+knows when two of your own calls collide:
 
 ```elisp
-(put 'org-agents-action/shout! 'org-agents-action-terminal t)
+(org-agents-define-action shout! (phase name)
+  "..."
+  :field (lambda (args) (format "the property %s" (upcase (car args))))
+  ...)
 ```
 
-And to say what it writes, so that the one-write-per-field rule knows when
-two of your calls collide:
-
-```elisp
-(put 'org-agents-action/shout! 'org-agents-action-field
-     (lambda (args) (format "the property %s" (upcase (car args)))))
-```
-
-Without that, every call of `shout!` claims one field, so `shout!(A)
-shout!(B)` is refused. With it, those two are different fields and
-`shout!(A) shout!(a)` is still refused, which is right: Org matches a
-property name case-insensitively. The string is printed in the refusal, so
-write it to be read.
+Without it, every call of `shout!` claims one field, so `(shout! A) (shout!
+B)` is refused. With it, those two are different fields and `(shout! A)
+(shout! a)` is still refused, which is right: Org matches a property name
+case-insensitively. The string is printed in the refusal, so write it to be
+read.
 
 An applied row is **verified**: the planning phase is run again at the entry
 and what it reads back has to equal the `NEW` the line showed. So keep the
@@ -1810,20 +1894,27 @@ takes `EMACS=/path/to/emacs`. Never point it at an Emacs invoked with `-Q`:
 org-ql lives in site-lisp, which `-Q` suppresses.
 
 ```sh
-make test        # 449 tests, no external service needed
+make test        # 460 tests, no external service needed
 make test-one T=org-agents-test-expand
 make gate        # byte-compile, and fail on any warning at all
-make check       # gate, then test
+make check       # gate, manual, then test
 ```
 
-`make test` reports `449 tests, 449 results as expected, 0 unexpected` and
-takes about half a minute. There is nothing to configure and nothing to
-set up. Where `rg` is not on `PATH` it reports `404 results as expected, 0
+`make test` reports `460 tests, 460 results as expected, 0 unexpected` and
+takes about a minute. There is nothing to configure and nothing to set up.
+Where `rg` is not on `PATH` it reports `414 results as expected, 0
 unexpected, 45 skipped`, and prints one line saying why — `skip-unless` is
 honest but silent, and silence is precisely what let this suite's
-predecessor report green for months while proving nothing. No test asserts
-the count, so these four figures drift whenever the suite grows: read them
-as "about this many", and trust `0 unexpected` rather than the total.
+predecessor report green for months while proving nothing.
+
+The **total** is asserted by a test
+(`org-agents-test-readme-test-counts-are-current`), so it cannot drift
+silently. The ripgrep figures are not: how many tests skip depends on the
+run, most skips arrive through helper macros rather than a literal
+`skip-unless` this file can count, and a test that changed its answer with
+`rg` on or off `PATH` would be worse than the prose it guards. Those three
+numbers were measured with `PATH=/tmp/empty:/usr/bin:/bin make test`, and
+that is how to check them.
 
 The tests that describe what a machine WITHOUT ripgrep does — the live
 fallback, its one message, `require` refusing, `nil` never spawning — do

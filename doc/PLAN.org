@@ -3427,6 +3427,1699 @@ expand into IO.
 ]
 #+end_src
 
+* DONE [#B] Heavy-review remediation: stale history and migration debt
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x
+:LABELS:   []
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-22 Sat 11:36]
+:MODIFIED: [2026-08-22 Sat 13:03]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 13:03]
+:CLOSE_REASON: All 29 findings resolved: 22 fixed, 7 resolved as decisions recorded with evidence. One new defect (C1) was found while resolving B4 and fixed in the same pass. Three of the original findings were overstated and the corrections are recorded on each: B9's bookkeeping does work (measured both ways), A11's premise was false (the author's own corpus holds an old-syntax action), and B10 conflated obr's export format with the gitignored cache. My own 'referenced by nothing' verification for implementation-plan.md was also filename-only and wrong -- two comments cited it by Task numbering. Final state: 454/454 tests, gate zero warnings, manual builds clean, 5142 lines of superseded documents deleted with no dangling reference.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+Remediation of a seven-pass coordinated read-only review taken over snapshot
+e90d5db plus its uncommitted working tree (branch action-sexp-syntax).
+
+101 raw findings deduplicated to 27 actionable items. 62% of everything found
+was documents or comments describing a state the code has left, which was the
+requester's stated priority for the review.
+
+Two groups:
+  - "A" items are debt the uncommitted :AGENT_ACTION: sexp-syntax migration
+    introduced.
+  - "B" items are pre-existing, led by ~250 KB of design-era prose that
+    nothing references plus the defensive machinery that exists only to warn
+    readers away from it.
+
+Review method and caveat: seven passes dispatched concurrently with verified
+no-history isolation (PARENT_HISTORY_ABSENT, verifier exit 0, sentinel absent
+from the response envelope). The validated multi-model pass ABORTED rather
+than accept a substituted model: PAL reported 0 configured providers and
+offered gemini-2.5-flash in place of an exact model request. No finding
+therefore carries cross-model verification. Mechanical claims were re-executed
+against the shipped parser by the orchestrator; the rest rest on cited
+evidence from a single model.
+#+end_example
+
+* DONE [#B] A1: a surplus bang is absorbed as data, so (set-property!! X) writes a property named !
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.1
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:33]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:33]
+:CLOSE_REASON: Fixed: the verb is now lexed as one maximal run with org-agents--action-bare-re -- the same regexp an argument is lexed with -- then judged whole against an anchored token shape (org-agents--action-check-token). The boundary has no character set of its own, so it cannot drift from the argument lexer. Closes the surplus-bang hole and the dropped-space token boundary together. Design chosen by a judged three-proposal panel that proved by 1565-input fuzz that two of the proposals defined the identical language and rejected the third for making the refusal a resolution fact rather than a shape fact. Verified: all eight bad inputs refused naming the run as written plus its character position; every legitimate argument still parses, including a bang inside a value; every prior refusal preserved verbatim. 451/451 tests, gate zero warnings, manual clean.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7615, 7639 -- org-agents--action-token-re, org-agents--action-bare-re
+
+The token regexp "[[:alnum:]][[:alnum:]-]*!" cannot match `!', so it stops at
+the FIRST bang; the remainder falls to the bare-argument regexp, which admits
+`!'. The old grammar refused this because arguments only existed inside a paren
+AFTER the token. The new grammar makes the stray bang argument one.
+
+REPRODUCED against the shipped parser:
+  (set-property!! X)   => ((.../set-property! "!"   "X"))
+  (set-property!!! X)  => ((.../set-property! "!!"  "X"))
+  (tag!!!! +a)         => ((.../tag!          "!!!" "+a"))
+  (tag!+a)             => ((.../tag!          "+a"))
+  (effort!0:30)        => ((.../effort!        "0:30"))
+
+This is a REGRESSION introduced by the sexp migration, and it contradicts the
+by-shape guarantee asserted in three places: org-agents.el:7620-7625,
+README.md:1260, doc/org-agents.org:5387.
+
+Same root cause makes the token boundary un-Lisp-like: a dropped space parses
+silently, where read-from-string would see a single atom.
+
+## Acceptance Criteria
+- A verb token must be followed by a delimiter (whitespace or the closing
+  paren). One added check closes the doubled-bang hole and the (tag!+a)
+  acceptance together.
+- (set-property!! X) is refused with a diagnostic naming the verb.
+- (tag!+a) is refused.
+- The by-shape claim in all three prose locations becomes true again.
+- make check passes.
+
+Found by: deep-review, abstraction-alignment, alexey-discipline. Reproduced by
+the orchestrator.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.1",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:28.898146Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] A10a: the migration diagnostic for a bare zero-argument verb advises an unparseable spelling
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.10
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:38]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:38]
+:CLOSE_REASON: New org-agents--action-advised-spelling consults func-arity, so a verb whose whole argument list is PHASE is advised (archive!) and everything else (verb! ...). Verified for archive!, set-property! and tag!.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7915-7918
+
+REPRODUCED:
+  "archive!" => `archive!' must be written `(archive! ...)', with the verb
+                inside the parens
+
+Following that advice literally gives (archive! ...), which the parser then
+refuses: "`archive!' takes 0 arguments, and 1 was given". The correct spelling
+is (archive!).
+
+org-agents--action-call-text (8878-8887) was deliberately changed in this same
+migration to print exactly that, with the comment "A verb with no arguments
+still gets its parentheses, because `(archive!)' is what the property holds."
+So the report formatter and the migration diagnostic disagree, and only the
+formatter is right.
+
+## Acceptance Criteria
+- The diagnostic advises (archive!) for a zero-arity verb.
+- make check passes.
+
+Found by: deep-review.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.10",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:30.310252Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] A10b: the new 'text ends after (' diagnostic reports the wrong character
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.11
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:38]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:38]
+:CLOSE_REASON: The diagnostic now names the paren's own 1-based position, captured before whitespace is skipped, consistent with every sibling in the function. Verified: '(' and '( ' report character 1; '(tag! +a) (' and '(tag! +a) (   ' report 11.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7924-7928
+
+  (setq index (org-agents--action-skip-ws text (1+ index)))
+  (when (>= index length)
+    (org-agents--action-error "the text ends after `(' at character %d, ..." index))
+
+Every other diagnostic in this function passes (1+ index) to convert to the
+1-based column a reader counts (see 7920, 7932). This one passes the raw
+post-whitespace index, so it names neither the paren nor a 1-based position.
+
+REPRODUCED: input "(" reports character 1 (right by coincidence); input "( "
+reports character 2 while the paren it names is at character 1.
+
+## Acceptance Criteria
+- The diagnostic is 1-based and consistent with its siblings.
+- make check passes.
+
+Found by: validated.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.11",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:30.483663Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] A10c: the rewritten manual leaves a 101-column line and says 'intern' where the code calls 'intern-soft'
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.12
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:49]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:49]
+:CLOSE_REASON: Both halves fixed. (a) Eight over-long prose paragraphs refilled, including the 101-column line the review flagged and the 103-column one it wrongly called shorter. What remains over 80 columns is structurally unwrappable: :DESCRIPTION: menu lines, id: link targets, and Org description-list terms whose :: separator must stay on the term's line. (b) The manual said the parser 'never reaches intern' where the resolver calls intern-soft; both passages now name intern-soft and say why it matters -- a symbol that does not exist cannot be fboundp, so a corpus of misspellings cannot grow the obarray. That is a stronger claim than the one the manual was making. make manual builds clean.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+doc/org-agents.org:4126, 5352, 5393
+
+(a) The prose rewrite of "The three refusals on the save path" left one line at
+    101 columns. NOTE: a pass called this the manual's longest line; that is
+    wrong -- line 6691 is 103 columns. Both want refilling.
+
+(b) The manual says twice that the action parser never reaches `intern', while
+    org-agents--action-resolve calls `intern-soft'. The source states the
+    precise version and explains why (a symbol that does not exist cannot be
+    fboundp, so nothing is gained by interning); the manual drops the
+    qualification, which weakens a safety claim that is actually stronger than
+    stated.
+
+## Acceptance Criteria
+- No prose line in doc/org-agents.org exceeds the fill column.
+- The manual says intern-soft, and says why it matters.
+- make manual builds clean.
+
+Found by: deep-review, alexey-discipline, validated, dead-code, comment-audit
+(5 passes converged on the 4126 line alone).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.12",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:30.643218Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] A11: is permanent migration scaffolding warranted for a syntax that lived four days, unreleased?
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.13
+:LABELS:   []
+:ISSUE_TYPE: question
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:59]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:59]
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7650-7658, 7852-7862; README.md:1291-1310
+
+Three passes independently asked whether the old-shape diagnostics, the comma
+refusal, and the README migration section earn permanent residence, given that
+no corpus outside this untagged, unreleased repository can contain the old
+syntax.
+
+The same reviewers noted a comparable shim at org-agents.el:757-764 for an
+approval format that existed for ONE day, also never released, carried across
+six code sites plus a test and two documents.
+
+This is a judgment call, not a defect. But it is exactly the class of thing the
+review was asked to surface: machinery serving a state that no longer exists
+anywhere.
+
+## Acceptance Criteria
+A decision, recorded either way:
+- If no external corpus can hold the old syntax, delete the migration
+  diagnostics, the comma special-case, the README migration section, and the
+  bare-hash approval shim.
+- If the diagnostics are kept as a courtesy to this repository's own history,
+  say so in one line where they live, so the next reviewer does not re-raise it.
+
+Found by: alexey-discipline (high), ponytail, dead-code (high).
+
+** Close Reason
+
+Decision recorded, both halves, on evidence rather than taste.
+
+MIGRATION DIAGNOSTICS: KEEP. The premise that no corpus outside this repository can hold the old syntax is FALSE. Measured against the real corpus: ~/org holds exactly one :AGENT_ACTION: property and it is old-shape -- 'set-property!(REVIEWED, today) tag!(+reviewed)' in ~/org/journal/20260821-lab-notebook.org. So the diagnostic is load-bearing, not scaffolding: it will fire for the author's own file. (The 89 old-shape-looking hits in ~/doc are prose; zero files there carry an AGENT_ACTION property.)
+
+BARE-HASH APPROVAL SHIM: KEEP. The finding said it spans 'six code sites plus a test and two documents'. Measured, it is TWO one-line accessors -- org-agents--approval-hash's (if (consp entry) (car entry) entry) and org-agents--approval-text -- which are the right abstraction over a record type whether or not the legacy form exists. Removing the tolerance would save two conditionals and make the accessors stricter for no operational gain. Separately measured: no persisted approval state exists at all (~/.emacs.d/settings.el holds zero org-agents-safe-queries or org-agents-refused-queries entries), so nothing is being served either way.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.13",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:30.921466Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#B] B1: four superseded documents, referenced by nothing, that still issue instructions
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.14
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:41]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:41]
+:CLOSE_REASON: Seven documents deleted (5142 lines): design.md, design-review.md, implementation-plan.md, all three doc/research/*.md, and 2026-08-19-dynamic-properties-design.md (the only referrer the research trio had). Done in the order an exhaustive inbound-reference sweep prescribed: live citations repointed FIRST, then the deletions, so nothing dangled at any point. Repointed: org-agents.el 416-430 (the 12-line defensive Commentary block), 1331, 6597, 7067; doc/org-agents.org 2659-2665; README.md 929; org-agents-test.el 280, 7274, 8513. NOT deleted, having been miscategorised as candidates: doc/doc-setup.org is the manual's #+setupfile and a declared Makefile prerequisite, and doc/attributes-example.org is read by a live assertion guarded with skip-unless, so deleting it would have turned a passing test into a silent skip rather than a red build. Verified: zero references left in any live artifact; design.md no longer reaches the shipped manual (grep of doc/org-agents.info went 1 to 0); 452/452 tests, gate zero warnings, manual clean. CORRECTION to the review: my own 'referenced by nothing' claim for implementation-plan.md was filename-only and wrong -- org-agents.el:6597 and org-agents-test.el:7274 cited it by its Task numbering, which no filename grep finds.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+doc/implementation-plan.md, doc/design.md, doc/design-review.md, doc/research/*.md
+
+Six of seven passes converged here. ~250 KB of design-era prose.
+
+VERIFIED independently by the orchestrator:
+  - No file outside doc/PLAN.org references "implementation-plan".
+  - doc/superpowers/specs/, cited by three of these documents, does not exist.
+
+doc/implementation-plan.md (73 KB)
+  Own banner says "Historical, 2026-08-18. Nothing here is current guidance",
+  then line 23 still directs agentic workers: "REQUIRED SUB-SKILL: Use
+  superpowers:subagent-driven-development ... to implement this plan
+  task-by-task." Mentions org-db-cli 89 times; that file was deleted in
+  commit c3817b4 "Delete the org db bridge and everything that indexed it".
+  Cites doc/superpowers/specs/2026-08-18-org-agents-design.md at lines 31 and 787.
+
+doc/design.md (43 KB)
+  Kept alive by a 22-line disclaimer. Its superseded PostgreSQL push-down table
+  forces ~11 lines of defensive Commentary into the shipped source and a whole
+  paragraph into the shipped manual, where end users read a warning about a file
+  they cannot see. See B7, which is retired by this deletion.
+
+doc/design-review.md (19 KB)
+  Line 11 scopes it to "frozen snapshot of doc/superpowers/specs/2026-08-18-org-agents-design.md
+  (225 lines)" -- a path that does not exist, and a length that does not match
+  doc/design.md (269 lines). Reachable only from one closed issue and one wrong
+  filename.
+
+doc/research/*.md (166 KB)
+  Three pre-decision notes still declaring "nothing has been agreed or built",
+  after all five parts shipped. Alone in doc/ they carry no supersession banner.
+  See B6 for action-code-safety.md specifically, which IS cited by live code and
+  needs a decision rather than a blind delete.
+
+## Acceptance Criteria
+- implementation-plan.md, design.md and design-review.md are deleted.
+- doc/research/ is resolved: deleted, or reduced to what live code actually cites
+  (see B6).
+- The Commentary block and manual paragraph that exist only to warn readers off
+  design.md are deleted with it (B7).
+- No dangling reference remains: rg for implementation-plan, design-review,
+  doc/research, superpowers returns nothing outside doc/PLAN.org history.
+- make manual builds clean.
+
+Found by: deep-review, alexey-discipline, validated, ponytail, dead-code,
+comment-audit (6 passes).
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.14",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:31.087112Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#B] B2: two build files claim the .info manual is committed, three lines above the rule that ignores it
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.15
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:41]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:41]
+:CLOSE_REASON: Both comments now agree with the rules beneath them. .gitignore describes the manual's built output as untracked in both steps; the Makefile's manual-clean comment says the same and explains what the target is still for. Verified: git ls-files tracks neither doc/org-agents.info nor doc/org-agents.texi.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+.gitignore:19-23 and Makefile:147-149
+
+Both say "The .info beside it IS committed: this package has no ELPA build and
+no install step, so a generated manual nobody generates is a manual nobody
+reads."
+
+VERIFIED: git ls-files doc/org-agents.info returns nothing, and
+/doc/org-agents.info sits in .gitignore immediately below the comment asserting
+the opposite.
+
+The claim was withdrawn by commit 0f56771 "Stop tracking the built manual". The
+comments were not updated, so both files now assert the reverse of what they do.
+
+## Acceptance Criteria
+- Neither file claims the .info is committed.
+- The reasoning that survives (no ELPA build, no install step) is kept where it
+  still explains something.
+- git ls-files doc/org-agents.info still returns nothing.
+
+Found by: deep-review, alexey-discipline, ponytail, comment-audit (4 passes).
+Verified by the orchestrator.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.15",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:31.234190Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] B3: README.md is a second manual, so every behaviour change must be written three times
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.16
+:LABELS:   []
+:ISSUE_TYPE: question
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 13:02]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 13:02]
+:CLOSE_REASON: Resolved on the second acceptance option: the duplication is kept deliberately, and a check now catches the drift it causes. New org-agents-test-readme-test-counts-are-current derives the suite size from ert-select-tests and asserts EVERY place README states it, so a number written in one file and not the other now fails make test instead of surviving until a review finds it. It proved itself on the spot: adding the test made the suite 454, and the test immediately failed against README's 453. Deliberately does not assert the ripgrep-less figure, which depends on how many tests skip and so on the environment. The structural question -- whether README should stop being a second manual -- is NOT settled here and stays a live design choice; what is settled is that its counts can no longer drift silently, which is the failure mode that produced A5, A9 and A10c.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+README.md:30-2275
+
+2245 lines duplicating doc/org-agents.org node for node.
+
+This review is itself the evidence of cost: A5, A9 and A10c are all cases where
+one of the three copies (source comment, README, manual) drifted from the others.
+It is the structural reason stale prose keeps reappearing, and it will keep
+producing findings until it is resolved.
+
+Not a quick fix, and not obviously the right one to make -- a README that sells
+the package to a reader who will not open a .info file has real value.
+
+## Acceptance Criteria
+A decision, recorded:
+- Either README becomes a short entry point that points at the manual for
+  everything it currently duplicates,
+- or the duplication is accepted deliberately and a single check is added that
+  catches drift (for example, the counts in A5 derived rather than written).
+
+Found by: ponytail.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.16",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:31.384218Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] B4: the documented quoting escape hatch is not honoured by the two date verbs
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.17
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:48]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:48]
+:CLOSE_REASON: Resolved as a DOCUMENTATION defect, which is what it turned out to be. Quoting a date is lexically necessary, not an escape hatch: whitespace separates arguments, so (scheduled! "2026-08-27 14:00") is the only way to write a shape org-agents--action-date-re already accepts, and a planning stamp holds no literal text for a quoted word to become. Honouring the mark there would refuse a documented shape and buy nothing. So --action-date is unchanged, and four overreaching sentences were narrowed to the value position: org-agents.el:7636, doc/org-agents.org:5556, README.md:1429. --action-date's docstring now records WHY it abstains, which is what made the behaviour read as a bug. The code and manual already said the narrow thing in four other places.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+org-agents.el:8093-8095 -- org-agents--action-date
+
+The contract, stated in org-agents--action-quoted-re and repeated in the manual,
+is that a quoted argument is ALWAYS literal, never read as a value keyword.
+
+org-agents--action-value honours the mark. org-agents--action-date ignores it.
+
+REPRODUCED:
+  (scheduled! "today")
+    parse => ((.../scheduled! #("today" 0 5 (org-agents-action-quoted t))))
+    org-agents--action-quoted-p on that argument => t
+    org-agents--action-date returns "2026-08-22"
+
+So the argument IS marked quoted and the date path expands it anyway. PRE-EXISTING;
+not introduced by the sexp migration.
+
+## Acceptance Criteria
+One of:
+  - org-agents--action-date consults org-agents--action-quoted-p and refuses a
+    quoted keyword rather than expanding it, or
+  - the "always literal" claim is narrowed, in both the source and the manual,
+    to the verbs that take a VALUE.
+Whichever is chosen, source and manual agree afterwards, and a test pins it.
+
+Found by: abstraction-alignment. Reproduced by the orchestrator.
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.17",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:31.531589Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] B5: a live, README-cited fact base that disclaims its own contents in a 16-line header
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.18
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:48]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:48]
+:CLOSE_REASON: Repaired in place rather than disclaimed, per the acceptance criteria. N1's three counts corrected from 18/15/25 to the measured 23/16/45, with a dated re-measurement note saying what each count is and that it was measured rather than derived. The banner's E9 clause was dropped: E9's body had already been re-measured for the single-file gate and reproduces (README's 'about five seconds, or ten' matches), so the banner was over-disclaiming a true entry while under-repairing a false one.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+doc/measured-facts.md:10-25, 810-815
+
+The erratum banner marks one whole section and nine numbered entries as
+historical, while README still cites an entry the banner flags. Entry N1 states
+three counts about the shipped suite and all three are now wrong, in a sentence
+that invites verification.
+
+One pass found the reverse problem too: E9's body was re-measured for the
+current single-file gate and now matches README's live claim, so the banner
+over-disclaims as well as under-repairs.
+
+A reference whose header tells you not to trust its body is not a reference.
+
+## Acceptance Criteria
+- Stale entries are repaired in place or removed, not disclaimed.
+- The banner shrinks to nothing, or to a dated provenance line.
+- Every remaining entry is true, and the README citation points at one of them.
+- N1's three counts match the shipped suite.
+
+Found by: deep-review, validated, dead-code, comment-audit (4 passes).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.18",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:31.680590Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] B6: a research note cited as live safety authority has wrong line numbers throughout and shows dead syntax
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.19
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:42]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:42]
+:CLOSE_REASON: Resolved by B1's deletion path. The sweep established that all three live citations of doc/research/action-code-safety.md (README.md:929, org-agents.el:7067, org-agents-test.el:8513) depended on ONE claim -- that inheritable behaviour makes per-file trust meaningless -- which is stated in full by four artifacts that cite nothing, including the manual node 'What was deliberately not ported, and why'. So the citations were provenance rather than load-bearing. All three were repointed to the manual, then the document was deleted, so its wrong line numbers, its foreign checkout path and its old-syntax example went with it. The old-syntax example at line 672 was inside its own Option 1 proposal, not an org-edna :TRIGGER: quotation, confirming my earlier decision to leave it was wrong.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+doc/research/action-code-safety.md:72-104, 670-672
+
+Code and README cite this document as authority for the action-code trust model,
+so unlike its two siblings it cannot simply be deleted without redirecting the
+citations.
+
+  - Every line number in its gate-clause table is off by roughly 470-500 lines.
+  - It cites the package at a path that is not this repository.
+  - Line 672 shows this package's own :AGENT_ACTION: in the abandoned call
+    syntax. This is NOT one of the org-edna :TRIGGER: passages that legitimately
+    keeps the old shape -- so the earlier decision to leave it was wrong.
+
+## Acceptance Criteria
+- Either the document is repaired (line numbers, path, syntax) and kept as the
+  cited authority, or the reasoning it carries is moved into the manual/source
+  and the citations are repointed before it is deleted.
+- No passage describing THIS package shows the old action syntax. The org-edna
+  :TRIGGER: passages keep theirs and say so.
+
+Found by: deep-review, dead-code, comment-audit.
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.19",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:31.839674Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A2: the arity hint gives advice that is wrong for every zero-argument verb
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.2
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:38]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:38]
+:CLOSE_REASON: The hint now fires only where the verb takes a value: (and high (> high 0) (> given high)). Verified: (archive! x) gets no quoting advice; (todo! DONE EXTRA) and (set-property! NOTE hello world) keep it. The justifying comment now says why the guard exists rather than asserting the cause is always obvious. Pinned by org-agents-test-action-arity-refusals-name-their-cause.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7796-7803 -- org-agents--action-check-arity
+
+The hint " -- a value with a space in it is one argument" is appended whenever
+(and high (> given high)), with no test of what the surplus looks like. For
+archive!, which takes no arguments, there is no value to quote at all.
+
+REPRODUCED:
+  (archive! x)   => `archive!' takes 0 arguments, and 1 was given
+                    -- a value with a space in it is one argument
+  (todo!! DONE)  => same hint; the surplus is a stray bang, not a space
+
+The justifying comment at 7797-7799 claims too-many-arguments is "the one arity
+error with an obvious cause", which A1 falsifies.
+
+## Acceptance Criteria
+- The hint fires only where it can be true: high > 0, and plausibly a split value.
+- (archive! x) gets no quoting advice.
+- The justifying comment states something true.
+- make check passes.
+
+Found by: deep-review, alexey-discipline, validated, abstraction-alignment (4 passes).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.2",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:29.065317Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] B7: shipped source and shipped manual carry standing warnings about a document users cannot see
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.20
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:41]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:41]
+:CLOSE_REASON: Retired with design.md, as predicted. The 12-line Commentary block at org-agents.el:416-430 is gone; its one positive pointer now names the manual's Views chapter and 'What is evaluated, and what is refused' instead. The manual paragraph at doc/org-agents.org:2659-2665 that shipped the warning to end users is gone: grep of doc/org-agents.info for design.md went from 1 to 0, so installed readers no longer get a warning about a file they were never given. The sweep found this worse than the finding stated -- design.md was the ONLY repository-internal document name that reached the shipped manual.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:325-328, 416-430
+
+A twelve-line Commentary block warns about doc/design.md's superseded
+PostgreSQL push-down table, and the manual repeats it to end users -- who
+install the package and have no access to doc/ at all.
+
+Separately, org-agents.el:325-328 documents a feature that does not exist.
+
+These warnings exist only to service doc/design.md. Deleting that document
+(B1) retires them, so this issue is B1's other half rather than independent work.
+
+## Acceptance Criteria
+- The Commentary block and the manual paragraph go with design.md.
+- org-agents.el:325-328 stops documenting a feature that is not there.
+- make manual builds clean; make gate stays at zero warnings.
+
+Found by: comment-audit, ponytail, validated.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.20",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:31.992031Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.20",
+    "depends_on_id": "orga-heavy-review-remediation-q0x.14",
+    "type": "blocks",
+    "created_at": "2026-08-22T18:39:13.195524Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] B8: Makefile comments describe a directory layout a later commit deleted
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.21
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:41]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:41]
+:CLOSE_REASON: The DOC comment no longer describes the docs/ directory commit 86e1652 removed, so it no longer reads as doc/ colliding with doc/; it now says which file in doc/ is the manual and which is its export header. The test target's comment keeps the real justification (a silent skip is how a suite rots unrun) without citing the replaced suite or the removed database.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Makefile:25-29, 88-90
+
+The DOC comment warns about a docs/ directory that commit 86e1652 "Keep
+documentation in one directory, doc" removed. After that commit the sed left the
+comment reading as doc/ sitting beside doc/, warning that "the two names nearly
+collide" -- a collision between a directory and itself.
+
+Makefile:88-90: the test target's comment justifies its ripgrep notice by citing
+a replaced test suite and a removed database.
+
+## Acceptance Criteria
+- Neither comment describes a path or a suite that no longer exists.
+- The ripgrep notice keeps whatever justification is still true (skip-unless is
+  silent, and silence is what let an earlier suite rot unrun).
+- make test still prints the notice when rg is absent.
+
+Found by: deep-review, comment-audit.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.21",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:32.158328Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] B9: the gate script's pre-existing-.elc bookkeeping cannot do what its comment says
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.22
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 11:38]
+:MODIFIED: [2026-08-22 Sat 12:48]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:48]
+:CLOSE_REASON: Resolved as a comment-precision fix; the finding overstated it. Measured both ways: a checkout with a pre-existing .elc still has one after a gate run (rebuilt), and a checkout without one stays clean. So the bookkeeping DOES deliver its outcome. What was false is the implication that the original file survives untouched -- the unconditional rm is necessary, because a stale .elc lets batch-byte-compile skip the file and report zero warnings for work it never did. The comment now says the file is rebuilt rather than reused, and that the bookkeeping decides only whether the fresh one is left behind.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+tools/org-agents-byte-compile-gate.sh:91-109 versus 140-145
+
+Lines 33-35 state the purpose: "The gated file IS compiled in place, and its
+.elc is removed afterwards only if this run created it. In a checkout where it
+was already built, that .elc is load-bearing for someone else."
+
+Lines 91-96 record the pre-existing set and 99-109 consult it in cleanup. But
+lines 140-145 run rm -f "${f}c" UNCONDITIONALLY before the compile
+("Recompile the gated files unconditionally"), so the .elc being protected is
+destroyed on every run regardless. The flag only decides whether the freshly
+built replacement is left behind.
+
+So the stated guarantee -- that someone else's load-bearing .elc survives a gate
+run -- does not hold, and roughly 20 lines of bookkeeping serve a purpose it
+cannot achieve.
+
+## Acceptance Criteria
+Either:
+  - the unconditional rm is made conditional so the bookkeeping means what it
+    says, or
+  - the bookkeeping is deleted and the comment says plainly that a gate run
+    rebuilds the .elc and leaves the tree as it found it only for files it
+    created.
+- make gate still passes at zero warnings.
+
+Found by: ponytail.
+#+end_example
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.22",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:38:32.311883Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] B10: the tracked issue file is 97% closed history, including 1078 lines of raw cache JSON
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.23
+:LABELS:   []
+:ISSUE_TYPE: question
+:CREATED:  [2026-08-22 Sat 11:39]
+:MODIFIED: [2026-08-22 Sat 13:03]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 13:03]
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+doc/PLAN.org:1-5297
+
+221 KB tracked in git. 57 DONE and 2 TODO headlines; two issues are live. It is
+the single largest body of intermediate-state prose in the repository.
+
+AGENTS.md says .obr/ is a per-machine cache (SQLite plus metadata) that ignores
+itself and must never be committed -- while 1078 lines of that cache's
+dependency records are dumped into the tracked file as raw JSON blocks.
+
+Countervailing consideration, which is why this is a question: PLAN.org's diff
+is described in AGENTS.md as the review trail, and closed issues are the record
+of what shipped and why. Pruning it discards that.
+
+## Acceptance Criteria
+A decision, recorded:
+  - keep as-is and accept the size, or
+  - stop exporting closed issues past some age to the tracked file while the DB
+    keeps them, or
+  - stop exporting the raw dependency JSON blocks, which are cache detail rather
+    than review trail.
+
+Found by: ponytail, dead-code.
+#+end_example
+
+** Close Reason
+
+Decision: keep as-is, and the finding's sharpest claim does not hold.
+
+MEASURED: doc/PLAN.org is 6975 lines, of which 1555 sit inside #+begin_src json blocks; 85 DONE and 4 TODO headlines.
+
+The finding said AGENTS.md is contradicted -- that .obr/ is 'a per-machine cache that must never be committed' while its cache is dumped into the tracked file. That conflates two things. AGENTS.md's rule is about the .obr/ DIRECTORY, which is gitignored and is not committed. The JSON blocks in PLAN.org are obr's own EXPORT REPRESENTATION of dependency edges, not a copy of the cache, and PLAN.org is the file AGENTS.md explicitly says to commit: 'Commit PLAN.org together with the code that changes it; its diff is the review trail.'
+
+So the remaining question is only size, and it is not locally actionable: obr sync offers no option to omit dependency blocks or to stop exporting closed issues (checked obr sync --help), so shrinking the tracked surface needs an upstream obr feature, not an edit here. Pruning by hand is exactly the failure A6 was about -- PLAN.org is generated, and a hand edit is reverted by the next flush.
+
+Recorded as a deliberate keep: the closed history IS the documented review trail, and the cost of carrying it is a large file rather than a wrong one.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.23",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:39:11.968093Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] B11a: two recursive query walkers with byte-identical descent guards
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.24
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 11:39]
+:MODIFIED: [2026-08-22 Sat 12:58]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:58]
+:CLOSE_REASON: Refactored to one shared descent. New org-agents--walk-query plus org-agents--query-position-p replace the byte-identical guard that was written out in both org-agents--check-head-spelling and org-agents--check-resolved-args. Deliberately still ONE WALK PER CHECK rather than one walk calling both: each check reports the first fault of its own kind anywhere in the query, which is the order the diagnostics were written for, and collapsing to a single pass would have changed which error fires first. 453/453 tests, gate zero warnings.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:958-1005
+
+Two recursive walkers over the same query form carry byte-identical descent
+guards, plus a third walk elsewhere. One walker taking a check function would do
+the work of both.
+
+## Acceptance Criteria
+- One walker, parameterised, or a stated reason the duplication is deliberate.
+- make check passes with no behaviour change.
+
+Found by: ponytail.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.24",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:39:12.141290Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] B11b: two deliberately different implementations of 'find an Emacs in the nix store'
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.25
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 11:39]
+:MODIFIED: [2026-08-22 Sat 12:58]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:58]
+:CLOSE_REASON: Resolved as documentation, which is what the finding asked for: the two probes differ deliberately (locate-library loads nothing and is faster; the gate keeps the stricter require it was verified with), so they are kept and each comment now names the other and says 'change one and look at the other'. A reader who finds either one now knows the pair exists.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Makefile:61-74 and tools/org-agents-byte-compile-gate.sh
+
+The Makefile's FIND_EMACS uses locate-library as a fast probe; the gate script
+keeps a slower, stricter probe. The Makefile comment says the difference is
+deliberate ("the gate script keeps the slower, stricter probe, which is the one
+it was verified with").
+
+So this may be justified. What makes it worth an issue is that a reader has to
+find both to know which one runs, and neither names the other's existence in a
+way that survives one of them changing.
+
+## Acceptance Criteria
+Either share one probe, or have each comment name the other and say why they
+differ, so a change to one is visibly a change to a pair.
+
+Found by: ponytail.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.25",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:39:12.319436Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] B11c: 55 lines of hand-maintained option lists beside a mapatoms derivation of the same set
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.26
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 11:39]
+:MODIFIED: [2026-08-22 Sat 12:58]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:58]
+:CLOSE_REASON: Kept as a deliberate tripwire, and now says so. The mapatoms derivation cannot go stale, which means a derivation ALONE would accept a new option silently; the hand list is what makes adding an option a decision, because the suite fails until it is written down together with whether it is risky. The comment says that and says not to simplify it into the derivation it is checked against.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-test.el:886-985
+
+org-agents-test--defcustoms (886-914), --risky-variables (917-928) and
+--auto-risky-options (930-940) are hand-written lists, docstring: "Every
+org-agents user option, written out here on purpose. This test owns the list."
+
+The test at 943-985 then derives the same set independently with mapatoms over
+custom-variable-p, and compares the derived set against the hand lists.
+
+The hand list is the thing that goes stale; the derivation cannot. Whether the
+comparison is worth its maintenance is a real question -- a hand list does catch
+an option added without thought -- but 55 lines is a lot of it.
+
+## Acceptance Criteria
+A decision: keep the hand list as a deliberate tripwire and say so in one line,
+or derive the set and drop the duplication.
+
+Found by: ponytail.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.26",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:39:12.473510Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] B11d: six residual stale comments describing removed scaffolding
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.27
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:39]
+:MODIFIED: [2026-08-22 Sat 12:58]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:58]
+:CLOSE_REASON: Six stale comments fixed, each judged by whether it still justifies present code. KEPT the conclusion and dropped the vanished history at org-agents--action-at: the removed lexer prototype and its 'bare archive!' illustration are gone, but the mechanism claim survives and was RE-VERIFIED -- (string-match "\\\\=b" "aaab" 3) answers nil -- so the 'do not simplify this back' warning still rests on something true. FIXED: the Splitter vocabulary listed five of seven live conjuncts, omitting property-resolved and property-ts (enumerated from org-agents--pushdown-fns: property, property-resolved, property-ts, scheduled, deadline, closed, heading); the 103-column Commentary line; a test docstring citing the removed database suite as the reason a guard exists; and three test docstrings naming their guarantees by obr issue ids (wrk.4, wrk.5) rather than by what they hold.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Each is a one-line-to-one-paragraph comment fix. Grouped because they are the
+same species: prose describing something that is gone.
+
+1. org-agents.el:7703-7710
+   A MEASURED note describing a REMOVED lexer prototype ("the first prototype of
+   this lexer therefore mis-lexed every input -- a bare `archive!' was reported
+   as an error at character 4"). Two problems: the prototype is gone, and its
+   illustrative input, a bare archive!, is no longer expressible under the
+   migrated syntax. The note anchors a real still-live warning ("Please do not
+   simplify this back"), so the measurement's CONCLUSION must survive even if
+   its history goes.
+
+2. org-agents.el:6265-6274
+   Records a completed de-duplication refactor whose measurement concluded
+   nothing about present behaviour. The paragraph after it carries the whole
+   live justification.
+
+3. org-agents.el:1322-1333
+   The Splitter section comment enumerates the superset-safe vocabulary and omits
+   two of the seven live conjuncts, including property-resolved.
+
+4. org-agents.el:233-235
+   One Commentary line runs to 103 columns against the 72-column convention
+   .dir-locals.el records for this file.
+
+5. org-agents-test.el:9683-9685 and 5330-5334
+   A test constant's docstring justifies itself by comparing against a database
+   suite that no longer exists; another comment explains an assertion by
+   describing a refusal removed with the PostgreSQL CLI.
+
+6. org-agents-test.el:11206
+   Three test docstrings identify their guarantees by closed obr issue ids
+   rather than by what they hold.
+
+## Acceptance Criteria
+- Every comment above describes the code as it is, or is gone.
+- Where a stale comment anchors a live warning, the warning survives the edit.
+- make gate at zero warnings; make check passes.
+
+Found by: comment-audit, alexey-discipline, dead-code.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.27",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:39:12.634943Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] B11e: three undocumented contracts at the action-code extension points
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.28
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:39]
+:MODIFIED: [2026-08-22 Sat 12:58]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:58]
+:CLOSE_REASON: All three contracts now stated where they are kept. org-agents--entry-get's docstring carries the non-inheritance guarantee it actually holds, and says what breaks if an INHERIT argument is ever added. org-agents-apply-actions' docstring states the two contracts a verb defined in init must keep and that neither is enforced: read the entry's own drawer and never org-agents-resolve-property, and write nothing in the plan phase. set-property! now calls org-agents--prototype-opaque-p instead of re-spelling its regexp, so a widened opaque set reaches the refusal without a second edit.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+1. org-agents.el:2623-2630
+   The :AGENT_ACTION: non-inheritance guarantee rests on a shared helper whose
+   docstring does not carry it, while the comment and manual describe a call that
+   is not the one actually made.
+
+2. org-agents.el:8227
+   A verb's plan phase must read the local drawer value and never the package's
+   public resolver. The extension point -- a verb defined in a user's init -- does
+   not say so, and a third-party verb that used the resolver would silently break
+   per-file trust.
+
+3. org-agents.el:8214
+   set-property! re-spells the opaque-name test inline instead of calling the
+   predicate that owns it.
+
+These are documentation-of-contract issues at the one place the package invites
+third-party code, so a wrong guess by an extender defeats a stated guarantee.
+
+## Acceptance Criteria
+- The non-inheritance guarantee is stated on the helper that actually holds it.
+- The verb extension point states the local-drawer contract.
+- set-property! calls the predicate rather than restating it.
+- make gate at zero warnings.
+
+Found by: abstraction-alignment.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.28",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:39:12.803312Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] C1: two verbs leak the parser's quoted-argument text property into the user's outline
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.29
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 12:42]
+:MODIFIED: [2026-08-22 Sat 12:48]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:48]
+:CLOSE_REASON: Fixed. New org-agents--action-text strips the parser's quoting mark, called from tag!'s terms, set-property!'s and delete-property!'s NAME, and --action-date's pass-through arm -- not centrally in --action-call, because the mark must still reach --action-value and --action-arg-text. Pinned by org-agents-test-action-quoted-mark-never-reaches-the-outline, which takes its arguments FROM THE PARSER rather than hand-propertizing them: the first version of that test passed under mutation because a plain string has no mark to leak, and was rewritten until it failed with the stripper stubbed out.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+Found while resolving B4, not by the original review.
+
+org-agents--action-value strips text properties from its answer, and its
+docstring gives the reason: "the answer is inserted into a buffer and the
+quoting mark is the parser's business rather than Org's."
+
+Two verbs insert an argument into the buffer WITHOUT stripping, so the rule is
+stated in one place and broken in two:
+
+  MEASURED: (tag! "+alpha") leaves org-agents-action-quoted on the five
+  characters of `alpha' in the headline.
+  MEASURED: (set-property! "MYNAME" v) leaves it on the drawer line.
+
+Text properties are not written to a file, so this is hygiene rather than
+corruption -- but it puts the parser's own bookkeeping into the user's outline
+for the rest of the session.
+
+Per-verb audit of the quoted mark (the reason this was found):
+  set-property!  honours it for VALUE, ignores it for NAME, and leaks at NAME
+  effort!        honours it
+  todo!          ignores it -- harmless, no keyword is a TODO state
+  priority!      ignores it -- harmless
+  tag!           ignores it -- harmless, but LEAKS
+  delete-property!, archive!  interpret nothing
+
+## Acceptance Criteria
+- A small org-agents--action-text sibling strips the mark, called from tag!'s
+  terms, set-property!/delete-property!'s NAME, and --action-date's
+  pass-through arm.
+- NOT stripped centrally in --action-call: the mark must still reach
+  --action-value and --action-arg-text.
+- A test asserts no org-agents-action-quoted property survives into the buffer
+  for a quoted tag and a quoted property name.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.29",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T19:42:08.963356Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A3: a new docstring states an absolute guarantee that five of the nine verbs break
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.3
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:38]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:38]
+:CLOSE_REASON: The tag! docstring now claims only what the parser guarantees: (tag!) is an arity error before the corpus is opened. A second paragraph states plainly that the signed-term check, scheduled!'s date shape, todo!'s keyword and priority!'s letter are refused in the plan phase instead. The manual's already-correct narrower wording was left alone.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:8253-8258 (tag! docstring); structural root at 9106-9108
+
+The tag! docstring now says "Every diagnostic this language gives fires before
+the corpus is opened". That is false. Argument-shape validation has no seam in
+the verb registry, so corpus-independent refusals run in the plan phase --
+step 5 of org-agents-apply-actions, after step 3 has opened the corpus.
+
+REPRODUCED (all parse clean, refused only later):
+  (scheduled! nextweek) => PARSES
+  (todo! BOGUS)         => PARSES
+  (tag! reviewed)       => PARSES
+
+The manual's wording at doc/org-agents.org:5423 is correctly scoped to "every
+diagnostic *it* [the parser] can raise". Only this docstring overreaches.
+
+## Acceptance Criteria
+- The docstring claims only what the parser actually guarantees.
+- The narrower claim in the manual is left alone (it is already correct).
+- make gate passes.
+
+Found by: deep-review, alexey-discipline, validated, abstraction-alignment (4 passes).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.3",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:29.224265Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A4: the tag! signature change left its replaced body check behind, unreachable
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.4
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:38]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:38]
+:CLOSE_REASON: Unreachable (unless terms ...) guard removed from org-agents--action-tag-terms. (tag!) is still refused by the parser via the required positional, now pinned by a test rather than asserted only in prose.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:8153-8156 -- org-agents--action-tag-terms
+
+  (unless terms (org-agents--action-error "`tag!' was given no tag"))
+
+cannot fire. The only caller is org-agents--action-tags (8170), whose only
+caller is org-agents-action/tag! (8270-8271), which always passes
+(cons term terms) -- never nil, because term is a required positional.
+
+Nothing asserts the message: grep "was given no tag" finds it in org-agents.el
+only, with no test and no doc reference.
+
+The tag! docstring three lines above explains precisely why the check moved
+into the signature. The body it replaced was not removed.
+
+## Acceptance Criteria
+- The unreachable guard is gone.
+- (tag!) is still an arity error out of the parser (covered by A8's test).
+- make check passes.
+
+Found by: deep-review, abstraction-alignment, validated, comment-audit (4 passes).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.4",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:29.380890Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A5: README test counts are off by one because the migration added a test
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.5
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:48]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:48]
+:CLOSE_REASON: README counts corrected to measured values: 453 tests, 408 expected without ripgrep, and make check described as gate, manual, then test. Measured by running the suite and by running it again with rg hidden from PATH, not by arithmetic.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+README.md:19, 1865, 1871, 1873
+
+README says 449 tests and 404 expected without ripgrep. The suite is now 450
+and 405, because the syntax migration added
+org-agents-test-action-parse-names-the-older-shape.
+
+README.md:1868 also describes `make check` as "gate, then test", omitting the
+manual step the Makefile has since added (Makefile:141 -- check: gate manual test).
+
+## Acceptance Criteria
+- Counts read 450 and 405.
+- `make check` is described as gate, manual, then test.
+- Verified by running the suite, not by arithmetic.
+
+Found by: deep-review, comment-audit.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.5",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:29.528860Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A6: generated tracker output was hand-edited, and the next obr flush would revert it
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.6
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:38]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:38]
+:CLOSE_REASON: Resolved. The hand-edit was discarded with git checkout doc/PLAN.org, and the database was confirmed to still hold the old spelling, so nothing was lost. PLAN.org is now written only by obr sync --flush-only; obr sync --status reports In sync. The closed epic's 'never a sexp' text was deliberately NOT rewritten: it is a true record of what Epic 5 decided on 2026-08-20, and the new remediation epic supersedes it.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+doc/PLAN.org:22, 59, 62
+
+doc/PLAN.org is written by `obr sync --flush-only` from the per-machine SQLite
+cache (.obr/metadata.json sets jsonl_export: PLAN.org). The syntax migration
+edited the file directly, at line 62, inside the description of an issue closed
+on 2026-08-20 (orga-action-code-wrk.1). The database still held the old
+spelling, so the edit would have been silently overwritten.
+
+Editing a closed issue's description is also the wrong lever: the record of
+what shipped on 2026-08-20 is not the place to carry a later change.
+
+Separately, the parent epic orga-action-code-wrk still describes the design as
+"AGENT_ACTION holds edna-shaped verb text (never a sexp, nothing evaluated)",
+which is now false about the shipped syntax. That is a closed historical
+record; the resolution is to supersede it with a live record, not to rewrite it.
+
+## Acceptance Criteria
+- The hand-edit is discarded (DONE: git checkout doc/PLAN.org; the DB was
+  confirmed to still hold the old spelling, so nothing was lost).
+- The syntax change is recorded as a live obr issue instead.
+- PLAN.org is only ever written by obr sync --flush-only from here on.
+- obr sync --status agrees.
+
+Found by: alexey-discipline (scope, high), deep-review, validated.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.6",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:29.680165Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A7: two duplicated test assertions, one annotated by a distinction the grammar no longer has
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.7
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:48]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:48]
+:CLOSE_REASON: The duplicated 'hello world' assertion is gone from org-agents-test-action-parse-quoting-and-whitespace, which does not own the claim; it stays in ...-names-the-older-shape, which does. The duplicate (archive!) assertion and its stale comment about an empty argument list were already removed earlier in this session.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-test.el:11905-11908, 12016-12020
+
+(a) The (set-property! NOTE "hello world") assertion appears verbatim in both
+    org-agents-test-action-parse-names-the-older-shape and
+    org-agents-test-action-parse-quoting-and-whitespace. One is left over from
+    moving the quoted-value case between the new and the rewritten test.
+
+(b) The (archive!) assertion appears twice byte-identically, the second under
+    the comment "And an empty argument list is the same as none" -- which
+    described `archive!' versus `archive!()', a distinction the new grammar
+    cannot express, since every form now carries its parens.
+
+## Acceptance Criteria
+- Each assertion lives once, in the test that owns the claim.
+- The stale comment goes with the duplicate it annotated.
+- make check passes with no reduction in real coverage.
+
+Found by: alexey-discipline, abstraction-alignment, validated, comment-audit (4 passes).
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.7",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:29.839470Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A8: no test covers the surplus bang, and none covers (tag!) -- a guarantee stated twice
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.8
+:LABELS:   []
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:38]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:38]
+:CLOSE_REASON: Two tests added. org-agents-test-action-parse-lexes-a-token-whole covers the surplus bang, the dropped space, a bang inside an argument, and a 256-character tripwire deriving the boundary from org-agents--action-bare-re itself so it cannot drift from the argument lexer; verified two-sided against three mutations. org-agents-test-action-arity-refusals-name-their-cause covers (tag!), arity-0 hint suppression, and the advised spelling.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-test.el:11811-11841, 12009-12021
+
+The two parser tests written for the migration cover the leading sexp, the
+nested form, the comma, the verb outside the parens, and the split bare value.
+Neither covers verb!! -- the one input class the migrated lexer wrongly accepts
+(see A1).
+
+And (tag!) is promised in two places -- the tag! docstring at org-agents.el:8254-8255
+and README.md:1307-1309 -- yet rg for '"\(tag!\)"|at least 1 argument' in the
+test file returns nothing. The behaviour is correct; the guarantee is untested.
+
+## Acceptance Criteria
+- A test refuses (set-property!! X), (tag!!!! +a) and (tag!+a), and names the
+  mutation that must fail it.
+- A test asserts (tag!) is an arity error out of the parser.
+- Both tests fail against the pre-A1 code and pass after.
+
+Found by: deep-review, validated.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.8",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:30.001860Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  },
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.8",
+    "depends_on_id": "orga-heavy-review-remediation-q0x.1",
+    "type": "blocks",
+    "created_at": "2026-08-22T18:39:12.995899Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] A9: 'a fifteenth autoload fails the suite' is off by one -- there are already fifteen
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-heavy-review-remediation-q0x.9
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 11:37]
+:MODIFIED: [2026-08-22 Sat 12:48]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 12:48]
+:CLOSE_REASON: Fixed at all three sites, and fixed so it cannot recur: org-agents-test.el:11259 and 11417 and README.md:1230 now say 'an autoload this table does not hold' rather than naming an ordinal. The count is derived from the source text, so naming the next number would go stale on the very commit that adds one -- the docstring now says that too.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-test.el:11258-11262
+
+grep -c "^;;;###autoload" org-agents.el answers 15 (VERIFIED). All fifteen are
+accounted for in org-agents-test--action-entry-points: 14 rows tagged autoload
+plus org-agents-apply-actions tagged the-only-one-that-may, which also carries
+a cookie.
+
+The docstring says "so a fifteenth autoload fails the suite until somebody adds
+it here and exercises it". README.md:1226 says "so a sixteenth fails the suite",
+which is right.
+
+The docstring's whole job is to tell the next maintainer what breaks when they
+add a command, and it names a number already spent.
+
+## Acceptance Criteria
+- The docstring names sixteen, or drops the ordinal for a form that cannot go
+  stale again on the next added command.
+- make check passes.
+
+Found by: alexey-discipline, comment-audit. Count verified by the orchestrator.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-heavy-review-remediation-q0x.9",
+    "depends_on_id": "orga-heavy-review-remediation-q0x",
+    "type": "parent-child",
+    "created_at": "2026-08-22T18:37:30.152955Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
 * DONE [#D] Report a missing scope file legibly, not as a bufferp type error
 :PROPERTIES:
 :OBR_SCHEMA_VERSION: 17
@@ -5294,4 +6987,834 @@ Measurement retires that worry: `SCHEDULED:` occurs in 186 of 3,633 files and
 - README's prefilter section documents both backends and the staleness
   difference between them.
 #+end_example
+
+* DONE [#C] org-agents-define-action: write the token, not the prefix
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verb-definition-macro-cpg
+:LABELS:   []
+:ISSUE_TYPE: feature
+:CREATED:  [2026-08-22 Sat 14:47]
+:MODIFIED: [2026-08-22 Sat 14:47]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:47]
+:CLOSE_REASON: Delivered. Macro added, all nine shipped verbs converted, put block retired, three tests (two mutation-verified), README + manual + Reference rewritten, old pattern gone from every artifact. 460/460 tests, gate zero warnings, manual clean.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+Writing a tenth verb required spelling the resolver's prefix by hand:
+
+  (defun org-agents-action/shout! (phase name) ...)
+  (put 'org-agents-action/shout! 'org-agents-action-destructive t)
+
+The prefix is the security boundary -- a token becomes a function by name
+construction plus intern-soft plus fboundp, so a property can never name
+anything outside the namespace -- but it is the RESOLVER's business, not the
+author's. An author should write the token a drawer will hold.
+
+Delivered: org-agents-define-action.
+
+  (org-agents-define-action shout! (phase name)
+    "Upcase the value of property NAME.
+  Syntax: (shout! NAME)"
+    :destructive t
+    (pcase phase ...))
+
+It expands to the same defun plus the puts its declarations ask for, so
+resolution is unchanged and the boundary is untouched.
+
+Two gains beyond dropping the prefix:
+
+  - The three declarations (:destructive, :terminal, :field) sit BESIDE the
+    definition rather than in loose put forms after it. Nothing enforced a
+    forgotten put, and a destructive verb whose declaration was forgotten is
+    a verb that quietly stops asking.
+  - Three mistakes are refused at EXPANSION time that a bare defun took
+    silently: a name no property could ever spell (no bang, or an interior
+    one), an arglist not opening with the phase, and a declaration keyword
+    the parser does not read. The first two produced verbs that were
+    unreachable or refused as unusable only once somebody wrote an action
+    naming them.
+
+All nine shipped verbs converted, so the suite exercises the macro nine times
+over rather than leaving it covered only by its own tests. The put block they
+replaced is gone; the reasoning it carried was kept and re-aimed at the
+declarations.
+
+Three constants the macro reads at expansion time (--action-prefix,
+--action-token-re, --action-declarations) are now wrapped in
+eval-and-compile, because a bare defconst does not set a value while the
+file is being compiled and a macro runs then.
+
+Tests: define-action-defines-a-usable-verb (the round trip -- define short,
+reach it from a property, every declaration read the way the parser reads
+it), define-action-refuses-a-bad-definition (all six refusals), and
+shipped-verbs-use-the-macro (derived from the source text, so it cannot go
+stale against a tenth verb, and it keeps the macro exercised). First two
+verified two-sided against macro mutations.
+
+Docs: README's "Writing a verb of your own" and the manual's node of the same
+name both rewritten around the macro, with a declarations table; a Reference
+entry added under "Functions for Lisp callers"; and the old defun-plus-put
+pattern is gone from every artifact.
+
+DELIBERATELY UNCHANGED: the unknown-verb diagnostic still names the full
+symbol -- "there is no `org-agents-action/frobnicate!'" -- because that is
+exactly the string a reader needs if they are about to define it.
+#+end_example
+
+* DONE [#B] Verification of the heavy-review remediation
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj
+:LABELS:   []
+:ISSUE_TYPE: epic
+:CREATED:  [2026-08-22 Sat 13:51]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: All 13 verification findings resolved: 11 fixed, 2 accepted with recorded reasoning. The parser fix from the first pass SURVIVED verification -- 700,000 differential-fuzz inputs against an independently written reference implementation with zero disagreements, only TAB/LF/SPACE separating a token from an argument out of 256 code points, no read/eval/intern on the action path, namespace escape impossible by construction, and the 256-character tripwire failing under all four of its stated mutations. Three of the verification's own claims were themselves wrong and the corrections are recorded: --action-text's date strip IS reachable (V10), and two counts needed re-measuring rather than the values the pass proposed. Two genuinely serious latent defects were found and fixed that the original seven-pass review missed entirely: a case-folding shape check that let (scheduled! +7D) silently schedule TODAY, and a double-sign offset that made the dry run report a date the apply phase would not write. Final: 457/457 tests, gate zero warnings, manual clean.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+#+begin_example
+An adversarial verification pass over the heavy-review remediation, run as four
+independent read-only agents against the working tree.
+
+The parser fix (A1) SURVIVED: 700,000 differential-fuzz inputs against an
+independently written reference implementation of the documented grammar, zero
+accept/reject or parsed-argument disagreements; only TAB, LF and SPACE separate
+a token from an argument out of all 256 code points plus the zero-width and
+CJK-space set; no read/eval/intern anywhere on the action path; namespace
+escape impossible by construction; and the 256-character tripwire test FAILS
+under all four of its stated mutations, so it is not vacuous.
+
+What the pass found divides three ways:
+  - DEFECTS THE REMEDIATION ITSELF INTRODUCED, chiefly a mechanical line-refill
+    that reflowed verbatim example blocks, and several counts corrected to
+    still-wrong numbers.
+  - LATENT DEFECTS in the shipped date vocabulary, in the exact class the
+    code's own docstrings claim to have closed.
+  - CITATIONS OF DELETED DOCUMENTS the reference sweep missed, all by internal
+    label or phrase rather than path -- the same class that produced the
+    "Task 7" miss.
+#+end_example
+
+* DONE [#B] V1: the date shape check folds case, so (scheduled! +7D) passes it and silently schedules TODAY
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.1
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 13:51]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed. org-agents--action-date now binds case-fold-search to nil around the shape check. Verified: +7D, +2W, TODAY, NOW and -3M are refused with the message listing the accepted shapes, while +7d, ++2w, today, now, 2026-08-27 and '2026-08-27 14:00' still pass. Pinned by org-agents-test-action-date-shape-is-case-sensitive, verified two-sided -- the test fails when the binding is removed.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:8233 -- org-agents--action-date
+
+`string-match-p' honours `case-fold-search', which defaults to t, so
+`org-agents--action-date-re' accepts upper-case spellings it was written to
+refuse. `org-read-date' then does NOT understand them and silently answers
+today.
+
+MEASURED (today 2026-08-22):
+  +7d    accepted -> org-read-date 2026-08-29   correct
+  +7D    accepted -> org-read-date 2026-08-22   TODAY
+  +2W    accepted -> org-read-date 2026-08-22   TODAY
+  TODAY  accepted -> org-read-date 2026-08-22   (and `equal' to "today" is
+                                                 nil, so the keyword arm is
+                                                 skipped too)
+  NOW    accepted -> org-read-date 2026-08-22
+
+This is precisely the hazard the constant's own docstring says it exists to
+prevent: "MEASURED, (org-read-date nil nil \"junk\") answers with TODAY'S DATE
+silently, so (org-schedule nil \"garbage\") schedules today and says nothing.
+Ported naively, scheduled!(nextweek) would mass-schedule a corpus to today."
+
+Mitigating: the dry run IS honest -- the plan stamp shows <2026-08-22 Sat>,
+which is what gets written -- so a reader who checks the report sees today.
+The defect is that a form which looks valid is silently reinterpreted.
+
+PRE-EXISTING. Not introduced by the remediation.
+
+## Acceptance Criteria
+- The shape check binds case-fold-search to nil, so +7D and TODAY are refused
+  with the message that lists the accepted shapes.
+- The keyword arms stay case-sensitive, or are made deliberately insensitive;
+  either way the check and the arms agree.
+- A test covers +7D, +2W, TODAY and NOW.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.1",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:51:17.306454Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] V10: three docstrings this remediation wrote or rewrote are imprecise
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.10
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 13:52]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed, with one correction to the finding. org-agents--action-token-p now guards with stringp, so it keeps its docstring's promise never to signal -- verified (token-p 5) => nil. org-agents--action-tag-terms' first line is a single imperative sentence. But the finding's claim that --action-text's date strip is 'provably unnecessary' is WRONG: measured, (scheduled! "2026-08-27") arrives with org-agents-action-quoted set, so the strip is reachable and needed. The docstring now states the RULE -- any argument a verb is about to put into the outline goes through this -- rather than enumerating callers, which is the part that went stale.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7799, 8202, 8295
+
+  :7799  org-agents--action-token-p's docstring says "it answers, it never
+         signals". It signals wrong-type-argument on a non-string, because
+         string-match-p does. Either guard with stringp or say "never signals a
+         user-error".
+  :8202  org-agents--action-text's docstring enumerates its callers and is
+         wrong at both ends: the --action-date pass-through strip is provably
+         unnecessary (a date reaching that arm has already been matched against
+         org-agents--action-date-re, which admits no quoted text), and todo!'s
+         STATE is omitted from the list although it reaches the buffer.
+  :8295  org-agents--action-tag-terms' rewritten first line is a sentence
+         fragment spilling onto a second line, against the file's own
+         one-sentence-first-line convention.
+
+## Acceptance Criteria
+- Each docstring describes what its function does.
+- The --action-text enumeration is either correct or replaced by a statement of
+  the RULE rather than a list of callers, which is what went stale.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.10",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:52:05.290496Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] V11: a quoted argument may carry a raw newline into a property value and escape the drawer
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.11
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 13:52]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed, and it was real. Measured: org-entry-put ACCEPTS a newline, so (set-property! NOTE "a<LF>* Planted") left '* Planted' inside the properties drawer where Org reads it as a HEADING -- outline structure planted in a file the reader never edited. A raw LF or CR in a quoted argument is now refused by shape in the lexer, before the corpus is opened, naming the verb and the argument position. Nothing legitimate is lost: an Org property value cannot span lines. The two-character escape is unaffected, since --action-unescape reduces backslash-n to the letter n. Pinned by org-agents-test-action-refuses-a-line-break-in-an-argument, verified two-sided.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7939
+
+A quoted argument admits any character including a raw newline. Written into a
+property value, that newline ends the drawer line, so the remainder becomes
+outline text -- and a crafted value can plant a heading carrying its own
+:AGENT_QUERY:.
+
+Reachable configuration: an :AGENT_ACTION+: continuation joined by an
+org-property-separators value containing a newline, which is not the default
+(" ") but is settable per file.
+
+PRE-EXISTING; the remediation touched this lexer but not this property.
+
+Bounded by the dry run, which shows the value, and by the fact that
+org-entry-put refuses a property NAME holding whitespace -- so this is a value
+injection, not a name injection.
+
+## Acceptance Criteria
+- Either a newline is refused in an argument that will reach a property value,
+  with a diagnostic naming the verb and position, or org-agents--action-value
+  escapes it.
+- A test plants a newline through a quoted argument and asserts the outline
+  gains no heading.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.11",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:52:05.466985Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] V12: now/today are re-sampled from the clock in the apply phase, so a minute crossing aborts the run
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.12
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 13:52]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Recorded as accepted, with the reasoning. Sampling the clock once per run would mean carrying a resolved value from the plan phase into the apply phase, and the design deliberately does NOT let the apply phase trust a value the plan computed -- org-agents--action-verify exists precisely so a verb recomputes and is compared. Threading a clock reading through would weaken that in order to fix a divergence the same mechanism already catches: the run stops, names the row, and writes nothing further. The exposure is a minute crossing between the report and the confirmation, which costs a stopped run rather than a wrong write. Left as-is deliberately; if it is ever fixed, the fix belongs in how the phases share a clock, not in the apply phase trusting the plan.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:8192
+
+`today' and `now' are expanded by calling format-time-string at the moment each
+phase runs, so the plan phase and the apply phase can sample different clock
+readings. A minute boundary crossed between the report and the confirmation
+makes the apply write a value the report did not name, which
+org-agents--action-verify then treats as divergence and stops the run.
+
+Narrow for `today' (a midnight crossing) and realistic for `now' (any minute
+crossing while the user reads the report).
+
+PRE-EXISTING.
+
+## Acceptance Criteria
+- The plan phase's resolved value is what the apply phase writes: sample the
+  clock once per run and carry it, or have the apply arm reuse the planned
+  value for a keyword.
+- A test pins it by stubbing the clock to advance between phases.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.12",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:52:05.632555Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#D] V13: org-agents--action-args is quadratic in argument count
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.13
+:LABELS:   []
+:ISSUE_TYPE: chore
+:CREATED:  [2026-08-22 Sat 13:52]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Accepted with a note, per the acceptance criteria. Measured: 60,000 bare arguments lex in 9.2 seconds. Unreachable from any plausible action -- no verb takes more than two arguments, so the arity refusal follows immediately -- but the lexing precedes the refusal, so the cost is paid first. Not bounded in the lexer because org-agents-action-limit bounds ENTRIES rather than argument counts, and adding a second limit for an input nobody writes would be machinery serving nothing. The parser is pure and opens no file, so the worst case is a wedged keystroke in the user's own buffer, undoable with C-g.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:7908
+
+The argument lexer is quadratic: 60,000 bare arguments take 9.2 seconds.
+
+Not reachable from a plausible action -- no verb takes more than two arguments,
+so a form with 60,000 of them is refused by arity immediately after lexing --
+but the lexing happens FIRST, so the cost is paid before the refusal.
+
+Bounded and low, recorded rather than fixed, since org-agents-action-limit
+bounds entries and not argument counts.
+
+## Acceptance Criteria
+A decision: accept it with a note saying why it is unreachable, or bound the
+argument count in the lexer so the refusal precedes the cost.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.13",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:52:05.802038Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#B] V2: a double-sign offset makes the dry run report a date the apply phase does not write
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.2
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 13:51]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed. org-agents--action-stamp takes an optional EXISTING and passes it as org-read-date's DEFAULT-TIME; org-agents--action-planning hands over the OLD value it already reads for the plan's old half. Verified: with SCHEDULED <2020-01-01 Wed>, ++2w now plans <2020-01-15 Wed> (was <2026-09-05 Sat>) and --2w plans <2019-12-18 Wed>, while single-sign +7d still resolves from now, which is correct Org semantics. Pinned by org-agents-test-action-offset-plan-matches-apply, which asserts plan EQUALS what apply wrote -- an equality rather than a literal date, so it cannot go stale or pass by agreeing with a wrong constant -- over all four double-sign forms and both planning verbs. Verified two-sided.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:8249 -- org-agents--action-stamp
+
+`org-agents--action-stamp' calls (org-read-date with-time t date) with NO
+default-time, so it resolves an offset relative to NOW. The apply arm calls
+`org-schedule'/`org-deadline', which pass the entry's EXISTING stamp as the
+default time. Org's `++'/`--' prefix means "relative to the existing
+timestamp", so the two disagree on every entry that already has one.
+
+MEASURED end to end, entry with SCHEDULED: <2020-01-01 Wed>:
+  action  (scheduled! ++2w)
+  REPORT  corpus.org:1: (scheduled! ++2w)  <2020-01-01 Wed> -> <2026-09-05 Sat>
+  FILE    SCHEDULED: <2020-01-15 Wed>
+  org-agents--action-verify then sees the divergence and stops the run, so
+  every later row reports "not attempted".
+
+All four double-sign forms diverge, for both planning verbs: ++2w, --2w, +-2w,
+-+2w.
+
+THE DRY RUN IS THE WHOLE MITIGATION for action code, so a report that names a
+date the apply phase will not write is the one failure this design may not
+have. The run does stop rather than write silently, which is why this is high
+and not critical.
+
+PRE-EXISTING. Not introduced by the remediation. Zero test coverage.
+
+## Acceptance Criteria
+- The plan phase resolves a double-sign offset against the same default time
+  the apply phase will use: the entry's existing SCHEDULED/DEADLINE.
+- The report names the date that will actually be written.
+- A test covers ++2w and --2w over an entry that already has a stamp, and
+  fails if the plan and the apply diverge.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.2",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:51:17.485531Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#B] V3: four README numbers are still wrong, two of them corrected to a new wrong value
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.3
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 13:51]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed, and this time measured AFTER the last test was added rather than before. README now says 457 tests, 412 results without ripgrep, 45 needing rg (was 40, and the file contradicted itself 1863 lines apart), and ~9,400 lines (was ~8,700; actual 9,378). The 'no test asserts the count' sentence is gone, replaced by a paragraph saying which number IS asserted by a test and why the ripgrep figures are not, with the command to reproduce them.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+README.md:18, 20, 1883, 1886
+
+The remediation corrected README's test counts and got two of them wrong
+again, and left two others untouched in the same paragraph.
+
+MEASURED:
+  1883  states 408 results without ripgrep; the suite reports 409.
+        (The remediation measured 408 BEFORE adding its own last test, then
+        updated the total to 454 without re-measuring the skip figure.)
+  20    states "the 40 that exercise the prefilter and the attribute census"
+        need rg; measured 45 -- and README itself says 45 at line 1883's
+        paragraph, so the file contradicts itself 1863 lines apart.
+  18    states the package is "~8,700 lines"; measured 9,352, and this
+        remediation widened the gap.
+  1886  states "no test asserts the count" -- false as of this remediation,
+        which added org-agents-test-readme-test-counts-are-current four lines
+        above it.
+
+## Acceptance Criteria
+- Every number measured, not derived, and re-measured AFTER the last test is
+  added.
+- README stops contradicting itself on the ripgrep figure.
+- The "no test asserts the count" sentence is corrected or removed.
+- The count test is extended to cover the figures that were actually wrong
+  (see V6), so this cannot recur.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.3",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:51:17.654791Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] V4: N1's re-measured should-cover count is 22, not the 23 recorded as measured
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.4
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 13:51]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed. N1 now says twenty-two, and records the METHOD so the next reader gets the same answer: counted over (ert-select-tests t t) by test body, not by grepping occurrences, which counts a helper holding the call as a test and yields 23. The entry also records that the skip total is not statically derivable -- only 10 tests carry a literal (skip-unless (executable-find rg)) while 45 skip, the rest reaching it through helper macros.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+doc/measured-facts.md:809
+
+The remediation corrected N1 from 18/15/25 to 23/16/45 and labelled the
+figures "measured, not derived". The first is off by one: 22 tests call
+`org-agents-test--should-cover', not 23.
+
+The remediation's own count split tests on `\n(?=\(ert-deftest ` and counted
+those containing the call -- which counts a helper defun holding the call as
+though it were a test.
+
+## Acceptance Criteria
+- The count is 22, or whatever a per-test count actually yields, established
+  by a method stated in the entry.
+- The entry says HOW it was counted, so the next reader can reproduce it
+  rather than re-deriving a different number.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.4",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:51:17.825079Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#B] V5: the archive! reference entry still tells the reader to write it without parentheses
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.5
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 13:51]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed. The archive! reference entry now documents (archive!) and explains that the parentheses are the form's rather than an argument list. Every other reference entry was checked for the same mistake; none had it. make manual clean.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+doc/org-agents.org:6411
+
+The reference entry for `archive!' still documents the pre-migration spelling,
+which the current parser refuses. A reader who follows the reference gets a
+parse error.
+
+This is the same defect class as A10a, which fixed the DIAGNOSTIC's advice for
+a zero-arity verb but did not sweep the reference chapter for the same
+mistake.
+
+## Acceptance Criteria
+- The entry documents (archive!).
+- Every other reference entry is checked for the same thing, since one was
+  missed once already.
+- make manual builds clean.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.5",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:51:17.990472Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] V6: the new README count test overclaims its coverage, which is how the wrong 408 escaped
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.6
+:LABELS:   []
+:ISSUE_TYPE: task
+:CREATED:  [2026-08-22 Sat 13:51]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Resolved on the second acceptance option: the test guards the TOTAL and now says so, plus what it does not guard and why. Measured and recorded in the docstring: only 10 tests carry a literal (skip-unless (executable-find rg)) while 45 actually skip, so a static count answers 10 and is wrong, and a test shelling out for the real figure would change its answer with rg on or off PATH. README states those numbers as measured and gives the command.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents-test.el:12042
+
+`org-agents-test-readme-test-counts-are-current' asserts only the total test
+count, matched by the regexp "\\([0-9]\\{3,4\\}\\) \\(?:ERT \\)?tests". Its
+docstring implies it guards README's test counts generally.
+
+It therefore does NOT cover either of the two figures that are actually wrong:
+the 408/409 ripgrep-less result count, and the "40 that exercise the prefilter"
+count. The wrong 408 was written and shipped past a test whose stated purpose
+is to catch exactly that.
+
+The docstring's own reason for not asserting the ripgrep figure -- that it
+depends on the environment -- is sound for the SKIP total but does not excuse
+leaving the claim unguarded, since the number README states is a claim about a
+specific environment README also describes.
+
+## Acceptance Criteria
+- Either the test covers every count README states, deriving the ripgrep-less
+  figure by running the selector with the soundness tests deselected, or the
+  docstring says plainly which single number it guards and why the others are
+  unguardable.
+- Verified two-sided: the test must fail if any covered number is altered.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.6",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:51:18.162775Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#B] V7: the line-refill pass reflowed verbatim example blocks into the shipped manual
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.7
+:LABELS:   []
+:ISSUE_TYPE: bug
+:CREATED:  [2026-08-22 Sat 13:52]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed. Five regions restored from HEAD: an example diagnostic split mid-sentence (1306), a ,#+BEGIN: dynamic-block header split across two lines (3713), two sets of REPL examples reflowed into run-on text (4638, 5021), and a description-list definition body that lost its indent (1505). Cause: the refill script's prose filter excluded lines STARTING with #+ but not lines INSIDE a block, nor comma-escaped ,#+BEGIN: headers. Verified with a structural check -- every line now inside a block either exists in HEAD or is one of 16 intentional action-syntax edits, each inspected. make manual clean.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+doc/org-agents.org:1306, 3713, 4638, 5021, 1505
+
+FIXED ALREADY, recorded because it shipped into doc/org-agents.info before it
+was caught, and because the cause is worth keeping.
+
+A10c refilled over-long prose lines with a mechanical script whose prose filter
+excluded lines STARTING with "#+" but not lines INSIDE a #+begin_example or
+#+begin_src block, and not comma-escaped ",#+BEGIN:" headers. Five regions were
+damaged:
+
+  1306  an example diagnostic split mid-sentence
+  3713  a ,#+BEGIN: dynamic-block header split across two lines, so the example
+        a reader copies is no longer valid
+  4638  three REPL examples (org-agents-allowed-values ...) reflowed into
+        run-on text
+  5021  the same, in the prototype chapter
+  1505  a description-list definition body lost its two-space indent, so one
+        row of the sugar table renders unlike its fifteen siblings
+
+All five restored from HEAD and re-verified: every remaining in-block line that
+differs from HEAD is now an intentional action-syntax edit, checked one by one.
+
+LESSON, which is the reason this issue exists: a mechanical reflow over Org
+source must be driven by block structure, not by line prefixes. The check that
+caught it -- "every current line inside a block must exist somewhere in HEAD"
+-- is cheap and should be run after any future bulk prose edit.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.7",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:52:04.734944Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] V8: four citations of deleted documents survive, all by internal label or phrase rather than path
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.8
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 13:52]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed, all four, and all four were references by INTERNAL LABEL or bare phrase rather than by path -- the same class that produced the Task 7 miss. org-agents.el:2039 'the design document's widening' now states the argument without the pointer; org-agents.el:2678 names the manual's Scope node; doc/measured-facts.md:439 drops 'once in the spec'; and six Epic N references in tests now name the part they mean (the gate, the attribute registry, prototypes, appearance) rather than a closed ticket number. Swept afterwards for Epic N, Task N, 'the spec', 'design document' across every live artifact: none left.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+org-agents.el:2039-2046, 2678; doc/measured-facts.md:439; org-agents-test.el:243
+
+The reference sweep before B1's deletion searched paths, basenames, stems,
+section titles and distinctive phrases, and still missed four. Every one is the
+same class that produced the "Task 7" miss: a reference by INTERNAL LABEL or by
+a bare noun phrase.
+
+  org-agents.el:2039-2046   cites a deleted document by phrase, in SHIPPED
+                            source
+  org-agents.el:2678        provenance pointer "the design" for the directory
+                            scope now names a deleted file
+  doc/measured-facts.md:439 a CURRENT (non-historical) entry cites "the spec",
+                            which was doc/design.md
+  org-agents-test.el:243    an "Epic N" label scheme cited by six test comments
+                            has no live defining document
+
+## Acceptance Criteria
+- Each either states the fact itself or points at a live artifact.
+- The "Epic N" scheme is either given a live home or the six comments name what
+  they hold instead.
+- A search by internal label -- not just by path -- confirms nothing else is
+  left. Grep for: Task N, Epic N, C1..C13, E1..E10, N1, Q1..Q16, L7, L8.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.8",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:52:04.932858Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
+
+* DONE [#C] V9: the gate-script comment I wrote to fix B9 is itself false, and its verification was one-sided
+:PROPERTIES:
+:OBR_SCHEMA_VERSION: 17
+:ID:       orga-verification-remediation-0sj.9
+:LABELS:   []
+:ISSUE_TYPE: docs
+:CREATED:  [2026-08-22 Sat 13:52]
+:MODIFIED: [2026-08-22 Sat 14:08]
+:CREATED_BY: johnw
+:FINISHED: [2026-08-22 Sat 14:08]
+:CLOSE_REASON: Fixed, and the correction was measured rather than reasoned. Confirmed by experiment that batch-byte-compile does NOT skip a file whose .elc is newer, so the justification I had written for the unconditional rm was false; the comment now says what the removal actually buys, which is a deterministic starting state. The 'verified both ways' claim is scoped to the passing path, and the failing-path gap is named explicitly: on a failing gate the pre-existing .elc is gone and nothing replaces it, with a stated reason for not closing it.
+:SOURCE_REPO: org-agents
+:SOURCE_REPO_PATH: /Users/johnw/src/dot-emacs/lisp/org-agents
+:ORIGINAL_SIZE: 0
+:END:
+
+tools/org-agents-byte-compile-gate.sh:33, 38
+
+B9's fix replaced a false comment with another one.
+
+  :33  The new justification says a stale .elc would let `batch-byte-compile'
+       SKIP the file. Measured: batch-byte-compile does not skip a file whose
+       .elc is up to date or newer -- it recompiles unconditionally. So the
+       stated reason for the unconditional rm is wrong, even though the rm is
+       harmless.
+  :38  "Verified both ways" covers only the PASSING path. On a FAILING gate the
+       pre-existing .elc is destroyed and nothing replaces it, because the
+       compile that would have rebuilt it is the thing that failed. So the
+       comment's promise -- that a gate run does not strip a build someone else
+       relies on -- does not hold in the case that matters most.
+
+## Acceptance Criteria
+- The justification for the unconditional rm is measured and stated correctly,
+  or the rm is removed if it has no justification.
+- The claim about what survives is scoped to the passing path, or the cleanup
+  restores the pre-existing .elc on failure.
+- Both paths tested: a gate that passes, and a gate forced to fail.
+
+** Dependencies
+
+#+begin_src json
+[
+  {
+    "issue_id": "orga-verification-remediation-0sj.9",
+    "depends_on_id": "orga-verification-remediation-0sj",
+    "type": "parent-child",
+    "created_at": "2026-08-22T20:52:05.118530Z",
+    "created_by": "johnw",
+    "metadata": "{}",
+    "thread_id": ""
+  }
+]
+#+end_src
 

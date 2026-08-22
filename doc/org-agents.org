@@ -2656,12 +2656,9 @@ literals of one ~heading~ are emitted as several patterns and
 /intersected/, because org-ql requires all of them in one heading.
 
 The authority for all of this is ~org-agents--pushdown-fns~ in the source,
-whose every row states its own superset argument.  One warning is owed to
-anyone reading the repository's design notes.  The file =doc/design.md=
-carries a push-down table describing a PostgreSQL prefilter this package
-no longer has, and its per-row justifications are facts about SQL
-operators that no longer run.  Extending the rules on those arguments can
-push something ripgrep cannot see.  Files are then dropped with no error.
+whose every row states its own superset argument.  Extend the rules only
+on that argument.  A rule that pushes something ripgrep cannot see drops
+files with no error.
 
 ** Inheritance and pushability
 :PROPERTIES:
@@ -4089,64 +4086,61 @@ without your explicit confirmation.
 #+cindex: refusals on the save path
 #+cindex: byte-identical save
 
-A save is a keystroke, and a keystroke has a budget.  Three refusals
-keep the update inside it.  One concerns what an update may spawn,
-another which agents it may attempt at all, and the third what it leaves
-behind in the file.
+A save is a keystroke, and a keystroke has a budget.  Three refusals keep
+the update inside it.
 
-*No save ever spawns a prefilter,* whatever =org-agents-prefilter= is
-set to; the option is bound to nil for the whole extent of the update.
-The refusal is safe.  A prefilter can only narrow which files org-ql
-opens and can never change what matches; an agent updated without one
-matches exactly what it would have matched, having merely opened more
-files to find out.  The refusal also pays.  For a scope that already
-names its files a prefilter is pure overhead, and measurably so; see
-[[*Which scopes get narrowed, and why]].  Narrowing such a scope makes a
-keystroke slower to reach the same answer.
+*No save ever starts a prefilter.*  The value of =org-agents-prefilter=
+makes no difference: the update binds the option to nil for its whole
+extent.  The refusal is safe.  A prefilter only narrows the set of files
+that org-ql opens, and it never changes which entries match.  An agent that
+runs without one finds the same matches.  It opens more files to find them.
 
-*An agent whose scope needs a prefilter is not updated on save.*  The
-scopes in question are those with no bound on what they hold: =active=,
-=all=, and any directory.  How many files one of those would open cannot
-be known in advance, and a keystroke has no budget for finding out; such
-agents are named once, in one message however many there are, and left
-exactly as they were:
+The refusal also pays.  A scope that already names its files gets no
+benefit from a prefilter, and the cost is measurable; see
+[[*Which scopes get narrowed, and why]].  A prefilter on such a scope only
+makes the keystroke slower for the same answer.
+
+*A save never updates an agent whose scope needs a prefilter.*  The scopes
+with no bound on what they hold are =active=, =all=, and any directory.
+Nothing tells you in advance how many files one of them opens, and a
+keystroke has no budget to find out.  One message names every agent a save
+skips, however many there are, and each one stays exactly as it was:
 
 #+begin_example
 org-agents: not updated on save, the scope needs a prefilter: Up for
 review (~/org/onsave.org:1)
 #+end_example
 
-Use =org-agents-update= on one of those.  The two rules answer different
-questions, and both are wanted.  This one is about what an update would
-/cost/; the first is about a save doing no work that cannot pay for
-itself.
+Use =org-agents-update= on one of those.  The two refusals look alike, and
+they answer different questions.  This one asks what an update would
+/cost/.  The first asks that a save do no work which cannot pay for itself.
 
-*A render that changes nothing puts the buffer back as it was.*  That
-property is what makes writing =:AGENT_MATCHED:= on every save
-affordable at all.  The stamp says when an update ran, and therefore
-differs on every run whatever the query found; without this rule every
-save would rewrite the file and move the dates you rely on, for nothing.
-Accordingly the render is compared with the =:AGENT_MATCHED:= lines
-masked out, and where nothing else moved the *old stamps stay* and the
-file reaches disk byte-identical.  Measured: a second save with nothing
-new to find is byte-for-byte identical to the first.
+*A render that changes nothing puts the buffer back as it was.*  This
+refusal is what makes the =:AGENT_MATCHED:= stamp affordable on every save.
+The stamp records when an update ran, so its value differs on every run,
+whatever the query found.  Without the refusal, every save would rewrite
+the file and move the dates you depend on, for nothing.  The update
+therefore compares the render with the =:AGENT_MATCHED:= lines masked out.
+Where nothing else moved, the *old stamps stay*, and the file reaches disk
+byte-identical.
 
-Because the buffer is restored with =replace-buffer-contents=, point,
-the mark, and every marker and overlay survive.
+Measured: a second save with nothing new to find is byte-for-byte identical
+to the first.  The update restores the buffer with
+=replace-buffer-contents=, so point, the mark, and every marker and overlay
+survive.
 
-Two further behaviours belong here.  When a failure occurs, it is reported
-and the save then goes on regardless:
+If an update fails, it reports the failure, and the save continues:
 
 #+begin_example
 org-agents: the update on save failed: ...
 #+end_example
 
-A file must not become unsavable because a query written in it is wrong;
-fixing the query is exactly what the next save is for.
+A wrong query in a file must never make that file impossible to save.  The
+next save is exactly where you fix the query.
 
-A quit is deliberately *not* caught: *{{{kbd(C-g)}}} during an update on
-save aborts the save along with the update*.  A half-written render is
-not what you asked to keep.
+The update does not catch a quit.  *{{{kbd(C-g)}}} during an update on save
+stops the save along with the update.*  A half-written render is not what
+you asked to keep.
 
 ** What writing AGENT_MATCHED costs
 :PROPERTIES:
@@ -5297,10 +5291,10 @@ An agent may carry an *action* as well as a query: =:AGENT_ACTION:= holds
 a declarative sentence over a fixed vocabulary of nine verbs, each of
 which edits the entries the query matched.
 
-=:AGENT_ACTION:= is Tinderbox's =$AgentAction=, and it is the one part of
-org-agents that writes outside the agent's own file.  Three refusals make
-that affordable to reason about.  Because they matter more than the syntax
-does, they come first.
+This is Tinderbox's =$AgentAction=.  It is the one part of org-agents that
+writes outside the agent's own file.  Everything else here touches only the
+entry in front of you.  Because an action does not, the refusals come
+before the syntax.
 
 ** The three refusals
 :PROPERTIES:
@@ -5308,44 +5302,67 @@ does, they come first.
 :END:
 #+cindex: refusals, action code
 
-Three refusals bound what an action can do: an action never runs unbidden;
-an action is never inherited; and nothing in the property is ever
-evaluated.  Each of the three is a consequence of how the package is built
-rather than a rule it undertakes to keep.
+These three refusals are part of the design.  They are not promises.  Each
+one follows from how the code is built, so a change to the code is the only
+way to break one.
 
-*An action never runs on save, on a timer, or from either minor mode.* The
-only thing in this package that runs an action is
-~org-agents-apply-actions~, typed.  The refusal is *structural* rather
-than a promise kept by discipline.  Nothing in the plist the save path
-reads holds the action text, and it does not exist as data anywhere along
-that path.  One read of =:AGENT_ACTION:= exists in the whole package.  It
-sits inside that command.
+*An action never runs on save, on a timer, or from either minor mode.* One
+command runs an action, and you type it: ~org-agents-apply-actions~.  No
+hook, no timer and no option changes this.
 
-Tinderbox has =$Rule=, performed at frequent intervals, and =$Edict=,
-performed at startup and roughly hourly.  Neither is ported.  A Tinderbox
-document is one binary file the application owns while open; an Org corpus
-is thousands of text files under version control that other tools also
-write.  Code that edits those files while you are not looking is a commit
-nobody authored.  See [[*What was deliberately not ported, and why]] for
-the rest of that accounting, in Tinderbox's own vocabulary.
+The refusal is *structural*.  The action text is not part of the plist that
+~org-agents--read-agent~ returns.  On the save path the action does not
+exist as data at all.  No renderer can reach for an =:action= that is not
+there.  The whole package reads =:AGENT_ACTION:= one time, inside that
+command.
 
-*An action is not inheritable.* =:AGENT_ACTION:= is read from the entry's
-own drawer, with ~org-entry-get~ and no INHERIT argument, and never
-through ~org-agents-resolve-property~. No prototype, no outline ancestor,
-no =#+PROPERTY:= line and no ~org-global-properties~ setting can supply
-one.  The reason is per-file trust.  Where any of those could supply one,
-the code that edits your corpus when you act on file A would be written in
-file B.  Reading a file before trusting it would then mean nothing.  The
-divergence is deliberate.  Tinderbox's =$Rule= is normally inherited, and
-the Tinderbox manual's own worked example is a rule inherited from a
-=Task= prototype.
+Tinderbox has =$Rule=, which runs at frequent intervals, and =$Edict=,
+which runs at startup and about once an hour.  This package ports neither.
+A Tinderbox document is one binary file, and the application owns that file
+while it is open.  An Org corpus is thousands of text files under version
+control, and other tools write to them as well.  Code that edits those
+files without your knowledge is a commit that nobody wrote.  See
+[[*What was deliberately not ported, and why]] for the rest of that
+account, in Tinderbox's own terms.
 
-*Nothing in the property is ever evaluated.* The parser is a regexp lexer;
-a token becomes a function by name construction plus ~fboundp~; arguments
-reach a verb as strings.  The vocabulary offers no expression language, no
-assignment, no conditional, no iteration, and nothing resembling
-Tinderbox's ~runCommand~. The worst thing expressible in an
-=:AGENT_ACTION:= is a bounded, greppable Org edit.
+*An action is never inherited.* The command reads =:AGENT_ACTION:= from the
+agent entry's own drawer.  It uses ~org-entry-get~ with no INHERIT
+argument, and it never goes through ~org-agents-resolve-property~.  No
+prototype, no outline ancestor, no =#+PROPERTY:= line and no
+~org-global-properties~ value can supply an action.
+
+The reason is per-file trust.  If any of those could supply one, the code
+that edits your corpus when you act on file A would live in file B.  To
+read a file before you trust it would then prove nothing.
+
+~org-agents-resolve-property~ does refuse every =AGENT_= name by itself.
+The command still does not depend on that.  A guarantee that lives in
+another section's regexp is one edit away from gone.
+
+The divergence from Tinderbox is deliberate.  Tinderbox inherits =$Rule= in
+the normal case, and its own manual gives a worked example of a rule that a
+=Task= prototype supplies.  That design is right for one document you own.
+It is wrong for a directory tree that other people and other programs write
+to as well.
+
+*Nothing in the property is ever evaluated.* An action looks like the
+query above it in the drawer, and the resemblance stops at the shape.
+Nothing here reaches ~read~, ~eval~ or ~intern~.  The parser is a regexp
+lexer over a string.
+
+A token is looked up with ~intern-soft~, never ~intern~.  ~intern-soft~
+answers nil for a symbol that does not exist yet.  So a corpus full of
+misspellings cannot grow the obarray either.  A token becomes a function by
+name construction and then ~fboundp~.  Arguments reach a verb as strings,
+unchanged.
+
+A parenthesis cannot appear inside an argument, so no form can hold
+another.  =(set-property! X (shell-command "y"))= is a parse error that
+names the verb and the position.  It is not a value that something has to
+prove harmless afterwards.  The vocabulary has no expression language, no
+assignment, no conditional and no iteration, and nothing like Tinderbox's
+~runCommand~.  The worst thing an =:AGENT_ACTION:= can express is a bounded
+Org edit that ~grep~ can find.
 
 ** Writing an action
 :PROPERTIES:
@@ -5361,16 +5378,60 @@ apply left to right at every matched entry:
 ,* Stamp what I reviewed today
   :PROPERTIES:
   :AGENT_QUERY:  (and (todo "TODO") (property "NEXT_REVIEW"))
-  :AGENT_ACTION: set-property!(REVIEWED, today) tag!(+reviewed)
+  :AGENT_ACTION: (set-property! REVIEWED today) (tag! +reviewed)
   :END:
 #+end_src
 
-Every verb's name ends in =!=.  The suffix is this vocabulary's
-convention.  It marks a verb that writes.  Arguments go in parentheses,
-separated by commas, and may be quoted or bare.  A bare argument is
-anything but a comma, a parenthesis or a quotation mark; a quoted argument
-admits backslash escapes.  A verb taking no argument, ~archive!~, is
-written without parentheses.
+An action is a sequence of forms, and each form is a verb and its
+arguments in parentheses.  The shape is the query's shape, and that is the
+point.  Both properties in that drawer hold one vocabulary over an
+outline.  Neither of them needs to look like a second language.
+
+*The action is never read as Lisp, and the bang is how you can see that.*
+Every verb's name ends in =!=, which marks a verb that writes.  No
+function in Emacs is named ~set-property!~.  A form whose head lacks the
+bang is therefore refused by shape, before any question of what it meant.
+=(progn (tag! +a))= and =(shell-command "y")= are both parse errors.
+
+A verb token is also lexed whole.  It is one run of characters, ended by a
+space, a comma, a parenthesis or a quotation mark.  That whole run must be
+alphanumerics and hyphens closing in a single =!=.  So =(set-property!! X)=
+and =(tag!+a)= are parse errors, and each names the run as written and the
+character it starts at.  A surplus bang cannot become an argument, and
+neither can a dropped space.  A =!= inside an argument stays data:
+=(set-property! NOTE Done!)= writes =Done!=.
+
+Nothing here reaches ~read~, ~eval~ or ~intern~.  A token becomes a verb
+by name construction, then ~intern-soft~ and ~fboundp~, and every
+argument arrives as a string.  ~intern-soft~ rather than ~intern~ is
+deliberate: a symbol that does not exist cannot be ~fboundp~, so nothing
+is gained by making one.  Carry nothing over from Lisp about evaluation: a
+bare word is a word, and the drawer holds no expressions.
+
+Whitespace separates the arguments.  A bare argument is anything but
+whitespace, a comma, a parenthesis or a quotation mark.  A quoted argument
+admits backslash escapes, and it is how a value holds any of those.  *A
+value with a space in it must be quoted*, because whitespace would
+otherwise split it into two arguments:
+
+#+begin_example
+(set-property! NOTE "hello world")
+#+end_example
+
+A comma is refused rather than ignored, and the diagnostic says so.  The
+older syntax for an action was =set-property!(NAME, VALUE)=: the verb
+stood outside the parentheses and commas separated the arguments.  A
+corpus written that way is told what to write instead:
+
+#+begin_example
+org-agents: :AGENT_ACTION: `set-property!' must be written
+  `(set-property! ...)', with the verb inside the parens
+org-agents: :AGENT_ACTION: `set-property!' argument 2 begins with a
+  comma -- whitespace separates the arguments of a form
+#+end_example
+
+A verb taking no argument is written with its parentheses and nothing
+inside them: =(archive!)=.
 
 The parser reads no buffer.  It creates none and writes nothing.  Since
 every diagnostic it can raise fires before the query has run, a typo does
@@ -5397,7 +5458,7 @@ The vocabulary is closed at nine.  Their exact argument lists are in
 [[*Action verbs]]; what follows is what each is for and what it will not
 do.
 
-~set-property!(NAME, VALUE)~ sets a property.  Several names are refused.
+~(set-property! NAME VALUE)~ sets a property.  Several names are refused.
 Each refusal closes a hole rather than tidying the vocabulary.  Org's
 *special properties* are refused with the verb that does edit them named
 instead: =TODO= sends you to ~todo!~, =PRIORITY= to ~priority!~,
@@ -5410,11 +5471,12 @@ that.  =ARCHIVE= is refused because it steers where ~archive!~ puts a
 subtree, and the dry run would have named the destination it read before
 that.
 
-~delete-property!(NAME)~ removes a property, and is destructive.  See
+~(delete-property! NAME)~ removes a property, and is destructive.  See
 [[*Destructive verbs and batch]].
 
-~tag!(+added -removed)~ adds and removes tags, given whitespace-separated
-*signed* terms applied left to right.  An unsigned term is refused:
+~(tag! +added -removed)~ adds and removes tags.  It takes one or more
+*signed* terms as separate arguments, and applies them left to right.  An
+unsigned term is refused:
 
 #+begin_example
 org-agents: :AGENT_ACTION: `tag!' term `reviewed' must be `+TAG'
@@ -5427,7 +5489,7 @@ and therefore *replaces* the entry's tags.  Over an agent's match set the
 replacement becomes a silent mass deletion.  The verb's one-word form
 looks additive.
 
-~todo!(STATE)~ sets the TODO keyword.  Because those keywords are
+~(todo! STATE)~ sets the TODO keyword.  Because those keywords are
 buffer-local, and a corpus may spell different ones file by file, STATE is
 checked against ~org-todo-keywords-1~ *read in the match's own buffer*.  A
 *repeating* entry is refused, and this one is a disappointment taken
@@ -5445,14 +5507,14 @@ report showed.  For the list, and the argument for binding them, see
 [[*The blast radius]].  If you want an entry's whole state change,
 {{{kbd(C-c C-t)}}} is the command that does it.
 
-~priority!(LETTER)~ takes one upper-case letter, inside
+~(priority! LETTER)~ takes one upper-case letter, inside
 ~org-priority-highest~ to ~org-priority-lowest~.  The refusal names the
 range.
 
-~scheduled!(DATE)~ and ~deadline!(DATE)~ take the same shapes.  They make
+~(scheduled! DATE)~ and ~(deadline! DATE)~ take the same shapes.  They make
 the same refusal.  The shape check exists to close a measured hazard:
 ~(org-read-date nil nil "junk")~ answers with *today's date, silently*.  A
-naive version of ~scheduled!(nextweek)~ would therefore mass-schedule a
+naive version of ~(scheduled! nextweek)~ would therefore mass-schedule a
 corpus to today and report nothing wrong.
 
 #+begin_example
@@ -5461,7 +5523,7 @@ org-agents: :AGENT_ACTION: `scheduled!' takes a date `2026-08-27',
   `now' -- not `nextweek'
 #+end_example
 
-~effort!(VALUE)~ writes an effort.  The argument stays a *string*, because
+~(effort! VALUE)~ writes an effort.  The argument stays a *string*, because
 Org's effort values are text: =0:30=, =2d=. Nothing in this vocabulary
 calls ~string-to-number~ at all.
 
@@ -5502,9 +5564,16 @@ placement matters.  Because ~set-property!~'s first argument is a property
 value; accordingly a verb interprets its own value arguments, and a verb
 that has no value argument interprets nothing.
 
-*A quoted argument is never a keyword.* ~set-property!(REVIEWED, today)~
-stores today's date; ~set-property!(REVIEWED, "today")~ stores the five
-letters.  Quoting is the escape hatch, and it is the only one.
+*In a value position, a quoted argument is never a keyword.*
+~(set-property! REVIEWED today)~ stores today's date; ~(set-property!
+REVIEWED "today")~ stores the five letters.
+
+Quoting means something different in a date position, and the difference is
+worth knowing.  Whitespace separates arguments, so a quoted date is the only
+way to write one of the shapes ~scheduled!~ accepts:
+~(scheduled! "2026-08-27 14:00")~.  Quoting there is what makes the shape
+writable, not a way to refuse it.  A planning stamp holds no literal text
+for a quoted word to become.
 
 The date-taking verbs accept ~today~ and ~now~ too.  Each expands the word
 itself rather than handing it to ~org-read-date~; what is scheduled is
@@ -5530,12 +5599,12 @@ For the agent in [[*Writing an action]], over [[*The example corpus]]:
 #+begin_example
 org-agents: 6 edits at 3 entries in 1 file (1 not open before this ran).
   Nothing written yet.
-…/corpus.org:7: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-…/corpus.org:7: tag!(+reviewed)  "" -> :reviewed:
-…/corpus.org:15: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-…/corpus.org:15: tag!(+reviewed)  "" -> :reviewed:
-…/corpus.org:29: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-…/corpus.org:29: tag!(+reviewed)  "" -> :reviewed:
+…/corpus.org:7: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+…/corpus.org:7: (tag! +reviewed)  "" -> :reviewed:
+…/corpus.org:15: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+…/corpus.org:15: (tag! +reviewed)  "" -> :reviewed:
+…/corpus.org:29: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+…/corpus.org:29: (tag! +reviewed)  "" -> :reviewed:
 #+end_example
 
 Read the report before answering anything. =FILE:LINE:= comes first on
@@ -5758,29 +5827,64 @@ widen it.
 :DESCRIPTION: A tenth verb, in your init file.
 :END:
 #+cindex: action verb, defining
-#+findex: org-agents-action/
+#+findex: org-agents-define-action
 
-A verb is resolved by *name construction plus* ~fboundp~: the token
-=frobnicate!= becomes the function ~org-agents-action/frobnicate!~ if such
-a function is bound, and an error naming both if it is not.  Thus a tenth
-verb is a ~defun~ in your init file with that name.
+A tenth verb is one ~org-agents-define-action~ in your init file.  Write
+the token a property will spell, and nothing more:
 
-The contract has three parts:
+#+begin_src elisp
+(org-agents-define-action shout! (phase name)
+  "Upcase the value of property NAME.
+Syntax: (shout! NAME)"
+  :destructive t
+  (pcase phase
+    ('plan  (cons (org-entry-get nil name)
+                  (upcase (or (org-entry-get nil name) ""))))
+    ('apply (org-entry-put nil name
+                           (upcase (or (org-entry-get nil name) ""))))))
+#+end_src
 
-- The function's first argument is a *phase*, either ~plan~ or ~apply~.
-  Its remaining arguments are the verb's own, and they arrive as *strings*
-  in the order written.
-- In the ~plan~ phase it must *write nothing* and answer a cons of the old
-  value and the new, ~(OLD . NEW)~, which is what the report's =old -> new=
-  is.  A plan pass that writes is caught.
-- In the ~apply~ phase it makes the edit, at point, in the match's own
-  buffer.
+The prefix is the resolver's business, not yours.  A verb is reached by
+*name construction* plus ~intern-soft~ and ~fboundp~: the token
+=frobnicate!= becomes ~org-agents-action/frobnicate!~ where such a function
+is bound, and a refusal naming both where it is not.  The macro constructs
+that same name, so it is a convenience over ~defun~ and changes nothing
+about resolution.  A property still cannot name a function outside the
+namespace.
 
-Because the resolution is by name, defining such a function is what grants
-the verb to every =:AGENT_ACTION:= in your corpus.  The reach is intended,
-and it is also the thing to weigh before writing one: a verb is a
-capability added to file content.  Give a tenth verb the same narrowness
-the nine have.
+The contract has three parts.  The first argument is a *phase*, either
+~plan~ or ~apply~; the rest are the verb's own and arrive as *strings*, in
+the order written.  In the ~plan~ phase the verb must *write nothing* and
+answer ~(OLD . NEW)~, which is what the report's =old -> new= is; a plan
+pass that writes is caught.  In the ~apply~ phase it makes the edit, at
+point, in the match's own buffer.
+
+Three declarations may follow the docstring, and each becomes a symbol
+property the parser reads:
+
+#+attr_texinfo: :table-type table :indic asis
+- =:destructive t= ::
+  The verb removes information, so it confirms at every entry on every
+  run.  There is no remembered approval and no option that silences it.
+- =:terminal t= ::
+  The verb must be the last one in the text, and may appear once.
+- =:field FUNCTION= ::
+  What the verb /writes/, as a function of its argument list, for the rule
+  that one action writes each field once.
+
+Declare them beside the definition.  Nothing enforces a declaration that
+was forgotten, and a destructive verb whose declaration was forgotten is a
+verb that stops asking.
+
+The macro refuses three things where you write them, rather than where an
+action names them: a name no property could spell, an argument list that
+does not open with the phase, and a declaration the parser does not read.
+All nine shipped verbs are defined this way.
+
+One thing to weigh before writing a verb at all.  Resolution is by name, so
+defining the function grants that verb to every =:AGENT_ACTION:= in your
+corpus.  The reach is intended.  A verb is a capability added to file
+content, so give a tenth the same narrowness the nine have.
 
 ** Limitations of action code
 :PROPERTIES:
@@ -6281,13 +6385,13 @@ it, and in batch it is refused rather than assumed.  See
 [[*Destructive verbs and batch]].
 #+end_deffn
 
-#+attr_texinfo: :options {Action Verb} tag! spec
+#+attr_texinfo: :options {Action Verb} tag! term &rest terms
 #+begin_deffn
 #+cindex: @samp{tag!}, action verb
-Add and remove tags, following SPEC: whitespace-separated *signed* terms
-applied left to right, so =tag!(+a -b)= adds =a= and removes =b=. An
-unsigned term is refused.  Deliberately not org-edna's ~tag!~, which
-replaces an entry's tags.
+Add and remove tags, following TERM and TERMS: *signed* terms applied left
+to right, so =(tag! +a -b)= adds =a= and removes =b=. An unsigned term is
+refused, and so is a form with no term at all.  Deliberately not
+org-edna's ~tag!~, which replaces an entry's tags.
 #+end_deffn
 
 #+attr_texinfo: :options {Action Verb} todo! state
@@ -6337,8 +6441,8 @@ argument stays a string, because Org's effort values are text: =0:30=,
 #+attr_texinfo: :options {Action Verb} archive!
 #+begin_deffn
 #+cindex: @samp{archive!}, action verb
-Archive the entry's subtree.  Takes no argument, and is written without
-parentheses.  Destructive, so it confirms at every entry on every run; and
+Archive the entry's subtree.  Takes no argument, and is written =(archive!)=
+-- the parentheses are the form's, not an argument list.  Destructive, so it confirms at every entry on every run; and
 *terminal*, so it must be the last verb and may appear once, which the
 parser enforces.  The destination is computed without archiving so the dry
 run can name it, and computed again immediately before archiving, with the
@@ -6365,6 +6469,17 @@ calling.
   the entry does not spell is a match here where =property= has none.
   VALUE is compared case-sensitively.  =$NAME^= expands to this predicate.
   See [[*The property-resolved predicate]] and [[*The resolution order]].
+
+- Macro: org-agents-define-action name arglist &rest body ::
+  #+findex: org-agents-define-action
+  Define NAME, a *token* such as =shout!= rather than a prefixed function
+  name, as an action verb.  ARGLIST opens with the phase.  BODY may open
+  with a docstring, then any of =:destructive t=, =:terminal t= and
+  =:field FUNCTION=, each becoming the symbol property the parser reads.
+  Expands to a ~defun~ named =org-agents-action/NAME= plus those
+  declarations, so resolution is unchanged.  Refuses, at expansion time, a
+  name no property could spell, an ARGLIST not opening with the phase, and
+  an unknown declaration.  See [[*Writing a verb of your own]].
 
 - Function: org-agents-resolve-property name &optional pom ::
   The resolved value of NAME at POM (point by default) as *text*, or nil.
