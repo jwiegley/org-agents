@@ -23,10 +23,9 @@ LOAD     := -L . -L "$(DEPS_DIR)"
 LOADTESTS := -l org-agents-test.el
 
 # The manual.  `doc/' is the Emacs and Org convention for a shipped manual
-# and is where `install-info' expects to find one; the repository's `doc/'
-# beside it holds design and working notes, which are a different thing
-# with a different lifetime.  The two names nearly collide: mind which one
-# you are in.
+# and is where `install-info' expects to find one.  The working notes live
+# there too, so mind which file you are editing: org-agents.org is the
+# manual, and doc-setup.org is the export header it needs.
 DOC      := $(ROOT)/doc
 MANUAL   := $(DOC)/org-agents.org
 TEXI     := $(DOC)/org-agents.texi
@@ -41,8 +40,9 @@ export EMACS
 # rather than a `$(shell ...)' assignment: stat-ing the nix store costs a
 # few seconds, and only the targets that actually run Emacs should pay it.
 # `locate-library' rather than `(require ...)' because it does not load
-# anything -- the gate script keeps the slower, stricter probe, which is the
-# one it was verified with.
+# anything.  ONE OF A PAIR: tools/org-agents-byte-compile-gate.sh searches
+# the same glob and keeps the slower, stricter `require' probe it was
+# verified with.  Change one and look at the other.
 FIND_EMACS = for c in /nix/store/*emacs-mac-macport-with-packages-*/bin/emacs; do [ -x "$$c" ] && "$$c" -batch --eval '(unless (locate-library "org-ql") (kill-emacs 1))' >/dev/null 2>&1 && { printf '%s\n' "$$c"; break; }; done
 
 # Every Emacs-running recipe begins with this.  It leaves the interpreter in
@@ -86,8 +86,8 @@ help:
 # counts as a pass when it fails, and a skipped test counts as neither.
 #
 # The soundness suite needs ripgrep, and `skip-unless' is honest but
-# silent -- silence is what let the suite this one replaces rot unrun for
-# want of a database.  So say it once, loudly, where ripgrep is missing.
+# silent.  A silent skip is how a suite rots unrun, so say it once,
+# loudly, where ripgrep is missing.
 test:
 	@command -v rg >/dev/null 2>&1 || \
 	  echo "org-agents: no ripgrep on PATH; the soundness tests will SKIP" >&2
@@ -144,8 +144,8 @@ clean:
 	rm -f $(ROOT)/*.elc
 	rm -rf $(ROOT)/eln-cache
 
-# Only the intermediate.  The .info beside it is committed, because this
-# package has no ELPA build and no install step, so a generated manual
-# nobody generates is a manual nobody reads.
+# Only the intermediate.  Neither it nor the .info is tracked -- see
+# .gitignore -- so `make manual' is what produces a readable manual, and
+# this target exists to clear the Texinfo step without clearing that.
 manual-clean:
 	rm -f $(TEXI)

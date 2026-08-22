@@ -30,9 +30,25 @@
 # temporary directory instead, which is placed FIRST on the load path so
 # that it is the copy `require' finds, and is removed on exit.
 #
-# The gated file IS compiled in place, and its .elc is removed afterwards
-# only if this run created it.  In a checkout where it was already built,
-# that .elc is load-bearing for someone else.
+# The gated file IS compiled in place, and its .elc is removed first, so the
+# pre-existing file does not survive the run -- an equivalent fresh one
+# takes its place.  MEASURED, so that the reason given is the true one:
+# `batch-byte-compile' does NOT skip a file whose .elc is newer, so the
+# removal is not what forces a fresh compile.  What it buys is a
+# deterministic starting state, which is worth the two lines in a script
+# whose whole output is a warning count.
+#
+# What the bookkeeping below decides is only whether that fresh .elc is
+# LEFT BEHIND: it is, exactly where the checkout already had one, so a
+# passing gate does not strip a build someone else is relying on and does
+# not leave build output in a checkout that had none.  Both of those were
+# measured.
+#
+# ON A FAILING GATE the pre-existing .elc is gone and nothing replaces it,
+# because the compile that would have rebuilt it is the thing that failed.
+# That is a real gap and it is not worth closing here: a checkout whose
+# gate fails wants a rebuild anyway, and saving the file aside to restore
+# it would add a second failure mode to a script that exists to be simple.
 #
 # Usage:
 #   tools/org-agents-byte-compile-gate.sh
@@ -58,6 +74,12 @@ deps_dir=${ORG_AGENTS_DEPS_DIR-$(CDPATH= cd -- "$root/.." && pwd)}
 deps='org-ext.el org-ql-ext.el'
 gated='org-agents.el'
 
+# ONE OF A PAIR.  The Makefile's FIND_EMACS searches the same glob for the
+# same reason, and the two probes differ ON PURPOSE: that one uses
+# `locate-library', which loads nothing and so costs a few seconds less,
+# while this one keeps the stricter `(require 'org-ql)' it was verified
+# with.  Change one and look at the other: they are allowed to differ, but
+# only deliberately.
 emacs=${EMACS-}
 if [ -z "$emacs" ]; then
     for candidate in /nix/store/*emacs-mac-macport-with-packages-*/bin/emacs; do
@@ -137,9 +159,9 @@ for f in $deps; do
 done
 echo "org-agents gate: dependencies built in $work (not gated)"
 
-# Recompile the gated files unconditionally: a stale .elc left by an
-# earlier run would otherwise let `batch-byte-compile' skip the file and
-# report zero warnings for work it never did.
+# Start from no .elc at all, so the run begins in a known state.  This is
+# what makes the pre-existing file not survive; `cleanup' decides only
+# whether its replacement stays.  See the header for what was measured.
 for f in $gated; do
     rm -f "${f}c"
 done
