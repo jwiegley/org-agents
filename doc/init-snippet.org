@@ -397,7 +397,7 @@ Add a line to the review agent above and it can stamp what it finds:
 ,* Reviews that have come due
 :PROPERTIES:
 :AGENT_QUERY:  (and (todo "TODO") (property-ts "NEXT_REVIEW" :to today))
-:AGENT_ACTION: set-property!(REVIEWED, today) tag!(+reviewed)
+:AGENT_ACTION: (set-property! REVIEWED today) (tag! +reviewed)
 :END:
 #+end_example
 
@@ -407,12 +407,12 @@ Actions*= and stops. A real one, over two files with three matching entries:
 
 #+begin_example
 org-agents: 6 edits at 3 entries in 2 files (1 not open before this ran).  Nothing written yet.
-/home/johnw/org/proj.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-/home/johnw/org/proj.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
-/home/johnw/org/proj.org:5: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-/home/johnw/org/proj.org:5: tag!(+reviewed)  :api: -> :api:reviewed:
-/home/johnw/org/notes.org:1: set-property!(REVIEWED, today)  nil -> [2026-08-20 Thu]
-/home/johnw/org/notes.org:1: tag!(+reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/proj.org:1: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:1: (tag! +reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/proj.org:5: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/proj.org:5: (tag! +reviewed)  :api: -> :api:reviewed:
+/home/johnw/org/notes.org:1: (set-property! REVIEWED today)  nil -> [2026-08-20 Thu]
+/home/johnw/org/notes.org:1: (tag! +reviewed)  :api: -> :api:reviewed:
 #+end_example
 
 That buffer is =compilation-mode=, so =RET= and =M-g n= walk the edits before
@@ -426,8 +426,8 @@ time.
 Two things about that are worth knowing before writing one.
 
 =today= is a keyword and there are exactly three — =today=, =now=, =empty= —
-so =set-property!(REVIEWED, today)= stores an inactive stamp rather than the
-word. To store the word, quote it: =set-property!(REVIEWED, "today")=. A bare
+so =(set-property! REVIEWED today)= stores an inactive stamp rather than the
+word. To store the word, quote it: =(set-property! REVIEWED "today")=. A bare
 word is literal unless it is one of those three; a quoted argument always is.
 
 And =tag!= is NOT org-edna's. It takes SIGNED terms — =+reviewed= adds,
