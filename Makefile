@@ -10,10 +10,10 @@
 # part of this repository -- both are single-file modules from the author's
 # Emacs configuration -- so every target says where they are.  DEPS_DIR
 # defaults to this repository's PARENT directory, which is where they sit
-# when this repository is checked out inside `dot-emacs/lisp' as it is on
-# the author's machine.  Elsewhere:
+# when this repository is checked out inside the configuration's `lisp'
+# directory (~/.config/emacs/lisp on Clio). Elsewhere:
 #
-#   make test DEPS_DIR=/path/to/dot-emacs/lisp
+#   make test DEPS_DIR=/path/to/emacs-config/lisp
 
 ROOT     := $(patsubst %/,%,$(dir $(realpath $(firstword $(MAKEFILE_LIST)))))
 DEPS_DIR ?= $(realpath $(ROOT)/..)

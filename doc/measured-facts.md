@@ -73,11 +73,12 @@ empties every corpus-scope candidate set.
 compare truenames for this reason alone, independently of E1. *Historical
 wording, 2026-08-19: this said "a database answer".*
 
-**E3. `~/.emacs.d/lisp` *is* `/Users/johnw/src/dot-emacs/lisp`.** Measured
-(`realpath`). This is why a checkout placed at `~/.emacs.d/lisp/org-agents`
-lands inside the dot-emacs working tree, and why the repo-local dependencies
-`org-ql-ext.el` and `org-ext.el` are reachable from this repo with `-L ..` and
-nothing more.
+**E3. Local configuration dependencies live in the parent `lisp/` directory.**
+On Clio, the configuration checkout now lives at `~/.config/emacs`.
+The package is now at `~/.config/emacs/lisp/org-agents`; `org-ql-ext.el` and
+`org-ext.el` remain reachable with `-L ..`. The earlier measured equivalence
+between `~/.emacs.d/lisp` and `/Users/johnw/src/dot-emacs/lisp` describes the
+previous layout, not the current Clio checkout.
 
 **E4. `grep` needs `-a` on the installed `org-ql.el`.** Measured: `grep -c
 defun org-ql.el` prints *nothing at all*, while `grep -ac defun` prints 33.
